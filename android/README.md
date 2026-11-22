@@ -1,0 +1,22 @@
+# EcosystemKu — Android Native (Kotlin + Jetpack Compose)
+
+Project Android Studio siap-buka hasil migrasi dari `assistant/` + `api/` sesuai rencana arsitektur 3-tab (`Asisten` | `Apps` | `Setelan`).
+
+## Cara Membuka & Build di Android Studio
+1. Buka folder `android/` ini melalui **Android Studio** (*File → Open → pilih folder `android/`*).
+2. Tunggu Gradle sync selesai (Android Studio akan mengunduh dependencies Compose, Room, OkHttp, Media3, dan WebKit).
+3. Pastikan `BuildConfig.API_BASE_URL` di `app/build.gradle.kts` mengarah ke server backend `/api/chat` dan `/api/tts` Anda yang aktif.
+4. Jalankan **Run ▶** pada emulator atau perangkat Android (minSdk 26 / Android 8.0+).
+
+## Struktur Fitur Saat Ini
+- **Tab 1 — `Asisten` (Logika Penuh Aktif)**:
+  - Panggung Live2D Rem (`assets/live2d/characters/rem/`) berjalan offline via `WebViewAssetLoader` + `Live2DStageController` interface.
+  - Chat streaming SSE (`POST /api/chat` lewat `OkHttp` + `okhttp-sse`), parsing tag `[EXPR:...]` dan `[JA]...[/JA]`.
+  - Suara TTS Jepang (`POST /api/tts`) lewat `Media3 ExoPlayer` dengan `TeeAudioProcessor` RMS lip-sync real-time.
+  - Penyimpanan riwayat chat lokal persisten di perangkat memakai **Room** (`rem_assistant.db`).
+  - Tombol Mikrofon & 2 tombol kaca kanan atas masih **UI-only** sesuai rencana tahap 1.
+- **Tab 2 — `Apps` & Tab 3 — `Setelan` (UI-Only)**:
+  - Dibuat penuh menggunakan Jetpack Compose sesuai desain 60-30-10 (`#0F0E0C`, `#1A1917`, `#232220`, `#5B9CF6`) tanpa logika sistem dulu agar siap dikembangkan bertahap menjadi Super App.
+
+## Catatan Aset Font (Opsional)
+Saat ini tipografi memakai `FontFamily.Serif` dan `FontFamily.SansSerif` bawaan Android agar langsung kompilasi tanpa perlu file eksternal. Jika ingin memakai font asli mockup (`DM Serif Display`, `DM Sans`, `Lora`), taruh file `.ttf`-nya di `app/src/main/res/font/` lalu perbarui `ui/theme/Type.kt`.

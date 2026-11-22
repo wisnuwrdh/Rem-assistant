@@ -1,0 +1,6 @@
+{
+  "name": "EcosystemKu",
+  "description": "Dashboard untuk semua app EcosystemKu: Asisten Virtual, CuciMoney, Daily OS, Ide-Ku, Kronik, dan LinkKu.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
