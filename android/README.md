@@ -1,6 +1,6 @@
-# EcosystemKu — Android Native (Kotlin + Jetpack Compose)
+# Asisten Rem — Android Native (Kotlin + Jetpack Compose)
 
-Project Android Studio siap-buka hasil migrasi dari `assistant/` + `api/` sesuai rencana arsitektur 3-tab (`Asisten` | `Apps` | `Setelan`).
+Project Android Studio siap-buka hasil migrasi dari `assistant/` + `api/` sesuai rencana arsitektur 3-tab (`Asisten` | `Apps` | `Setelan`), dengan ikon launcher kustom (`ic_launcher_rem_photo.jpg`) dan nama aplikasi `Asisten Rem`.
 
 ## Cara Membuka & Build di Android Studio
 1. Buka folder `android/` ini melalui **Android Studio** (*File → Open → pilih folder `android/`*).

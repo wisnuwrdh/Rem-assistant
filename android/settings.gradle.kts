@@ -20,5 +20,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "EcosystemKu"
+rootProject.name = "AsistenRem"
 include(":app")

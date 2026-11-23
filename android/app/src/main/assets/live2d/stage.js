@@ -90,16 +90,17 @@
     PARAM_EYE_L_SMILE: { current: 0, target: 0, fadeIn: 0.05, fadeOut: 0.04 },
     PARAM_EYE_FORM: { current: 0, target: 0, fadeIn: 0.05, fadeOut: 0.04 },
     PARAM_CHEEK_01: { current: 0, target: 0, fadeIn: 0.04, fadeOut: 0.03 },
+    PARAM_CHEEK_03: { current: 0, target: 0, fadeIn: 0.04, fadeOut: 0.03 },
     PARAM_TEAR_01: { current: 0, target: 0, fadeIn: 0.03, fadeOut: 0.02 },
   };
 
   const REM_FACE_MAP = {
-    none: { PARAM_MOUTH_FORM_01: 0, PARAM_BROW_R_FORM: 0, PARAM_BROW_L_FORM: 0, PARAM_EYE_R_SMILE: 0, PARAM_EYE_L_SMILE: 0, PARAM_EYE_FORM: 0, PARAM_CHEEK_01: 0, PARAM_TEAR_01: 0 },
+    none: { PARAM_MOUTH_FORM_01: 0, PARAM_BROW_R_FORM: 0, PARAM_BROW_L_FORM: 0, PARAM_EYE_R_SMILE: 0, PARAM_EYE_L_SMILE: 0, PARAM_EYE_FORM: 0, PARAM_CHEEK_01: 0, PARAM_CHEEK_03: 0, PARAM_TEAR_01: 0 },
     happy: { PARAM_MOUTH_FORM_01: 1, PARAM_BROW_R_FORM: 0, PARAM_BROW_L_FORM: 0, PARAM_EYE_R_SMILE: 0, PARAM_EYE_L_SMILE: 0, PARAM_EYE_FORM: 0, PARAM_CHEEK_01: 0, PARAM_TEAR_01: 0 },
     smile: { PARAM_MOUTH_FORM_01: 1, PARAM_BROW_R_FORM: 1, PARAM_BROW_L_FORM: 1, PARAM_EYE_R_SMILE: 0, PARAM_EYE_L_SMILE: 0, PARAM_EYE_FORM: 1, PARAM_CHEEK_01: 0, PARAM_TEAR_01: 0 },
     appeal: { PARAM_MOUTH_FORM_01: 1, PARAM_BROW_R_FORM: 0, PARAM_BROW_L_FORM: 0, PARAM_EYE_R_SMILE: 1, PARAM_EYE_L_SMILE: 1, PARAM_EYE_FORM: 0, PARAM_CHEEK_01: 0, PARAM_TEAR_01: 0 },
     proud: { PARAM_MOUTH_FORM_01: 0, PARAM_BROW_R_FORM: 0, PARAM_BROW_L_FORM: 0, PARAM_EYE_R_SMILE: 0, PARAM_EYE_L_SMILE: 0, PARAM_EYE_FORM: 0, PARAM_CHEEK_01: 0, PARAM_TEAR_01: 0 },
-    shame: { PARAM_MOUTH_FORM_01: -0.8, PARAM_BROW_R_FORM: -0.8, PARAM_BROW_L_FORM: -0.8, PARAM_EYE_R_SMILE: 0, PARAM_EYE_L_SMILE: 0, PARAM_EYE_FORM: 1, PARAM_CHEEK_01: 1, PARAM_TEAR_01: 0 },
+    shame: { PARAM_MOUTH_FORM_01: -0.8, PARAM_BROW_R_FORM: -0.8, PARAM_BROW_L_FORM: -0.8, PARAM_EYE_R_SMILE: 0, PARAM_EYE_L_SMILE: 0, PARAM_EYE_FORM: 1, PARAM_CHEEK_01: 1, PARAM_CHEEK_03: 0.7, PARAM_TEAR_01: 0 },
     sad: { PARAM_MOUTH_FORM_01: -0.8, PARAM_BROW_R_FORM: -0.5, PARAM_BROW_L_FORM: -0.5, PARAM_EYE_R_SMILE: -1, PARAM_EYE_L_SMILE: -1, PARAM_EYE_FORM: 1, PARAM_CHEEK_01: 0, PARAM_TEAR_01: 0 },
     cry: { PARAM_MOUTH_FORM_01: -0.8, PARAM_BROW_R_FORM: -0.5, PARAM_BROW_L_FORM: -0.5, PARAM_EYE_R_SMILE: -1, PARAM_EYE_L_SMILE: -1, PARAM_EYE_FORM: 1, PARAM_CHEEK_01: 0, PARAM_TEAR_01: 1 },
     angry: { PARAM_MOUTH_FORM_01: -1, PARAM_BROW_R_FORM: -1, PARAM_BROW_L_FORM: -1, PARAM_EYE_R_SMILE: -0.7, PARAM_EYE_L_SMILE: -0.7, PARAM_EYE_FORM: -0.6, PARAM_CHEEK_01: 0, PARAM_TEAR_01: 0 },
@@ -366,12 +367,9 @@
     const mouthFormVal = isSpeaking ? 0.3 : (petIntensity >= 0.001 ? petIntensity * 0.5 : 0);
     setCoreParam(P.mouthF, mouthFormVal);
 
+    // Terapkan setiap frame (termasuk nilai 0) agar keyframe motion seperti PARAM_CHEEK_01 di idle/appeal tidak menyalakan blush terus
     for (let i = 0; i < faceParamEntries.length; i++) {
-      const idx = faceParamEntries[i][0];
-      const s = faceParamEntries[i][1];
-      if (Math.abs(s.current) > 0.001 || Math.abs(s.target) > 0.001) {
-        cachedCore.setParameterValueByIndex(idx, s.current, 1.0);
-      }
+      cachedCore.setParameterValueByIndex(faceParamEntries[i][0], faceParamEntries[i][1].current, 1.0);
     }
 
     if (petIntensity >= 0.001) {

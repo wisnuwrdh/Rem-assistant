@@ -507,7 +507,7 @@ fun SetelanScreen(
 
     pendingResetTarget?.let { target ->
         val isAll = target == "ALL"
-        val label = if (isAll) "Seluruh Data EcosystemKu" else "Data $target"
+        val label = if (isAll) "Seluruh Data Asisten Rem" else "Data $target"
         AlertDialog(
             onDismissRequest = { pendingResetTarget = null },
             containerColor = SecondarySurface,
@@ -1136,7 +1136,7 @@ fun SetelanScreen(
                                 .clip(RoundedCornerShape(12.dp))
                                 .background(AccentBlue)
                                 .clickable {
-                                    exportZipLauncher.launch("ecosystemku_backup_${LocalDate.now()}.zip")
+                                    exportZipLauncher.launch("asisten_rem_backup_${LocalDate.now()}.zip")
                                 }
                                 .padding(vertical = 11.dp),
                             contentAlignment = Alignment.Center
@@ -1440,7 +1440,7 @@ fun SetelanScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column {
-                                Text("EcosystemKu v1.0.0 (Build 1)", fontFamily = UiSans, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                                Text("Asisten Rem v1.0.0 (Build 1)", fontFamily = UiSans, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
                                 Text("Android Native Super App • Kotlin Compose", fontFamily = UiSans, fontSize = 11.sp, color = TextMuted)
                             }
                             NestedPill {

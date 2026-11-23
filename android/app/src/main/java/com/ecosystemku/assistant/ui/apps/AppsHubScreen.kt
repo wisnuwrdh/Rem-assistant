@@ -700,7 +700,7 @@ fun AppsHubScreen(
             )
 
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                SectionHeaderRow(title = "APLIKASI ECOSYSTEMKU", subtitle = "5 Modul")
+                SectionHeaderRow(title = "APLIKASI ASISTEN REM", subtitle = "5 Modul")
 
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     modules.chunked(4).forEach { rowItems ->

@@ -919,7 +919,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
             refreshIdekuPrefsIntoState()
             refreshCuciPrefsIntoState()
             refreshLinkkuPrefsIntoState()
-            showBannerMessage("Semua data EcosystemKu berhasil direset")
+            showBannerMessage("Semua data Asisten Rem berhasil direset")
         }
     }
 
@@ -1216,7 +1216,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
             }
 
             if (restoredModules == 0) {
-                EcosystemZipImportResult.Error("Tidak ada modul EcosystemKu yang dikenali di dalam ZIP")
+                EcosystemZipImportResult.Error("Tidak ada modul Asisten Rem yang dikenali di dalam ZIP")
             } else {
                 val modeLabel = if (replaceAll) "Replace" else "Merge"
                 EcosystemZipImportResult.Success("Restore ZIP ($modeLabel) berhasil untuk $restoredModules modul")
