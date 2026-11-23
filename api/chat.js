@@ -18,8 +18,8 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // Validasi API key
-  const sumopodKey = process.env.SUMOPOD_API_KEY;
+  // Validasi API key (mendukung Personal Key via header X-Sumopod-Key)
+  const sumopodKey = req.headers['x-sumopod-key']?.trim() || process.env.SUMOPOD_API_KEY;
   if (!sumopodKey) {
     console.error('[chat] SUMOPOD_API_KEY tidak ditemukan');
     return res.status(500).json({ error: 'Server configuration error' });

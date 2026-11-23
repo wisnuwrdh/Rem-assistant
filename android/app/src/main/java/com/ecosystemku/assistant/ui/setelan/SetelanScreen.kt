@@ -67,6 +67,11 @@ import com.ecosystemku.assistant.ui.theme.TextPrimary
 import com.ecosystemku.assistant.ui.theme.TextSubtle
 import com.ecosystemku.assistant.ui.theme.UiSans
 
+import android.Manifest
+import android.app.TimePickerDialog
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -74,37 +79,482 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Psychology
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.TextStyle
+import com.ecosystemku.assistant.data.local.ConversationSummaryEntity
 import com.ecosystemku.assistant.data.local.UserMemoryEntity
+import com.ecosystemku.assistant.notifications.DailyOsNotificationHelper
+import com.ecosystemku.assistant.ui.asisten.EcosystemZipImportResult
+import java.time.LocalDate
+import java.util.Locale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
- * Tab 3 — Setelan.
- * Fase 1 aktif: Memori AI & Personalisasi (SQLite Room) dan Reset Data Asisten.
- * Bagian lainnya masih bersifat UI-Only Preview untuk fase berikutnya.
+ * Tab 3 — Setelan (Fase 1 & Fase 2 Aktif Penuh).
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SetelanScreen(
+    profileName: String = "Mahfud",
+    lastBackupLabel: String = "Belum pernah",
+    themeMode: String = "dark",
+    usePersonalKeys: Boolean = false,
+    sumopodMaskedKey: String = "Belum diisi",
+    groqMaskedKey: String = "Belum diisi",
+    fishMaskedKey: String = "Belum diisi",
+    apiConnectionOk: Boolean = true,
+    apiConnectionLabel: String = "Terhubung",
+    isTestingApi: Boolean = false,
+    notifHabitEnabled: Boolean = true,
+    notifTodoEnabled: Boolean = true,
+    notifHabitTime: String = "07:00",
+    notifTodoTime: String = "15:00",
     memories: List<UserMemoryEntity> = emptyList(),
+    summaries: List<ConversationSummaryEntity> = emptyList(),
     autoLearnMemory: Boolean = true,
     isLearningMemory: Boolean = false,
+    onUpdateProfileName: (String) -> Unit = {},
+    onSetThemeMode: (String) -> Unit = {},
+    onSetUsingPersonalKeys: (Boolean) -> Unit = {},
+    onGetRawApiKey: (String) -> String = { "" },
+    onSaveApiKey: (String, String) -> Unit = { _, _ -> },
+    onTestApiConnection: () -> Unit = {},
+    onSetNotifHabitEnabled: (Boolean) -> Unit = {},
+    onSetNotifTodoEnabled: (Boolean) -> Unit = {},
+    onSetNotifTimes: (String, String) -> Unit = { _, _ -> },
+    onTestNotification: () -> Unit = {},
     onToggleAutoLearn: (Boolean) -> Unit = {},
     onAddManualMemory: (category: String, label: String, value: String) -> Unit = { _, _, _ -> },
     onDeleteMemory: (Long) -> Unit = {},
+    onDeleteSummary: (Long) -> Unit = {},
     onClearMemories: () -> Unit = {},
+    onExportZip: suspend () -> ByteArray = { ByteArray(0) },
+    onImportZip: suspend (ByteArray, Boolean, String?) -> EcosystemZipImportResult = { _, _, _ ->
+        EcosystemZipImportResult.Error("Belum terhubung")
+    },
+    onShowBanner: (String) -> Unit = {},
     onResetKronik: () -> Unit = {},
     onResetLinkku: () -> Unit = {},
     onResetCuciMoney: () -> Unit = {},
     onResetIdeku: () -> Unit = {},
     onResetDailyOs: () -> Unit = {},
     onResetAssistantData: () -> Unit = {},
+    onResetAllData: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    val uriHandler = LocalUriHandler.current
+    val scope = rememberCoroutineScope()
+
+    var showProfileDialog by remember { mutableStateOf(false) }
+    var profileInput by remember(profileName) { mutableStateOf(profileName) }
+
+    var editingKeyProvider by remember { mutableStateOf<String?>(null) }
+    var apiKeyInput by remember { mutableStateOf("") }
+    var revealKeyInput by remember { mutableStateOf(false) }
+
+    var showImportModeDialog by remember { mutableStateOf(false) }
+    var importReplaceMode by remember { mutableStateOf(false) }
+    var pendingPinPayload by remember { mutableStateOf<EcosystemZipImportResult.NeedsPin?>(null) }
+    var pinInput by remember { mutableStateOf("") }
+
+    var pendingResetTarget by remember { mutableStateOf<String?>(null) }
+    var hasNotifPerm by remember {
+        mutableStateOf(DailyOsNotificationHelper.hasNotificationPermission(context))
+    }
+    var pendingTestAfterPerm by remember { mutableStateOf(false) }
+
+    val notifPermLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        hasNotifPerm = granted
+        if (granted && pendingTestAfterPerm) {
+            pendingTestAfterPerm = false
+            onTestNotification()
+        } else if (!granted) {
+            pendingTestAfterPerm = false
+            onShowBanner("Izin notifikasi ditolak di pengaturan perangkat")
+        }
+    }
+
+    fun pickTime(current: String, onPicked: (String) -> Unit) {
+        val parts = current.split(":")
+        val initH = parts.getOrNull(0)?.toIntOrNull()?.coerceIn(0, 23) ?: 7
+        val initM = parts.getOrNull(1)?.toIntOrNull()?.coerceIn(0, 59) ?: 0
+        TimePickerDialog(
+            context,
+            { _, h, m ->
+                onPicked(String.format(Locale.US, "%02d:%02d", h, m))
+            },
+            initH,
+            initM,
+            true
+        ).show()
+    }
+
+    val exportZipLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/zip")
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val bytes = runCatching { onExportZip() }.getOrNull()
+                if (bytes == null || bytes.isEmpty()) {
+                    onShowBanner("Gagal membuat file backup ZIP")
+                    return@launch
+                }
+                val ok = withContext(Dispatchers.IO) {
+                    runCatching {
+                        context.contentResolver.openOutputStream(uri)?.use { out ->
+                            out.write(bytes)
+                        } != null
+                    }.getOrDefault(false)
+                }
+                if (ok) onShowBanner("Backup ZIP v3 berhasil disimpan")
+                else onShowBanner("Gagal menulis file ZIP ke penyimpanan")
+            }
+        }
+    }
+
+    val importZipLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val bytes = withContext(Dispatchers.IO) {
+                    runCatching {
+                        context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    }.getOrNull()
+                }
+                if (bytes == null || bytes.isEmpty()) {
+                    onShowBanner("Gagal membaca file ZIP yang dipilih")
+                    return@launch
+                }
+                when (val res = onImportZip(bytes, importReplaceMode, null)) {
+                    is EcosystemZipImportResult.Success -> onShowBanner(res.summary)
+                    is EcosystemZipImportResult.Error -> onShowBanner(res.message)
+                    is EcosystemZipImportResult.NeedsPin -> {
+                        pinInput = ""
+                        pendingPinPayload = res
+                    }
+                }
+            }
+        }
+    }
+
+    if (showProfileDialog) {
+        AlertDialog(
+            onDismissRequest = { showProfileDialog = false },
+            containerColor = SecondarySurface,
+            titleContentColor = TextPrimary,
+            textContentColor = TextPrimary,
+            title = {
+                Text("Ubah Nama Profil", fontFamily = EditorialSerif, fontSize = 20.sp, color = TextPrimary)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Nama ini digunakan pada sapaan dashboard Apps dan panggilan Rem kepada Tuan.",
+                        fontFamily = UiSans,
+                        fontSize = 12.sp,
+                        color = TextMuted
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(ElevatedSurface)
+                            .border(1.dp, BorderLight, RoundedCornerShape(10.dp))
+                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                    ) {
+                        if (profileInput.isEmpty()) {
+                            Text("Nama panggilan...", fontFamily = UiSans, fontSize = 13.sp, color = TextSubtle)
+                        }
+                        BasicTextField(
+                            value = profileInput,
+                            onValueChange = { profileInput = it },
+                            singleLine = true,
+                            textStyle = TextStyle(fontFamily = UiSans, fontSize = 13.5.sp, color = TextPrimary),
+                            cursorBrush = SolidColor(AccentBlue),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onUpdateProfileName(profileInput)
+                        showProfileDialog = false
+                    }
+                ) {
+                    Text("Simpan", color = AccentBlue, fontFamily = UiSans, fontWeight = FontWeight.SemiBold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showProfileDialog = false }) {
+                    Text("Batal", color = TextMuted, fontFamily = UiSans)
+                }
+            }
+        )
+    }
+
+    editingKeyProvider?.let { provider ->
+        AlertDialog(
+            onDismissRequest = { editingKeyProvider = null },
+            containerColor = SecondarySurface,
+            titleContentColor = TextPrimary,
+            textContentColor = TextPrimary,
+            title = {
+                Text("API Key $provider", fontFamily = EditorialSerif, fontSize = 20.sp, color = TextPrimary)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Disimpan terenkripsi dengan AES-256-GCM di Android Keystore perangkat ini. Kosongkan lalu simpan untuk menghapus key.",
+                        fontFamily = UiSans,
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp,
+                        color = TextMuted
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(ElevatedSurface)
+                            .border(1.dp, BorderLight, RoundedCornerShape(10.dp))
+                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                    ) {
+                        if (apiKeyInput.isEmpty()) {
+                            Text("Masukkan API Key $provider...", fontFamily = UiSans, fontSize = 13.sp, color = TextSubtle)
+                        }
+                        BasicTextField(
+                            value = apiKeyInput,
+                            onValueChange = { apiKeyInput = it },
+                            singleLine = true,
+                            textStyle = TextStyle(fontFamily = UiSans, fontSize = 13.sp, color = TextPrimary),
+                            cursorBrush = SolidColor(AccentBlue),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onSaveApiKey(provider, apiKeyInput)
+                        editingKeyProvider = null
+                    }
+                ) {
+                    Text("Simpan Key", color = AccentBlue, fontFamily = UiSans, fontWeight = FontWeight.SemiBold)
+                }
+            },
+            dismissButton = {
+                Row {
+                    if (apiKeyInput.isNotBlank()) {
+                        TextButton(
+                            onClick = {
+                                onSaveApiKey(provider, "")
+                                editingKeyProvider = null
+                            }
+                        ) {
+                            Text("Hapus", color = SemanticDanger, fontFamily = UiSans)
+                        }
+                    }
+                    TextButton(onClick = { editingKeyProvider = null }) {
+                        Text("Batal", color = TextMuted, fontFamily = UiSans)
+                    }
+                }
+            }
+        )
+    }
+
+    if (showImportModeDialog) {
+        AlertDialog(
+            onDismissRequest = { showImportModeDialog = false },
+            containerColor = SecondarySurface,
+            titleContentColor = TextPrimary,
+            textContentColor = TextPrimary,
+            title = {
+                Text("Mode Import ZIP v3", fontFamily = EditorialSerif, fontSize = 20.sp, color = TextPrimary)
+            },
+            text = {
+                Text(
+                    "Pilih 'Merge' untuk menggabungkan data baru tanpa menghapus data lama, atau 'Replace' untuk mengganti seluruh data dengan isi file ZIP.",
+                    fontFamily = UiSans,
+                    fontSize = 12.5.sp,
+                    lineHeight = 18.sp,
+                    color = TextMuted
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        importReplaceMode = false
+                        showImportModeDialog = false
+                        importZipLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
+                    }
+                ) {
+                    Text("Merge (Gabung)", color = AccentBlue, fontFamily = UiSans, fontWeight = FontWeight.SemiBold)
+                }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = { showImportModeDialog = false }) {
+                        Text("Batal", color = TextMuted, fontFamily = UiSans)
+                    }
+                    TextButton(
+                        onClick = {
+                            importReplaceMode = true
+                            showImportModeDialog = false
+                            importZipLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
+                        }
+                    ) {
+                        Text("Replace (Ganti)", color = SemanticWarning, fontFamily = UiSans, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+        )
+    }
+
+    pendingPinPayload?.let { payload ->
+        AlertDialog(
+            onDismissRequest = { pendingPinPayload = null },
+            containerColor = SecondarySurface,
+            titleContentColor = TextPrimary,
+            textContentColor = TextPrimary,
+            title = {
+                Text("PIN Tautan Privat LinkKu", fontFamily = EditorialSerif, fontSize = 20.sp, color = TextPrimary)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Backup ZIP ini berisi tautan privat LinkKu terenkripsi AES-GCM. Masukkan PIN 4-digit untuk mendekripsi, atau lewati jika hanya ingin memulihkan data publik.",
+                        fontFamily = UiSans,
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp,
+                        color = TextMuted
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(ElevatedSurface)
+                            .border(1.dp, BorderLight, RoundedCornerShape(10.dp))
+                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                    ) {
+                        if (pinInput.isEmpty()) {
+                            Text("PIN 4-digit...", fontFamily = UiSans, fontSize = 13.sp, color = TextSubtle)
+                        }
+                        BasicTextField(
+                            value = pinInput,
+                            onValueChange = { pinInput = it.filter { ch -> ch.isDigit() }.take(8) },
+                            singleLine = true,
+                            textStyle = TextStyle(fontFamily = UiSans, fontSize = 14.sp, color = TextPrimary),
+                            cursorBrush = SolidColor(AccentBlue),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = pinInput.isNotBlank(),
+                    onClick = {
+                        val pin = pinInput
+                        pendingPinPayload = null
+                        scope.launch {
+                            when (val res = onImportZip(payload.zipBytes, payload.replaceAll, pin)) {
+                                is EcosystemZipImportResult.Success -> onShowBanner(res.summary)
+                                is EcosystemZipImportResult.Error -> onShowBanner(res.message)
+                                is EcosystemZipImportResult.NeedsPin -> onShowBanner("PIN diperlukan")
+                            }
+                        }
+                    }
+                ) {
+                    Text("Dekripsi & Import", color = AccentBlue, fontFamily = UiSans, fontWeight = FontWeight.SemiBold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        pendingPinPayload = null
+                        scope.launch {
+                            when (val res = onImportZip(payload.zipBytes, payload.replaceAll, "")) {
+                                is EcosystemZipImportResult.Success -> onShowBanner("${res.summary} (tanpa link privat)")
+                                is EcosystemZipImportResult.Error -> onShowBanner(res.message)
+                                is EcosystemZipImportResult.NeedsPin -> Unit
+                            }
+                        }
+                    }
+                ) {
+                    Text("Lewati Privat", color = TextMuted, fontFamily = UiSans)
+                }
+            }
+        )
+    }
+
+    pendingResetTarget?.let { target ->
+        val isAll = target == "ALL"
+        val label = if (isAll) "Seluruh Data EcosystemKu" else "Data $target"
+        AlertDialog(
+            onDismissRequest = { pendingResetTarget = null },
+            containerColor = SecondarySurface,
+            titleContentColor = TextPrimary,
+            textContentColor = TextPrimary,
+            title = {
+                Text("Reset $label?", fontFamily = EditorialSerif, fontSize = 20.sp, color = TextPrimary)
+            },
+            text = {
+                Text(
+                    if (isAll) {
+                        "Tindakan ini akan menghapus semua data Daily OS, IdeKu, Kronik, CuciMoney+, LinkKu, serta riwayat obrolan & memori Asisten Rem di perangkat ini."
+                    } else {
+                        "Semua data lokal untuk modul $target akan dikosongkan dan dikembalikan ke kondisi awal."
+                    },
+                    fontFamily = UiSans,
+                    fontSize = 12.5.sp,
+                    lineHeight = 18.sp,
+                    color = TextMuted
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        when (target) {
+                            "Daily OS" -> onResetDailyOs()
+                            "IdeKu" -> onResetIdeku()
+                            "Kronik" -> onResetKronik()
+                            "CuciMoney+" -> onResetCuciMoney()
+                            "LinkKu" -> onResetLinkku()
+                            "Asisten" -> onResetAssistantData()
+                            "ALL" -> onResetAllData()
+                        }
+                        pendingResetTarget = null
+                    }
+                ) {
+                    Text("Ya, Reset", color = SemanticDanger, fontFamily = UiSans, fontWeight = FontWeight.SemiBold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingResetTarget = null }) {
+                    Text("Batal", color = TextMuted, fontFamily = UiSans)
+                }
+            }
+        )
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -169,7 +619,7 @@ fun SetelanScreen(
                             }
                             Column {
                                 Text(
-                                    text = "Mahfud",
+                                    text = profileName,
                                     fontFamily = UiSans,
                                     fontSize = 15.sp,
                                     fontWeight = FontWeight.SemiBold,
@@ -184,20 +634,29 @@ fun SetelanScreen(
                             }
                         }
 
-                        NestedPill {
-                            Icon(
-                                imageVector = Icons.Outlined.Edit,
-                                contentDescription = null,
-                                tint = TextMuted,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Text("Ubah", fontFamily = UiSans, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = TextPrimary)
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable {
+                                    profileInput = profileName
+                                    showProfileDialog = true
+                                }
+                        ) {
+                            NestedPill {
+                                Icon(
+                                    imageVector = Icons.Outlined.Edit,
+                                    contentDescription = null,
+                                    tint = TextMuted,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Text("Ubah", fontFamily = UiSans, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = TextPrimary)
+                            }
                         }
                     }
                 }
             }
 
-            // 1B. Memori AI & Personalisasi (AKTIF — SQLite Room Fase 1)
+            // 1B. Memori AI & Personalisasi
             item {
                 var selectedCategory by remember { mutableStateOf("preferensi") }
                 var labelInput by remember { mutableStateOf("") }
@@ -206,7 +665,7 @@ fun SetelanScreen(
 
                 SettingsSection(
                     title = "MEMORI AI & PERSONALISASI",
-                    trailing = if (isLearningMemory) "Menganalisis…" else "${memories.size} fakta • SQLite",
+                    trailing = if (isLearningMemory) "Menganalisis…" else "${memories.size} fakta • ${summaries.size} rangkuman",
                     badgeText = if (autoLearnMemory) "Aktif" else null
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -238,7 +697,7 @@ fun SetelanScreen(
                                         color = TextPrimary
                                     )
                                     Text(
-                                        text = "Ekstrak fakta personal ke SQLite agar Rem mengenal Tuan",
+                                        text = "Ekstrak fakta personal & rangkuman sesi ke SQLite",
                                         fontFamily = UiSans,
                                         fontSize = 11.sp,
                                         color = TextMuted
@@ -438,7 +897,53 @@ fun SetelanScreen(
                                     }
                                 }
                             }
+                        }
 
+                        // Daftar rangkuman sesi
+                        if (summaries.isNotEmpty()) {
+                            HorizontalDivider(thickness = 1.dp, color = BorderSubtle)
+                            Text(
+                                text = "Rangkuman Sesi Percakapan",
+                                fontFamily = UiSans,
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = TextMuted
+                            )
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                summaries.forEach { s ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(11.dp))
+                                            .background(ElevatedSurface)
+                                            .border(1.dp, BorderSubtle, RoundedCornerShape(11.dp))
+                                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = s.summaryText,
+                                            fontFamily = UiSans,
+                                            fontSize = 12.sp,
+                                            lineHeight = 17.sp,
+                                            color = TextPrimary,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Icon(
+                                            imageVector = Icons.Outlined.Close,
+                                            contentDescription = "Hapus Rangkuman",
+                                            tint = TextMuted,
+                                            modifier = Modifier
+                                                .padding(start = 8.dp)
+                                                .size(16.dp)
+                                                .clickable { onDeleteSummary(s.id) }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        if (memories.isNotEmpty() || summaries.isNotEmpty()) {
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -450,7 +955,7 @@ fun SetelanScreen(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    text = "Bersihkan Semua Memori",
+                                    text = "Bersihkan Semua Memori & Rangkuman",
                                     fontFamily = UiSans,
                                     fontSize = 11.5.sp,
                                     fontWeight = FontWeight.Medium,
@@ -462,7 +967,7 @@ fun SetelanScreen(
                 }
             }
 
-            // 2. AI & API Key
+            // 2. AI & API Key (AKTIF — Android Keystore Fase 2)
             item {
                 SettingsSection(title = "AI & API KEY", trailing = "Android Keystore") {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -479,27 +984,67 @@ fun SetelanScreen(
                             Box(
                                 modifier = Modifier
                                     .weight(1f)
+                                    .clip(RoundedCornerShape(9.dp))
+                                    .background(if (!usePersonalKeys) AccentBlue else Color.Transparent)
+                                    .clickable { onSetUsingPersonalKeys(false) }
                                     .padding(vertical = 7.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text("Server (Default)", fontFamily = UiSans, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = TextMuted)
+                                Text(
+                                    text = "Server (Default)",
+                                    fontFamily = UiSans,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (!usePersonalKeys) FontWeight.SemiBold else FontWeight.Medium,
+                                    color = if (!usePersonalKeys) DominantBg else TextMuted
+                                )
                             }
                             Box(
                                 modifier = Modifier
                                     .weight(1f)
                                     .clip(RoundedCornerShape(9.dp))
-                                    .background(AccentBlue)
+                                    .background(if (usePersonalKeys) AccentBlue else Color.Transparent)
+                                    .clickable { onSetUsingPersonalKeys(true) }
                                     .padding(vertical = 7.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text("Personal Key", fontFamily = UiSans, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = DominantBg)
+                                Text(
+                                    text = "Personal Key",
+                                    fontFamily = UiSans,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (usePersonalKeys) FontWeight.SemiBold else FontWeight.Medium,
+                                    color = if (usePersonalKeys) DominantBg else TextMuted
+                                )
                             }
                         }
 
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            ApiKeyRow("Sumopod")
-                            ApiKeyRow("Groq")
-                            ApiKeyRow("Fish Audio")
+                            ApiKeyRow(
+                                label = "Sumopod",
+                                maskedValue = sumopodMaskedKey,
+                                onClick = {
+                                    apiKeyInput = onGetRawApiKey("Sumopod")
+                                    revealKeyInput = false
+                                    editingKeyProvider = "Sumopod"
+                                }
+                            )
+                            ApiKeyRow(
+                                label = "Groq",
+                                maskedValue = groqMaskedKey,
+                                onClick = {
+                                    apiKeyInput = onGetRawApiKey("Groq")
+                                    revealKeyInput = false
+                                    editingKeyProvider = "Groq"
+                                }
+                            )
+                            ApiKeyRow(
+                                label = "Fish Audio",
+                                maskedValue = fishMaskedKey,
+                                onClick = {
+                                    apiKeyInput = onGetRawApiKey("Fish Audio")
+                                    revealKeyInput = false
+                                    editingKeyProvider = "Fish Audio"
+                                }
+                            )
                         }
 
                         Row(
@@ -507,27 +1052,50 @@ fun SetelanScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            NestedPill {
-                                Icon(
-                                    imageVector = Icons.Outlined.MonitorHeart,
-                                    contentDescription = null,
-                                    tint = AccentBlue,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Text("Test Koneksi", fontFamily = UiSans, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = TextPrimary)
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable(enabled = !isTestingApi) { onTestApiConnection() }
+                            ) {
+                                NestedPill {
+                                    Icon(
+                                        imageVector = Icons.Outlined.MonitorHeart,
+                                        contentDescription = null,
+                                        tint = AccentBlue,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Text(
+                                        text = if (isTestingApi) "Menguji…" else "Test Koneksi",
+                                        fontFamily = UiSans,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = TextPrimary
+                                    )
+                                }
                             }
 
+                            val statusColor = when {
+                                isTestingApi -> SemanticWarning
+                                apiConnectionOk -> SemanticSuccess
+                                else -> SemanticDanger
+                            }
                             Row(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(12.dp))
-                                    .background(SemanticSuccess.copy(alpha = 0.1f))
-                                    .border(1.dp, SemanticSuccess.copy(alpha = 0.25f), RoundedCornerShape(12.dp))
+                                    .background(statusColor.copy(alpha = 0.1f))
+                                    .border(1.dp, statusColor.copy(alpha = 0.25f), RoundedCornerShape(12.dp))
                                     .padding(horizontal = 10.dp, vertical = 5.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(SemanticSuccess))
-                                Text("Terhubung", fontFamily = UiSans, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = SemanticSuccess)
+                                Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(statusColor))
+                                Text(
+                                    text = apiConnectionLabel,
+                                    fontFamily = UiSans,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = statusColor
+                                )
                             }
                         }
                     }
@@ -546,7 +1114,7 @@ fun SetelanScreen(
                             Text(
                                 text = buildAnnotatedString {
                                     withStyle(SpanStyle(color = TextMuted)) { append("Backup terakhir: ") }
-                                    withStyle(SpanStyle(color = TextPrimary, fontWeight = FontWeight.Medium)) { append("17 Nov 2026, 09:30") }
+                                    withStyle(SpanStyle(color = TextPrimary, fontWeight = FontWeight.Medium)) { append(lastBackupLabel) }
                                 },
                                 fontFamily = UiSans,
                                 fontSize = 12.sp
@@ -558,6 +1126,9 @@ fun SetelanScreen(
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(12.dp))
                                 .background(AccentBlue)
+                                .clickable {
+                                    exportZipLauncher.launch("ecosystemku_backup_${LocalDate.now()}.zip")
+                                }
                                 .padding(vertical = 11.dp),
                             contentAlignment = Alignment.Center
                         ) {
@@ -573,6 +1144,7 @@ fun SetelanScreen(
                                 .clip(RoundedCornerShape(12.dp))
                                 .background(ElevatedSurface)
                                 .border(1.dp, BorderSubtle, RoundedCornerShape(12.dp))
+                                .clickable { showImportModeDialog = true }
                                 .padding(vertical = 11.dp),
                             contentAlignment = Alignment.Center
                         ) {
@@ -605,7 +1177,11 @@ fun SetelanScreen(
                         HorizontalDivider(thickness = 1.dp, color = BorderSubtle)
 
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    onShowBanner("Cloud Backup Google Drive dijadwalkan pada v1.1. Gunakan Export ZIP v3 untuk backup lokal.")
+                                },
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -621,13 +1197,48 @@ fun SetelanScreen(
                 }
             }
 
-            // 4. Notifikasi
+            // 4. Notifikasi (AKTIF — AlarmManager & Runtime Permission Fase 2)
             item {
-                SettingsSection(title = "NOTIFIKASI", badgeText = "Izin Aktif") {
+                SettingsSection(
+                    title = "NOTIFIKASI",
+                    badgeText = if (hasNotifPerm && (notifHabitEnabled || notifTodoEnabled)) "Izin Aktif" else null
+                ) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        NotificationRow("Pengingat Habit", "Sesuai hari aktif Daily OS", "07:30")
+                        NotificationRow(
+                            title = "Pengingat Habit",
+                            subtitle = "Sesuai hari aktif Daily OS",
+                            time = notifHabitTime,
+                            enabled = notifHabitEnabled,
+                            onTimeClick = {
+                                pickTime(notifHabitTime) { picked ->
+                                    onSetNotifTimes(picked, notifTodoTime)
+                                }
+                            },
+                            onToggle = { next ->
+                                if (next && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotifPerm) {
+                                    notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                }
+                                onSetNotifHabitEnabled(next)
+                            }
+                        )
                         HorizontalDivider(thickness = 1.dp, color = BorderSubtle)
-                        NotificationRow("Pengingat To-Do", "Hanya jika ada tugas pending", "20:00")
+                        NotificationRow(
+                            title = "Pengingat To-Do",
+                            subtitle = "Hanya jika ada tugas pending",
+                            time = notifTodoTime,
+                            enabled = notifTodoEnabled,
+                            onTimeClick = {
+                                pickTime(notifTodoTime) { picked ->
+                                    onSetNotifTimes(notifHabitTime, picked)
+                                }
+                            },
+                            onToggle = { next ->
+                                if (next && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotifPerm) {
+                                    notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                }
+                                onSetNotifTodoEnabled(next)
+                            }
+                        )
                         HorizontalDivider(thickness = 1.dp, color = BorderSubtle)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -635,7 +1246,22 @@ fun SetelanScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text("Jadwal lokal perangkat", fontFamily = UiSans, fontSize = 11.sp, color = TextSubtle)
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        hasNotifPerm = DailyOsNotificationHelper.hasNotificationPermission(context)
+                                        if (!hasNotifPerm && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                            pendingTestAfterPerm = true
+                                            notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                        } else {
+                                            onTestNotification()
+                                        }
+                                    }
+                                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
                                 Icon(Icons.Outlined.Notifications, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(14.dp))
                                 Text("Test Notifikasi", fontFamily = UiSans, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = AccentBlue)
                             }
@@ -644,7 +1270,7 @@ fun SetelanScreen(
                 }
             }
 
-            // 5. Tampilan
+            // 5. Tampilan (AKTIF — Mode Warna Sistem / Terang / Gelap Fase 2)
             item {
                 SettingsSection(title = "TAMPILAN") {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -665,24 +1291,68 @@ fun SetelanScreen(
                                 .padding(4.dp),
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            Box(modifier = Modifier.weight(1f).padding(vertical = 7.dp), contentAlignment = Alignment.Center) {
-                                Text("Sistem", fontFamily = UiSans, fontSize = 12.sp, color = TextMuted)
+                            val isSys = themeMode == "system"
+                            val isLight = themeMode == "light"
+                            val isDark = themeMode != "system" && themeMode != "light"
+
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(9.dp))
+                                    .background(if (isSys) AccentBlue else Color.Transparent)
+                                    .clickable { onSetThemeMode("system") }
+                                    .padding(vertical = 7.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "Sistem",
+                                    fontFamily = UiSans,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (isSys) FontWeight.SemiBold else FontWeight.Normal,
+                                    color = if (isSys) DominantBg else TextMuted
+                                )
                             }
-                            Box(modifier = Modifier.weight(1f).padding(vertical = 7.dp), contentAlignment = Alignment.Center) {
-                                Text("Terang", fontFamily = UiSans, fontSize = 12.sp, color = TextMuted)
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(9.dp))
+                                    .background(if (isLight) AccentBlue else Color.Transparent)
+                                    .clickable { onSetThemeMode("light") }
+                                    .padding(vertical = 7.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "Terang",
+                                    fontFamily = UiSans,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (isLight) FontWeight.SemiBold else FontWeight.Normal,
+                                    color = if (isLight) DominantBg else TextMuted
+                                )
                             }
                             Row(
                                 modifier = Modifier
                                     .weight(1f)
                                     .clip(RoundedCornerShape(9.dp))
-                                    .background(AccentBlue)
+                                    .background(if (isDark) AccentBlue else Color.Transparent)
+                                    .clickable { onSetThemeMode("dark") }
                                     .padding(vertical = 7.dp),
                                 horizontalArrangement = Arrangement.Center,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(Icons.Outlined.DarkMode, contentDescription = null, tint = DominantBg, modifier = Modifier.size(14.dp))
+                                Icon(
+                                    imageVector = Icons.Outlined.DarkMode,
+                                    contentDescription = null,
+                                    tint = if (isDark) DominantBg else TextMuted,
+                                    modifier = Modifier.size(14.dp)
+                                )
                                 Spacer(modifier = Modifier.width(5.dp))
-                                Text("Gelap", fontFamily = UiSans, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = DominantBg)
+                                Text(
+                                    text = "Gelap",
+                                    fontFamily = UiSans,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (isDark) FontWeight.SemiBold else FontWeight.Normal,
+                                    color = if (isDark) DominantBg else TextMuted
+                                )
                             }
                         }
                     }
@@ -714,26 +1384,15 @@ fun SetelanScreen(
                                     Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(dotColor))
                                     Text(name, fontFamily = UiSans, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = TextPrimary)
                                 }
-                                val isResetActive = name == "Asisten" || name == "Kronik" || name == "LinkKu" || name == "CuciMoney+" || name == "IdeKu" || name == "Daily OS"
                                 Box(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(12.dp))
                                         .background(ElevatedSurface)
                                         .border(1.dp, BorderSubtle, RoundedCornerShape(12.dp))
-                                        .then(
-                                            when (name) {
-                                                "Asisten" -> Modifier.clickable { onResetAssistantData() }
-                                                "Kronik" -> Modifier.clickable { onResetKronik() }
-                                                "LinkKu" -> Modifier.clickable { onResetLinkku() }
-                                                "CuciMoney+" -> Modifier.clickable { onResetCuciMoney() }
-                                                "IdeKu" -> Modifier.clickable { onResetIdeku() }
-                                                "Daily OS" -> Modifier.clickable { onResetDailyOs() }
-                                                else -> Modifier
-                                            }
-                                        )
+                                        .clickable { pendingResetTarget = name }
                                         .padding(horizontal = 10.dp, vertical = 6.dp)
                                 ) {
-                                    Text("Reset", fontFamily = UiSans, fontSize = 11.sp, fontWeight = FontWeight.Medium, color = if (isResetActive) AccentBlue else TextMuted)
+                                    Text("Reset", fontFamily = UiSans, fontSize = 11.sp, fontWeight = FontWeight.Medium, color = AccentBlue)
                                 }
                             }
                             if (idx < appDataRows.lastIndex) {
@@ -749,6 +1408,7 @@ fun SetelanScreen(
                                 .clip(RoundedCornerShape(12.dp))
                                 .background(SemanticDanger.copy(alpha = 0.08f))
                                 .border(1.dp, SemanticDanger.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
+                                .clickable { pendingResetTarget = "ALL" }
                                 .padding(vertical = 11.dp),
                             contentAlignment = Alignment.Center
                         ) {
@@ -790,7 +1450,18 @@ fun SetelanScreen(
                                 NestedPill { Text("Live2D Cubism", fontFamily = UiSans, fontSize = 10.5.sp, color = TextMuted) }
                                 NestedPill { Text("OFL Fonts", fontFamily = UiSans, fontSize = 10.5.sp, color = TextMuted) }
                             }
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        runCatching {
+                                            uriHandler.openUri("https://github.com/wisnuwrdh/Rem-assistant")
+                                        }
+                                    }
+                                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
                                 Text("Repositori GitHub", fontFamily = UiSans, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = AccentBlue)
                                 Icon(Icons.Outlined.NorthEast, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(14.dp))
                             }
@@ -871,30 +1542,58 @@ private fun NestedPill(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun ApiKeyRow(label: String) {
+private fun ApiKeyRow(
+    label: String,
+    maskedValue: String,
+    onClick: () -> Unit
+) {
+    val hasKey = maskedValue != "Belum diisi"
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(ElevatedSurface)
             .border(1.dp, BorderSubtle, RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(AccentBlue))
+            Box(
+                modifier = Modifier
+                    .size(6.dp)
+                    .clip(CircleShape)
+                    .background(if (hasKey) AccentBlue else TextSubtle)
+            )
             Text(label, fontFamily = UiSans, fontSize = 12.5.sp, fontWeight = FontWeight.Medium, color = TextPrimary)
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("•••• 8f2a", fontFamily = UiSans, fontSize = 12.sp, color = TextMuted)
-            Icon(Icons.Outlined.VisibilityOff, contentDescription = null, tint = TextSubtle, modifier = Modifier.size(16.dp))
+            Text(
+                text = maskedValue,
+                fontFamily = UiSans,
+                fontSize = 12.sp,
+                color = if (hasKey) TextMuted else TextSubtle
+            )
+            Icon(
+                imageVector = if (hasKey) Icons.Outlined.VisibilityOff else Icons.Outlined.Edit,
+                contentDescription = "Ubah API Key",
+                tint = TextSubtle,
+                modifier = Modifier.size(16.dp)
+            )
         }
     }
 }
 
 @Composable
-private fun NotificationRow(title: String, subtitle: String, time: String) {
+private fun NotificationRow(
+    title: String,
+    subtitle: String,
+    time: String,
+    enabled: Boolean,
+    onTimeClick: () -> Unit,
+    onToggle: (Boolean) -> Unit
+) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -905,21 +1604,33 @@ private fun NotificationRow(title: String, subtitle: String, time: String) {
             Text(subtitle, fontFamily = UiSans, fontSize = 11.sp, color = TextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            NestedPill {
-                Icon(Icons.Outlined.Schedule, contentDescription = null, tint = TextMuted, modifier = Modifier.size(12.dp))
-                Text(time, fontFamily = UiSans, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = TextPrimary)
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable(onClick = onTimeClick)
+            ) {
+                NestedPill {
+                    Icon(Icons.Outlined.Schedule, contentDescription = null, tint = TextMuted, modifier = Modifier.size(12.dp))
+                    Text(time, fontFamily = UiSans, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = TextPrimary)
+                }
             }
-            // Active switch visual
             Box(
                 modifier = Modifier
                     .width(42.dp)
                     .height(24.dp)
                     .clip(RoundedCornerShape(50))
-                    .background(AccentBlue)
+                    .background(if (enabled) AccentBlue else ElevatedSurface)
+                    .border(1.dp, if (enabled) AccentBlue else BorderLight, RoundedCornerShape(50))
+                    .clickable { onToggle(!enabled) }
                     .padding(3.dp),
-                contentAlignment = Alignment.CenterEnd
+                contentAlignment = if (enabled) Alignment.CenterEnd else Alignment.CenterStart
             ) {
-                Box(modifier = Modifier.size(18.dp).clip(CircleShape).background(DominantBg))
+                Box(
+                    modifier = Modifier
+                        .size(18.dp)
+                        .clip(CircleShape)
+                        .background(if (enabled) DominantBg else TextMuted)
+                )
             }
         }
     }

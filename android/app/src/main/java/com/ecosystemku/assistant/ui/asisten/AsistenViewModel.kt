@@ -61,12 +61,19 @@ import com.ecosystemku.assistant.ui.apps.linkku.LinkkuHelpers
 import com.ecosystemku.assistant.ui.apps.linkku.LinkkuHelpers.toEntity
 import com.ecosystemku.assistant.ui.apps.linkku.LinkkuImportResult
 import com.ecosystemku.assistant.ui.apps.linkku.LinkkuUiState
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.text.SimpleDateFormat
 import java.time.Instant
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
+import java.util.Date
+import java.util.Locale
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.serialization.encodeToString
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -74,8 +81,70 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+
+@Serializable
+private data class EcosystemManifestDto(
+    val version: Int = 3,
+    val app: String = "ecosystemku",
+    val exportedAt: String = "",
+    val profileName: String = "Mahfud"
+)
+
+@Serializable
+private data class AsistenBackupChatDto(
+    val role: String,
+    val content: String,
+    val expressionTag: String? = null,
+    val createdAt: Long = 0L
+)
+
+@Serializable
+private data class AsistenBackupMemoryDto(
+    val category: String,
+    val factKey: String,
+    val factValue: String,
+    val confidence: Float = 0.8f
+)
+
+@Serializable
+private data class AsistenBackupSummaryDto(
+    val summaryText: String,
+    val turnCount: Int = 0,
+    val createdAt: Long = 0L
+)
+
+@Serializable
+private data class AsistenBackupWrapperDto(
+    val profileName: String = "Mahfud",
+    val autoLearnMemory: Boolean = true,
+    val messages: List<AsistenBackupChatDto> = emptyList(),
+    val memories: List<AsistenBackupMemoryDto> = emptyList(),
+    val summaries: List<AsistenBackupSummaryDto> = emptyList()
+)
+
+sealed interface EcosystemZipImportResult {
+    data class Success(val summary: String) : EcosystemZipImportResult
+    data class NeedsPin(val zipBytes: ByteArray, val replaceAll: Boolean) : EcosystemZipImportResult
+    data class Error(val message: String) : EcosystemZipImportResult
+}
 
 data class AsistenUiState(
+    val profileName: String = "Mahfud",
+    val isMuted: Boolean = false,
+    val lastBackupLabel: String = "Belum pernah",
+    val themeMode: String = "dark", // "system" | "light" | "dark"
+    val usePersonalKeys: Boolean = false,
+    val sumopodMaskedKey: String = "Belum diisi",
+    val groqMaskedKey: String = "Belum diisi",
+    val fishMaskedKey: String = "Belum diisi",
+    val apiConnectionOk: Boolean = true,
+    val apiConnectionLabel: String = "Terhubung",
+    val isTestingApi: Boolean = false,
+    val notifHabitEnabled: Boolean = true,
+    val notifTodoEnabled: Boolean = true,
     val messages: List<ChatMessageEntity> = emptyList(),
     val isThinking: Boolean = false,
     val isSpeaking: Boolean = false,
@@ -248,24 +317,70 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
     )
 
     init {
+        com.ecosystemku.assistant.data.local.ApiKeyStore.init(application)
         refreshAsistenPrefsIntoState()
         startObservers()
     }
 
     private fun refreshAsistenPrefsIntoState() {
+        val app = getApplication<Application>()
+        val profileName = asistenPrefs.getString("asisten_profile_name", "Mahfud")
+            ?.trim()
+            ?.ifBlank { "Mahfud" }
+            ?: "Mahfud"
+        val muted = asistenPrefs.getBoolean("asisten_muted", false)
+        val lastBackup = asistenPrefs.getString("asisten_last_backup", "Belum pernah") ?: "Belum pernah"
+        val themeMode = asistenPrefs.getString("asisten_theme_mode", "dark") ?: "dark"
+        val habitNotifOn = asistenPrefs.getBoolean("asisten_notif_habit_on", true)
+        val todoNotifOn = asistenPrefs.getBoolean("asisten_notif_todo_on", true)
         val autoLearn = asistenPrefs.getBoolean("asisten_auto_learn", true)
         val frac = asistenPrefs.getFloat("asisten_stage_fraction", 0.56f).coerceIn(0.35f, 0.70f)
-        _uiState.update { it.copy(autoLearnMemory = autoLearn, stageFraction = frac) }
+        val usePersonal = com.ecosystemku.assistant.data.local.ApiKeyStore.isUsingPersonalKeys(app)
+        val sumopodMask = com.ecosystemku.assistant.data.local.ApiKeyStore.maskedKey("Sumopod", app)
+        val groqMask = com.ecosystemku.assistant.data.local.ApiKeyStore.maskedKey("Groq", app)
+        val fishMask = com.ecosystemku.assistant.data.local.ApiKeyStore.maskedKey("Fish Audio", app)
+        audioManager.setMuted(muted)
+        _uiState.update {
+            it.copy(
+                profileName = profileName,
+                isMuted = muted,
+                lastBackupLabel = lastBackup,
+                themeMode = themeMode,
+                usePersonalKeys = usePersonal,
+                sumopodMaskedKey = sumopodMask,
+                groqMaskedKey = groqMask,
+                fishMaskedKey = fishMask,
+                notifHabitEnabled = habitNotifOn,
+                notifTodoEnabled = todoNotifOn,
+                autoLearnMemory = autoLearn,
+                stageFraction = frac
+            )
+        }
+        val habitTime = dailyOsPrefs.getString("do_notif_habit", "07:00") ?: "07:00"
+        val todoTime = dailyOsPrefs.getString("do_notif_todo", "15:00") ?: "15:00"
+        com.ecosystemku.assistant.notifications.DailyOsNotificationHelper.syncSchedules(
+            context = app,
+            habitEnabled = habitNotifOn,
+            habitTime = habitTime,
+            todoEnabled = todoNotifOn,
+            todoTime = todoTime
+        )
     }
 
     private fun startObservers() {
         viewModelScope.launch {
             chatDao.observeRecent(150).collect { list ->
                 if (list.isEmpty()) {
+                    val name = _uiState.value.profileName.trim()
+                    val greeting = if (name.isNotBlank()) {
+                        "Selamat datang, Tuan $name. Rem siap melayani Tuan kapan saja. 💙"
+                    } else {
+                        "Selamat datang. Rem adalah pelayan Tuan. Ada yang bisa Rem bantu? 💙"
+                    }
                     chatDao.insert(
                         ChatMessageEntity(
                             role = "assistant",
-                            content = "Selamat datang. Rem adalah pelayan Tuan. Ada yang bisa Rem bantu? 💙"
+                            content = greeting
                         )
                     )
                 } else {
@@ -443,6 +558,113 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         _uiState.update { it.copy(isChatOpen = !it.isChatOpen) }
     }
 
+    fun showBannerMessage(message: String) {
+        _uiState.update { it.copy(kronikBannerMessage = message) }
+        viewModelScope.launch {
+            delay(4_000L)
+            if (_uiState.value.kronikBannerMessage == message) {
+                _uiState.update { it.copy(kronikBannerMessage = null) }
+            }
+        }
+    }
+
+    fun setProfileName(name: String) {
+        val clean = name.trim().ifBlank { "Mahfud" }.take(40)
+        asistenPrefs.edit().putString("asisten_profile_name", clean).apply()
+        _uiState.update { it.copy(profileName = clean) }
+        showBannerMessage("Profil diperbarui menjadi \"$clean\"")
+    }
+
+    fun toggleMute() {
+        val next = !_uiState.value.isMuted
+        asistenPrefs.edit().putBoolean("asisten_muted", next).apply()
+        audioManager.setMuted(next)
+        _uiState.update { it.copy(isMuted = next) }
+        showBannerMessage(if (next) "Suara TTS Rem dimatikan" else "Suara TTS Rem diaktifkan")
+    }
+
+    fun clearChatHistoryOnly() {
+        viewModelScope.launch {
+            audioManager.stop()
+            chatDao.clearAll()
+            showBannerMessage("Riwayat obrolan dibersihkan")
+        }
+    }
+
+    fun setThemeMode(mode: String) {
+        val valid = if (mode in listOf("system", "light", "dark")) mode else "dark"
+        asistenPrefs.edit().putString("asisten_theme_mode", valid).apply()
+        _uiState.update { it.copy(themeMode = valid) }
+        val isDark = valid != "light"
+        dailyOsPrefs.edit().putBoolean("do_dark_theme", isDark).apply()
+        refreshDailyOsPrefsIntoState()
+    }
+
+    fun setUsingPersonalKeys(enabled: Boolean) {
+        val app = getApplication<Application>()
+        com.ecosystemku.assistant.data.local.ApiKeyStore.setUsingPersonalKeys(enabled, app)
+        _uiState.update { it.copy(usePersonalKeys = enabled) }
+        showBannerMessage(if (enabled) "Mode Personal Key diaktifkan" else "Mode Server (Default) diaktifkan")
+    }
+
+    fun getRawApiKey(provider: String): String {
+        val app = getApplication<Application>()
+        return com.ecosystemku.assistant.data.local.ApiKeyStore.getKey(provider, app)
+    }
+
+    fun saveApiKey(provider: String, value: String) {
+        val app = getApplication<Application>()
+        com.ecosystemku.assistant.data.local.ApiKeyStore.setKey(provider, value, app)
+        refreshAsistenPrefsIntoState()
+        showBannerMessage("API Key $provider disimpan di Android Keystore")
+    }
+
+    fun testApiConnection() {
+        if (_uiState.value.isTestingApi) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isTestingApi = true, apiConnectionLabel = "Menguji…") }
+            val (ok, label) = sseClient.testConnection()
+            _uiState.update {
+                it.copy(
+                    isTestingApi = false,
+                    apiConnectionOk = ok,
+                    apiConnectionLabel = label
+                )
+            }
+            showBannerMessage("Test Koneksi: $label")
+        }
+    }
+
+    fun setNotifHabitEnabled(enabled: Boolean) {
+        asistenPrefs.edit().putBoolean("asisten_notif_habit_on", enabled).apply()
+        refreshAsistenPrefsIntoState()
+    }
+
+    fun setNotifTodoEnabled(enabled: Boolean) {
+        asistenPrefs.edit().putBoolean("asisten_notif_todo_on", enabled).apply()
+        refreshAsistenPrefsIntoState()
+    }
+
+    fun setNotifTimes(habitTime: String, todoTime: String) {
+        dailyOsPrefs.edit()
+            .putString("do_notif_habit", habitTime.ifBlank { "07:00" })
+            .putString("do_notif_todo", todoTime.ifBlank { "15:00" })
+            .apply()
+        refreshDailyOsPrefsIntoState()
+        refreshAsistenPrefsIntoState()
+        showBannerMessage("Jadwal pengingat diperbarui ($habitTime & $todoTime)")
+    }
+
+    fun triggerTestNotification() {
+        val app = getApplication<Application>()
+        val ok = com.ecosystemku.assistant.notifications.DailyOsNotificationHelper.postTestNotification(app)
+        if (ok) {
+            showBannerMessage("Notifikasi uji dikirim ke status bar")
+        } else {
+            showBannerMessage("Izin notifikasi belum diberikan di perangkat")
+        }
+    }
+
     fun setAutoLearnMemory(enabled: Boolean) {
         asistenPrefs.edit().putBoolean("asisten_auto_learn", enabled).apply()
         _uiState.update { it.copy(autoLearnMemory = enabled) }
@@ -473,10 +695,17 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun deleteSummary(id: Long) {
+        viewModelScope.launch {
+            userMemoryDao.deleteSummaryById(id)
+        }
+    }
+
     fun clearAllMemories() {
         viewModelScope.launch {
             userMemoryDao.clearAll()
             userMemoryDao.clearSummaries()
+            showBannerMessage("Semua memori & rangkuman dibersihkan")
         }
     }
 
@@ -486,6 +715,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
             chatDao.clearAll()
             userMemoryDao.clearAll()
             userMemoryDao.clearSummaries()
+            showBannerMessage("Data Asisten berhasil direset")
         }
     }
 
@@ -493,6 +723,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             kronikSaveJob?.cancel()
             kronikDao.clearAll()
+            showBannerMessage("Data Kronik berhasil direset")
         }
     }
 
@@ -508,6 +739,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 .apply()
             linkkuDao.upsertCategories(LinkkuHelpers.DEFAULT_CATEGORIES)
             refreshLinkkuPrefsIntoState()
+            showBannerMessage("Data LinkKu berhasil direset")
         }
     }
 
@@ -564,6 +796,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 .putString("cm_last_acc", "{}")
                 .apply()
             refreshCuciPrefsIntoState()
+            showBannerMessage("Data CuciMoney+ berhasil direset")
         }
     }
 
@@ -600,6 +833,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 .remove("ik_view_mode")
                 .apply()
             refreshIdekuPrefsIntoState()
+            showBannerMessage("Data IdeKu berhasil direset")
         }
     }
 
@@ -637,6 +871,358 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 .putBoolean("do_done_open", true)
                 .apply()
             refreshDailyOsPrefsIntoState()
+            showBannerMessage("Data Daily OS berhasil direset")
+        }
+    }
+
+    fun resetAllEcosystemData() {
+        viewModelScope.launch {
+            audioManager.stop()
+            kronikSaveJob?.cancel()
+            dailyOsDao.replaceAllData(emptyList(), emptyList())
+            dailyOsPrefs.edit()
+                .remove("do_coach_memory")
+                .remove("do_memory_date")
+                .putBoolean("do_done_open", true)
+                .apply()
+            idekuDao.clearAll()
+            idekuPrefs.edit().remove("ik_categories").remove("ik_view_mode").apply()
+            kronikDao.clearAll()
+            cuciMoneyDao.replaceAllData(
+                books = CuciMoneyHelpers.DEFAULT_BOOKS,
+                accounts = CuciMoneyHelpers.DEFAULT_ACCOUNTS,
+                categories = CuciMoneyHelpers.DEFAULT_CATEGORIES,
+                members = CuciMoneyHelpers.DEFAULT_MEMBERS,
+                transactions = emptyList(),
+                budgets = emptyList(),
+                wishlists = emptyList()
+            )
+            cuciPrefs.edit()
+                .putLong("cm_book_id", 1L)
+                .putBoolean("cm_vis", true)
+                .putBoolean("cm_budget_collapsed", false)
+                .putString("cm_last_acc", "{}")
+                .apply()
+            linkkuDao.clearAllLinks()
+            linkkuDao.clearAllCategories()
+            linkkuPrefs.edit()
+                .remove("lk_pin")
+                .remove("lk_tags_normal")
+                .remove("lk_tags_priv")
+                .putBoolean("lk_seeded_cats", true)
+                .apply()
+            linkkuDao.upsertCategories(LinkkuHelpers.DEFAULT_CATEGORIES)
+            chatDao.clearAll()
+            userMemoryDao.clearAll()
+            userMemoryDao.clearSummaries()
+            refreshDailyOsPrefsIntoState()
+            refreshIdekuPrefsIntoState()
+            refreshCuciPrefsIntoState()
+            refreshLinkkuPrefsIntoState()
+            showBannerMessage("Semua data EcosystemKu berhasil direset")
+        }
+    }
+
+    suspend fun buildEcosystemZipBytes(): ByteArray = withContext(Dispatchers.IO) {
+        val nowIso = Instant.now().toString()
+        val manifestJson = DailyOsHelpers.json.encodeToString(
+            EcosystemManifestDto(
+                version = 3,
+                app = "ecosystemku",
+                exportedAt = nowIso,
+                profileName = _uiState.value.profileName
+            )
+        )
+        val dailyJson = DailyOsHelpers.buildBackupJson(
+            habits = dailyOsDao.getAllHabits(),
+            todos = dailyOsDao.getAllTodos(),
+            coachMemory = _uiState.value.dailyOsState.coachMemory
+        )
+        val idekuJson = IdekuHelpers.buildExportJson(idekuDao.getAll())
+        val kronikJson = KronikHelpers.buildExportJson(kronikDao.getAllEntries())
+        val cuciJson = CuciMoneyHelpers.buildBackupJson(_uiState.value.cuciMoneyState)
+        val linkkuJson = LinkkuHelpers.buildExportJson(
+            links = linkkuDao.getAllLinks(),
+            categories = linkkuDao.getAllCategories(),
+            pinHash = linkkuPrefs.getString("lk_pin", null)
+        )
+        val asistenWrapper = AsistenBackupWrapperDto(
+            profileName = _uiState.value.profileName,
+            autoLearnMemory = _uiState.value.autoLearnMemory,
+            messages = chatDao.getAll().map {
+                AsistenBackupChatDto(it.role, it.content, it.expressionTag, it.createdAt)
+            },
+            memories = userMemoryDao.getAllMemories().map {
+                AsistenBackupMemoryDto(it.category, it.factKey, it.factValue, it.confidence)
+            },
+            summaries = userMemoryDao.getAllSummaries().map {
+                AsistenBackupSummaryDto(it.summaryText, it.turnCount, it.createdAt)
+            }
+        )
+        val asistenJson = DailyOsHelpers.json.encodeToString(asistenWrapper)
+
+        val entries = mapOf(
+            "manifest.json" to manifestJson,
+            "dailyos.json" to dailyJson,
+            "ideku.json" to idekuJson,
+            "kronik.json" to kronikJson,
+            "cucimoney.json" to cuciJson,
+            "linkku.json" to linkkuJson,
+            "asisten.json" to asistenJson
+        )
+
+        val baos = ByteArrayOutputStream()
+        ZipOutputStream(baos).use { zos ->
+            entries.forEach { (filename, content) ->
+                zos.putNextEntry(ZipEntry(filename))
+                zos.write(content.toByteArray(Charsets.UTF_8))
+                zos.closeEntry()
+            }
+        }
+
+        val stamp = SimpleDateFormat("dd MMM yyyy, HH:mm", Locale("in", "ID")).format(Date())
+        asistenPrefs.edit().putString("asisten_last_backup", stamp).apply()
+        _uiState.update { it.copy(lastBackupLabel = stamp) }
+        baos.toByteArray()
+    }
+
+    suspend fun importEcosystemZipBytes(
+        zipBytes: ByteArray,
+        replaceAll: Boolean,
+        linkkuPin: String? = null
+    ): EcosystemZipImportResult = withContext(Dispatchers.IO) {
+        runCatching {
+            val files = mutableMapOf<String, String>()
+            ZipInputStream(ByteArrayInputStream(zipBytes)).use { zis ->
+                var entry = zis.nextEntry
+                while (entry != null) {
+                    if (!entry.isDirectory) {
+                        val name = entry.name.substringAfterLast('/')
+                        files[name] = zis.readBytes().toString(Charsets.UTF_8)
+                    }
+                    zis.closeEntry()
+                    entry = zis.nextEntry
+                }
+            }
+            if (files.isEmpty()) {
+                return@withContext EcosystemZipImportResult.Error("File ZIP kosong atau tidak valid")
+            }
+
+            // Cek apakah LinkKu memiliki tautan privat terenkripsi dan PIN belum diberikan
+            val linkkuRaw = files["linkku.json"]
+            if (!linkkuRaw.isNullOrBlank() && linkkuPin == null) {
+                val lkWrapper = runCatching {
+                    LinkkuHelpers.json.decodeFromString<LinkkuBackupWrapperDto>(linkkuRaw)
+                }.getOrNull()
+                if (lkWrapper != null && !lkWrapper.ep.isNullOrBlank()) {
+                    return@withContext EcosystemZipImportResult.NeedsPin(zipBytes, replaceAll)
+                }
+            }
+
+            var restoredModules = 0
+
+            files["dailyos.json"]?.let { raw ->
+                runCatching {
+                    val (habits, todos, mem) = DailyOsHelpers.parseBackupJson(raw)
+                    if (replaceAll) {
+                        dailyOsDao.replaceAllData(habits, todos)
+                    } else {
+                        val existingHabits = dailyOsDao.getAllHabits().map { it.id }.toSet()
+                        val newHabits = habits.filter { it.id !in existingHabits }
+                        if (newHabits.isNotEmpty()) dailyOsDao.upsertHabits(newHabits)
+                        val existingTodos = dailyOsDao.getAllTodos().map { it.id }.toSet()
+                        val newTodos = todos.filter { it.id !in existingTodos }
+                        if (newTodos.isNotEmpty()) dailyOsDao.upsertTodos(newTodos)
+                    }
+                    if (mem != null && (replaceAll || _uiState.value.dailyOsState.coachMemory == null)) {
+                        dailyOsPrefs.edit()
+                            .putString("do_coach_memory", DailyOsHelpers.json.encodeToString(mem))
+                            .putString("do_memory_date", DailyOsHelpers.todayStr())
+                            .apply()
+                        refreshDailyOsPrefsIntoState()
+                    }
+                    restoredModules++
+                }
+            }
+
+            files["ideku.json"]?.let { raw ->
+                runCatching {
+                    val imported = IdekuHelpers.parseImportJson(raw)
+                    if (replaceAll) idekuDao.clearAll()
+                    val existingIds = if (replaceAll) emptySet() else idekuDao.getAll().map { it.id }.toSet()
+                    val fresh = imported.filter { it.id !in existingIds }
+                    if (fresh.isNotEmpty()) {
+                        idekuDao.upsertAll(fresh)
+                        fresh.filter { it.type == "Wishlist" }.forEach { syncIdekuWishlistToCuciMoney(it) }
+                    }
+                    restoredModules++
+                }
+            }
+
+            files["kronik.json"]?.let { raw ->
+                runCatching {
+                    val imported = KronikHelpers.parseImportEntries(raw)
+                    if (replaceAll) kronikDao.clearAll()
+                    val existingIds = if (replaceAll) emptySet() else kronikDao.getAllEntries().map { it.id }.toSet()
+                    val fresh = imported.filter { it.id !in existingIds }
+                    if (fresh.isNotEmpty()) kronikDao.upsertAll(fresh)
+                    restoredModules++
+                }
+            }
+
+            files["cucimoney.json"]?.let { raw ->
+                runCatching {
+                    val wrapper = CuciMoneyHelpers.parseBackupJson(raw)
+                    val books = wrapper.db.books.map {
+                        CuciBookEntity(it.id, it.name, CuciMoneyHelpers.encodeAccountIds(it.accountIds))
+                    }.ifEmpty { CuciMoneyHelpers.DEFAULT_BOOKS }
+                    val accounts = wrapper.db.accounts.map {
+                        CuciAccountEntity(it.id, it.name, it.type, it.icon, it.balance, it.notes, it.useInBook, it.includeAsset, it.isSavings)
+                    }.ifEmpty { CuciMoneyHelpers.DEFAULT_ACCOUNTS }
+                    val categories = wrapper.db.categories.mapIndexed { idx, c ->
+                        CuciCategoryEntity(c.id, c.name, c.type, c.emoji, idx)
+                    }.ifEmpty { CuciMoneyHelpers.DEFAULT_CATEGORIES }
+                    val members = wrapper.db.members.mapIndexed { idx, m ->
+                        CuciMemberEntity(m.id, m.name, m.emoji, idx)
+                    }.ifEmpty { CuciMoneyHelpers.DEFAULT_MEMBERS }
+                    val transactions = wrapper.db.transactions.map {
+                        CuciTransactionEntity(it.id, it.bookId, it.title, it.amount, it.direction, it.categoryId, it.accountId, it.date, it.memberId, it.transferPair, it.savingsPot, it.createdAt)
+                    }
+                    val budgets = wrapper.masterBudgets.map {
+                        CuciMasterBudgetEntity(it.id, it.bookId, it.month, it.year, it.limit, it.startDate, it.endDate, it.note)
+                    }
+                    val wishlists = wrapper.savings.pots.values.map { p ->
+                        CuciWishlistEntity(
+                            id = p.wishId.ifBlank { "wish_${CuciMoneyHelpers.generateId()}" },
+                            title = p.snap?.title ?: "Wishlist",
+                            price = p.snap?.price ?: 0L,
+                            priority = "Nanti",
+                            image = p.snap?.image ?: "bag",
+                            status = if (p.realizedAt != null) "Selesai" else "Belum",
+                            saved = p.saved,
+                            realizedAt = p.realizedAt,
+                            realizedAmount = p.realizedAmount,
+                            historyJson = CuciMoneyHelpers.encodeWishlistHistory(p.history)
+                        )
+                    }
+                    if (replaceAll) {
+                        cuciMoneyDao.replaceAllData(books, accounts, categories, members, transactions, budgets, wishlists)
+                        cuciPrefs.edit().putLong("cm_book_id", books.first().id).apply()
+                    } else {
+                        val existingBookIds = cuciMoneyDao.getAllBooks().map { it.id }.toSet()
+                        books.filter { it.id !in existingBookIds }.forEach { cuciMoneyDao.upsertBook(it) }
+                        val existingAccIds = cuciMoneyDao.getAllAccounts().map { it.id }.toSet()
+                        accounts.filter { it.id !in existingAccIds }.forEach { cuciMoneyDao.upsertAccount(it) }
+                        val existingCatIds = cuciMoneyDao.getAllCategories().map { it.id }.toSet()
+                        val newCats = categories.filter { it.id !in existingCatIds }
+                        if (newCats.isNotEmpty()) cuciMoneyDao.upsertCategories(newCats)
+                        val existingTrxIds = cuciMoneyDao.getAllTransactions().map { it.id }.toSet()
+                        val newTrxs = transactions.filter { it.id !in existingTrxIds }
+                        if (newTrxs.isNotEmpty()) cuciMoneyDao.upsertTransactions(newTrxs)
+                        val existingWishIds = cuciMoneyDao.getAllWishlists().map { it.id }.toSet()
+                        wishlists.filter { it.id !in existingWishIds }.forEach { cuciMoneyDao.upsertWishlist(it) }
+                    }
+                    refreshCuciPrefsIntoState()
+                    restoredModules++
+                }
+            }
+
+            if (!linkkuRaw.isNullOrBlank()) {
+                val wrapper = runCatching {
+                    LinkkuHelpers.json.decodeFromString<LinkkuBackupWrapperDto>(linkkuRaw)
+                }.getOrNull()
+                if (wrapper != null) {
+                    if (replaceAll) {
+                        linkkuDao.clearAllLinks()
+                        linkkuDao.clearAllCategories()
+                    }
+                    val pubDtos = wrapper.L.ifEmpty { wrapper.links }
+                    var incomingLinks = pubDtos.map { it.toEntity() }
+                    var incomingPrivCats = wrapper.PC.map {
+                        LinkkuCategoryEntity(id = it.id, name = it.n, isPrivate = true)
+                    }
+                    if (!wrapper.ep.isNullOrBlank() && !linkkuPin.isNullOrBlank()) {
+                        val pinHash = LinkkuCrypto.hashPin(linkkuPin)
+                        val decJson = runCatching {
+                            LinkkuCrypto.decryptPrivatePayload(wrapper.ep, pinHash)
+                        }.getOrElse {
+                            return@withContext EcosystemZipImportResult.Error("PIN LinkKu salah atau gagal membuka tautan privat")
+                        }
+                        val privPayload = LinkkuHelpers.json.decodeFromString<LinkkuEncryptedPrivatePayloadDto>(decJson)
+                        incomingLinks = incomingLinks + privPayload.links.map { it.toEntity() }
+                        incomingPrivCats = privPayload.cats.map {
+                            LinkkuCategoryEntity(id = it.id, name = it.n, isPrivate = true)
+                        }
+                        linkkuPrefs.edit().putString("lk_pin", pinHash).apply()
+                        refreshLinkkuPrefsIntoState()
+                    }
+                    val existingLinkIds = linkkuDao.getAllLinks().map { it.id }.toSet()
+                    val newLinks = incomingLinks.filter { it.id !in existingLinkIds }
+                    if (newLinks.isNotEmpty()) linkkuDao.upsertLinks(newLinks)
+                    val existingCatIds = linkkuDao.getAllCategories().map { it.id }.toSet()
+                    val pubCats = wrapper.C.ifEmpty { wrapper.cats }
+                        .map { LinkkuCategoryEntity(id = it.id, name = it.n, isPrivate = false) }
+                    val newCats = (pubCats + incomingPrivCats).filter { it.id.isNotBlank() && it.id !in existingCatIds }
+                    if (newCats.isNotEmpty()) linkkuDao.upsertCategories(newCats)
+                    restoredModules++
+                }
+            }
+
+            files["asisten.json"]?.let { raw ->
+                runCatching {
+                    val wrapper = DailyOsHelpers.json.decodeFromString<AsistenBackupWrapperDto>(raw)
+                    if (wrapper.profileName.isNotBlank()) {
+                        asistenPrefs.edit().putString("asisten_profile_name", wrapper.profileName.trim()).apply()
+                    }
+                    asistenPrefs.edit().putBoolean("asisten_auto_learn", wrapper.autoLearnMemory).apply()
+                    refreshAsistenPrefsIntoState()
+
+                    if (replaceAll) {
+                        chatDao.clearAll()
+                        userMemoryDao.clearAll()
+                        userMemoryDao.clearSummaries()
+                    }
+                    wrapper.memories.forEach { m ->
+                        if (m.factKey.isNotBlank() && m.factValue.isNotBlank()) {
+                            userMemoryDao.upsertByFactKey(m.category, m.factKey, m.factValue, m.confidence, null)
+                        }
+                    }
+                    val existingSummaries = userMemoryDao.getAllSummaries().map { it.summaryText }.toSet()
+                    wrapper.summaries.filter { it.summaryText !in existingSummaries }.forEach { s ->
+                        userMemoryDao.insertSummary(
+                            ConversationSummaryEntity(
+                                summaryText = s.summaryText,
+                                turnCount = s.turnCount,
+                                createdAt = if (s.createdAt > 0L) s.createdAt else System.currentTimeMillis()
+                            )
+                        )
+                    }
+                    val existingMsgKeys = chatDao.getAll().map { "${it.createdAt}_${it.role}" }.toSet()
+                    val freshMsgs = wrapper.messages
+                        .filter { "${it.createdAt}_${it.role}" !in existingMsgKeys }
+                        .map {
+                            ChatMessageEntity(
+                                role = it.role,
+                                content = it.content,
+                                expressionTag = it.expressionTag,
+                                createdAt = if (it.createdAt > 0L) it.createdAt else System.currentTimeMillis()
+                            )
+                        }
+                    if (freshMsgs.isNotEmpty()) {
+                        chatDao.insertAll(freshMsgs)
+                    }
+                    restoredModules++
+                }
+            }
+
+            if (restoredModules == 0) {
+                EcosystemZipImportResult.Error("Tidak ada modul EcosystemKu yang dikenali di dalam ZIP")
+            } else {
+                val modeLabel = if (replaceAll) "Replace" else "Merge"
+                EcosystemZipImportResult.Success("Restore ZIP ($modeLabel) berhasil untuk $restoredModules modul")
+            }
+        }.getOrElse { err ->
+            EcosystemZipImportResult.Error("Gagal membaca ZIP: ${err.message}")
         }
     }
 
@@ -2346,9 +2932,13 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         val recentJournals = kronikDao.getVisibleEntries(3)
         val recentPublicLinks = linkkuDao.getPublicLinks(4)
         val cuciState = _uiState.value.cuciMoneyState
+        val profileName = _uiState.value.profileName.trim()
 
         return buildString {
             append(remSystemPrompt)
+            if (profileName.isNotBlank()) {
+                append("\n\nNama pengguna (Tuan): $profileName")
+            }
             if (topMemories.isNotEmpty()) {
                 append("\n\n## Memori Personal Tentang Tuan (dari SQLite lokal)\n")
                 topMemories.forEach { m ->

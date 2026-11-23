@@ -55,6 +55,9 @@ interface UserMemoryDao {
         }
     }
 
+    @Query("SELECT * FROM user_memories ORDER BY updatedAt ASC, id ASC")
+    suspend fun getAllMemories(): List<UserMemoryEntity>
+
     @Query("DELETE FROM user_memories WHERE id = :id")
     suspend fun deleteById(id: Long)
 
@@ -67,8 +70,14 @@ interface UserMemoryDao {
     @Query("SELECT * FROM conversation_summaries ORDER BY createdAt DESC, id DESC LIMIT :limit")
     suspend fun getLatestSummaries(limit: Int = 5): List<ConversationSummaryEntity>
 
+    @Query("SELECT * FROM conversation_summaries ORDER BY createdAt ASC, id ASC")
+    suspend fun getAllSummaries(): List<ConversationSummaryEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertSummary(summary: ConversationSummaryEntity): Long
+
+    @Query("DELETE FROM conversation_summaries WHERE id = :id")
+    suspend fun deleteSummaryById(id: Long)
 
     @Query("DELETE FROM conversation_summaries")
     suspend fun clearSummaries()

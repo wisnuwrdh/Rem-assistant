@@ -20,8 +20,8 @@ function cleanText(raw) {
     .trim();
 }
 
-async function translateToJapanese(text) {
-  const key = process.env.SUMOPOD_API_KEY;
+async function translateToJapanese(text, customKey) {
+  const key = customKey || process.env.SUMOPOD_API_KEY;
   if (!key) return text;
 
   try {
@@ -92,7 +92,8 @@ export default async function handler(req, res) {
     });
   }
 
-  const apiKey = process.env.FISH_AUDIO_API_KEY;
+  const apiKey = req.headers['x-fish-key']?.trim() || process.env.FISH_AUDIO_API_KEY;
+  const customSumopodKey = req.headers['x-sumopod-key']?.trim();
 
   if (!apiKey) {
     return res.status(500).json({
@@ -109,7 +110,7 @@ export default async function handler(req, res) {
   }
 
   const cleaned = cleanText(text);
-  const japanese = !cleaned ? '' : translated ? cleaned : await translateToJapanese(cleaned);
+  const japanese = !cleaned ? '' : translated ? cleaned : await translateToJapanese(cleaned, customSumopodKey);
   const finalText = truncate(japanese, MAX_CHARS);
 
   if (!finalText) {

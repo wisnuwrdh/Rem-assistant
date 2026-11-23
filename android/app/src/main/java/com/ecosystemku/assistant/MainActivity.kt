@@ -48,9 +48,7 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
         )
         setContent {
-            EcosystemKuTheme {
-                EcosystemKuShell()
-            }
+            EcosystemKuShell()
         }
     }
 }
@@ -66,151 +64,187 @@ fun EcosystemKuShell(
     var showIdeku by rememberSaveable { mutableStateOf(false) }
     var showDailyOs by rememberSaveable { mutableStateOf(false) }
     val asistenState by asistenViewModel.uiState.collectAsStateWithLifecycle()
-    val kronikActions = remember(asistenViewModel) { asistenViewModel.createKronikActions() }
-    val linkkuActions = remember(asistenViewModel) { asistenViewModel.createLinkkuActions() }
-    val cuciMoneyActions = remember(asistenViewModel) { asistenViewModel.createCuciMoneyActions() }
-    val idekuActions = remember(asistenViewModel) { asistenViewModel.createIdekuActions() }
-    val dailyOsActions = remember(asistenViewModel) { asistenViewModel.createDailyOsActions() }
-    val blockerInteraction = remember { MutableInteractionSource() }
-    val lifecycleOwner = LocalLifecycleOwner.current
 
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            when (event) {
-                Lifecycle.Event.ON_START -> asistenViewModel.setForegroundActive(true)
-                Lifecycle.Event.ON_STOP -> asistenViewModel.setForegroundActive(false)
-                else -> Unit
+    EcosystemKuTheme(themeMode = asistenState.themeMode) {
+        val kronikActions = remember(asistenViewModel) { asistenViewModel.createKronikActions() }
+        val linkkuActions = remember(asistenViewModel) { asistenViewModel.createLinkkuActions() }
+        val cuciMoneyActions = remember(asistenViewModel) { asistenViewModel.createCuciMoneyActions() }
+        val idekuActions = remember(asistenViewModel) { asistenViewModel.createIdekuActions() }
+        val dailyOsActions = remember(asistenViewModel) { asistenViewModel.createDailyOsActions() }
+        val blockerInteraction = remember { MutableInteractionSource() }
+        val lifecycleOwner = LocalLifecycleOwner.current
+
+        DisposableEffect(lifecycleOwner) {
+            val observer = LifecycleEventObserver { _, event ->
+                when (event) {
+                    Lifecycle.Event.ON_START -> asistenViewModel.setForegroundActive(true)
+                    Lifecycle.Event.ON_STOP -> asistenViewModel.setForegroundActive(false)
+                    else -> Unit
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose {
+                lifecycleOwner.lifecycle.removeObserver(observer)
             }
         }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
+
+        LaunchedEffect(selectedTab, showKronik, showLinkku, showCuciMoney, showIdeku, showDailyOs) {
+            asistenViewModel.setAsistenTabActive(
+                selectedTab == AppTab.ASISTEN && !showKronik && !showLinkku && !showCuciMoney && !showIdeku && !showDailyOs
+            )
         }
-    }
 
-    LaunchedEffect(selectedTab, showKronik, showLinkku, showCuciMoney, showIdeku, showDailyOs) {
-        asistenViewModel.setAsistenTabActive(
-            selectedTab == AppTab.ASISTEN && !showKronik && !showLinkku && !showCuciMoney && !showIdeku && !showDailyOs
-        )
-    }
-
-    LaunchedEffect(asistenState.pendingOpenApp) {
-        when (asistenState.pendingOpenApp) {
-            "kronik" -> {
-                showLinkku = false
-                showCuciMoney = false
-                showIdeku = false
-                showDailyOs = false
-                showKronik = true
-                asistenViewModel.consumeOpenApp()
-            }
-            "linkku" -> {
-                showKronik = false
-                showCuciMoney = false
-                showIdeku = false
-                showDailyOs = false
-                showLinkku = true
-                asistenViewModel.consumeOpenApp()
-            }
-            "cucimoney" -> {
-                showKronik = false
-                showLinkku = false
-                showIdeku = false
-                showDailyOs = false
-                showCuciMoney = true
-                asistenViewModel.consumeOpenApp()
-            }
-            "ideku" -> {
-                showKronik = false
-                showLinkku = false
-                showCuciMoney = false
-                showDailyOs = false
-                showIdeku = true
-                asistenViewModel.consumeOpenApp()
-            }
-            "dailyos" -> {
-                showKronik = false
-                showLinkku = false
-                showCuciMoney = false
-                showIdeku = false
-                showDailyOs = true
-                asistenViewModel.consumeOpenApp()
+        LaunchedEffect(asistenState.pendingOpenApp) {
+            when (asistenState.pendingOpenApp) {
+                "kronik" -> {
+                    showLinkku = false
+                    showCuciMoney = false
+                    showIdeku = false
+                    showDailyOs = false
+                    showKronik = true
+                    asistenViewModel.consumeOpenApp()
+                }
+                "linkku" -> {
+                    showKronik = false
+                    showCuciMoney = false
+                    showIdeku = false
+                    showDailyOs = false
+                    showLinkku = true
+                    asistenViewModel.consumeOpenApp()
+                }
+                "cucimoney" -> {
+                    showKronik = false
+                    showLinkku = false
+                    showIdeku = false
+                    showDailyOs = false
+                    showCuciMoney = true
+                    asistenViewModel.consumeOpenApp()
+                }
+                "ideku" -> {
+                    showKronik = false
+                    showLinkku = false
+                    showCuciMoney = false
+                    showDailyOs = false
+                    showIdeku = true
+                    asistenViewModel.consumeOpenApp()
+                }
+                "dailyos" -> {
+                    showKronik = false
+                    showLinkku = false
+                    showCuciMoney = false
+                    showIdeku = false
+                    showDailyOs = true
+                    asistenViewModel.consumeOpenApp()
+                }
             }
         }
-    }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(DominantBg)
-    ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            // Pertahankan instance AsistenScreen (termasuk WebView Live2D) agar tidak reload saat pindah tab
-            Box(modifier = Modifier.weight(1f).fillMaxSize()) {
-                AsistenScreen(
-                    uiState = asistenState,
-                    stageController = asistenViewModel.stageController,
-                    inputTextFlow = asistenViewModel.inputText,
-                    streamingTextFlow = asistenViewModel.streamingText,
-                    idleBubbleTextFlow = asistenViewModel.idleBubbleText,
-                    onInputChanged = asistenViewModel::onInputChanged,
-                    onSend = asistenViewModel::sendMessage,
-                    onStageDragDelta = asistenViewModel::onStageDragDelta,
-                    onDismissError = asistenViewModel::dismissError,
-                    onDismissKronikBanner = asistenViewModel::dismissKronikBanner,
-                    onRetryModel = asistenViewModel::retryModel,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .zIndex(if (selectedTab == AppTab.ASISTEN) 1f else 0f)
-                )
-
-                if (selectedTab == AppTab.APPS) {
-                    Box(
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(DominantBg)
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                // Pertahankan instance AsistenScreen (termasuk WebView Live2D) agar tidak reload saat pindah tab
+                Box(modifier = Modifier.weight(1f).fillMaxSize()) {
+                    AsistenScreen(
+                        uiState = asistenState,
+                        stageController = asistenViewModel.stageController,
+                        inputTextFlow = asistenViewModel.inputText,
+                        streamingTextFlow = asistenViewModel.streamingText,
+                        idleBubbleTextFlow = asistenViewModel.idleBubbleText,
+                        onInputChanged = asistenViewModel::onInputChanged,
+                        onSend = asistenViewModel::sendMessage,
+                        onStageDragDelta = asistenViewModel::onStageDragDelta,
+                        onDismissError = asistenViewModel::dismissError,
+                        onDismissKronikBanner = asistenViewModel::dismissKronikBanner,
+                        onRetryModel = asistenViewModel::retryModel,
+                        onToggleMute = asistenViewModel::toggleMute,
+                        onClearChat = asistenViewModel::clearChatHistoryOnly,
                         modifier = Modifier
                             .fillMaxSize()
-                            .zIndex(2f)
-                            .background(DominantBg)
-                            .clickable(interactionSource = blockerInteraction, indication = null) {}
-                    ) {
-                        AppsHubScreen(
-                            kronikEntries = asistenState.kronikEntries,
-                            linkkuLinks = asistenState.linkkuState.links,
-                            cuciMoneyState = asistenState.cuciMoneyState,
-                            idekuState = asistenState.idekuState,
-                            dailyOsState = asistenState.dailyOsState,
-                            onOpenKronik = { showKronik = true },
-                            onOpenLinkku = { showLinkku = true },
-                            onOpenCuciMoney = { showCuciMoney = true },
-                            onOpenIdeku = { showIdeku = true },
-                            onOpenDailyOs = { showDailyOs = true },
-                            onToggleCuciVisibility = cuciMoneyActions.onToggleVisibility,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
-                } else if (selectedTab == AppTab.SETELAN) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .zIndex(2f)
-                            .background(DominantBg)
-                            .clickable(interactionSource = blockerInteraction, indication = null) {}
-                    ) {
-                        SetelanScreen(
-                            memories = asistenState.memories,
-                            autoLearnMemory = asistenState.autoLearnMemory,
-                            isLearningMemory = asistenState.isLearningMemory,
-                            onToggleAutoLearn = asistenViewModel::setAutoLearnMemory,
-                            onAddManualMemory = asistenViewModel::addManualMemory,
-                            onDeleteMemory = asistenViewModel::deleteMemory,
-                            onClearMemories = asistenViewModel::clearAllMemories,
-                            onResetKronik = asistenViewModel::resetKronikData,
-                            onResetLinkku = asistenViewModel::resetLinkkuData,
-                            onResetCuciMoney = asistenViewModel::resetCuciMoneyData,
-                            onResetIdeku = asistenViewModel::resetIdekuData,
-                            onResetDailyOs = asistenViewModel::resetDailyOsData,
-                            onResetAssistantData = asistenViewModel::resetAssistantData,
-                            modifier = Modifier.fillMaxSize()
-                        )
+                            .zIndex(if (selectedTab == AppTab.ASISTEN) 1f else 0f)
+                    )
+
+                    if (selectedTab == AppTab.APPS) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .zIndex(2f)
+                                .background(DominantBg)
+                                .clickable(interactionSource = blockerInteraction, indication = null) {}
+                        ) {
+                            AppsHubScreen(
+                                profileName = asistenState.profileName,
+                                kronikEntries = asistenState.kronikEntries,
+                                linkkuLinks = asistenState.linkkuState.links,
+                                cuciMoneyState = asistenState.cuciMoneyState,
+                                idekuState = asistenState.idekuState,
+                                dailyOsState = asistenState.dailyOsState,
+                                onOpenKronik = { showKronik = true },
+                                onOpenLinkku = { showLinkku = true },
+                                onOpenCuciMoney = { showCuciMoney = true },
+                                onOpenIdeku = { showIdeku = true },
+                                onOpenDailyOs = { showDailyOs = true },
+                                onToggleCuciVisibility = cuciMoneyActions.onToggleVisibility,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+                    } else if (selectedTab == AppTab.SETELAN) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .zIndex(2f)
+                                .background(DominantBg)
+                                .clickable(interactionSource = blockerInteraction, indication = null) {}
+                        ) {
+                            SetelanScreen(
+                                profileName = asistenState.profileName,
+                                lastBackupLabel = asistenState.lastBackupLabel,
+                                themeMode = asistenState.themeMode,
+                                usePersonalKeys = asistenState.usePersonalKeys,
+                                sumopodMaskedKey = asistenState.sumopodMaskedKey,
+                                groqMaskedKey = asistenState.groqMaskedKey,
+                                fishMaskedKey = asistenState.fishMaskedKey,
+                                apiConnectionOk = asistenState.apiConnectionOk,
+                                apiConnectionLabel = asistenState.apiConnectionLabel,
+                                isTestingApi = asistenState.isTestingApi,
+                                notifHabitEnabled = asistenState.notifHabitEnabled,
+                                notifTodoEnabled = asistenState.notifTodoEnabled,
+                                notifHabitTime = asistenState.dailyOsState.notifHabitTime,
+                                notifTodoTime = asistenState.dailyOsState.notifTodoTime,
+                                memories = asistenState.memories,
+                                summaries = asistenState.summaries,
+                                autoLearnMemory = asistenState.autoLearnMemory,
+                                isLearningMemory = asistenState.isLearningMemory,
+                                onUpdateProfileName = asistenViewModel::setProfileName,
+                                onSetThemeMode = asistenViewModel::setThemeMode,
+                                onSetUsingPersonalKeys = asistenViewModel::setUsingPersonalKeys,
+                                onGetRawApiKey = asistenViewModel::getRawApiKey,
+                                onSaveApiKey = asistenViewModel::saveApiKey,
+                                onTestApiConnection = asistenViewModel::testApiConnection,
+                                onSetNotifHabitEnabled = asistenViewModel::setNotifHabitEnabled,
+                                onSetNotifTodoEnabled = asistenViewModel::setNotifTodoEnabled,
+                                onSetNotifTimes = asistenViewModel::setNotifTimes,
+                                onTestNotification = asistenViewModel::triggerTestNotification,
+                                onToggleAutoLearn = asistenViewModel::setAutoLearnMemory,
+                                onAddManualMemory = asistenViewModel::addManualMemory,
+                                onDeleteMemory = asistenViewModel::deleteMemory,
+                                onDeleteSummary = asistenViewModel::deleteSummary,
+                                onClearMemories = asistenViewModel::clearAllMemories,
+                                onExportZip = asistenViewModel::buildEcosystemZipBytes,
+                                onImportZip = asistenViewModel::importEcosystemZipBytes,
+                                onShowBanner = asistenViewModel::showBannerMessage,
+                                onResetKronik = asistenViewModel::resetKronikData,
+                                onResetLinkku = asistenViewModel::resetLinkkuData,
+                                onResetCuciMoney = asistenViewModel::resetCuciMoneyData,
+                                onResetIdeku = asistenViewModel::resetIdekuData,
+                                onResetDailyOs = asistenViewModel::resetDailyOsData,
+                                onResetAssistantData = asistenViewModel::resetAssistantData,
+                                onResetAllData = asistenViewModel::resetAllEcosystemData,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
                     }
                 }
             }

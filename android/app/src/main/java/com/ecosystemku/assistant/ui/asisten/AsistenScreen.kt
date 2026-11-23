@@ -1,13 +1,20 @@
 package com.ecosystemku.assistant.ui.asisten
 
+import android.app.Activity
+import android.content.Intent
+import android.speech.RecognizerIntent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -35,13 +42,17 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.automirrored.outlined.VolumeOff
+import androidx.compose.material.icons.automirrored.outlined.VolumeUp
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -49,6 +60,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -58,8 +72,11 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -67,6 +84,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.ecosystemku.assistant.R
 import com.ecosystemku.assistant.data.local.ChatMessageEntity
 import com.ecosystemku.assistant.live2d.WebViewLive2DStageController
 import com.ecosystemku.assistant.ui.theme.AccentBlue
@@ -99,6 +117,8 @@ fun AsistenScreen(
     onDismissError: () -> Unit,
     onDismissKronikBanner: () -> Unit = {},
     onRetryModel: () -> Unit = {},
+    onToggleMute: () -> Unit = {},
+    onClearChat: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     BoxWithConstraints(
@@ -315,6 +335,8 @@ fun AsistenScreen(
                             .background(TextSubtle.copy(alpha = 0.7f))
                     )
 
+                    var menuExpanded by remember { mutableStateOf(false) }
+
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -328,12 +350,79 @@ fun AsistenScreen(
                             tint = AccentBlue,
                             modifier = Modifier.size(19.dp)
                         )
-                        Icon(
-                            imageVector = Icons.Outlined.MoreHoriz,
-                            contentDescription = "Opsi Obrolan (UI Preview)",
-                            tint = TextSubtle,
-                            modifier = Modifier.size(20.dp)
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(14.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (uiState.isMuted) Icons.AutoMirrored.Outlined.VolumeOff else Icons.AutoMirrored.Outlined.VolumeUp,
+                                contentDescription = if (uiState.isMuted) "Nyalakan Suara TTS" else "Matikan Suara TTS",
+                                tint = if (uiState.isMuted) TextMuted else AccentBlue,
+                                modifier = Modifier
+                                    .size(19.dp)
+                                    .clickable { onToggleMute() }
+                            )
+                            Box {
+                                Icon(
+                                    imageVector = Icons.Outlined.MoreHoriz,
+                                    contentDescription = "Opsi Obrolan",
+                                    tint = TextSubtle,
+                                    modifier = Modifier
+                                        .size(20.dp)
+                                        .clickable { menuExpanded = true }
+                                )
+                                DropdownMenu(
+                                    expanded = menuExpanded,
+                                    onDismissRequest = { menuExpanded = false },
+                                    modifier = Modifier.background(ElevatedSurface)
+                                ) {
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = if (uiState.isMuted) "Nyalakan Suara TTS" else "Matikan Suara TTS (Mute)",
+                                                fontFamily = UiSans,
+                                                fontSize = 13.sp,
+                                                color = TextPrimary
+                                            )
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = if (uiState.isMuted) Icons.AutoMirrored.Outlined.VolumeUp else Icons.AutoMirrored.Outlined.VolumeOff,
+                                                contentDescription = null,
+                                                tint = AccentBlue,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        },
+                                        onClick = {
+                                            menuExpanded = false
+                                            onToggleMute()
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = "Bersihkan Riwayat Obrolan",
+                                                fontFamily = UiSans,
+                                                fontSize = 13.sp,
+                                                color = TextPrimary
+                                            )
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = Icons.Outlined.DeleteOutline,
+                                                contentDescription = null,
+                                                tint = TextMuted,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        },
+                                        onClick = {
+                                            menuExpanded = false
+                                            onClearChat()
+                                        }
+                                    )
+                                }
+                            }
+                        }
                     }
 
                     HorizontalDivider(thickness = 1.dp, color = BorderSubtle)
@@ -432,22 +521,16 @@ private fun ChatBubbleRow(
             verticalAlignment = Alignment.Top
         ) {
             // Avatar Mini Melingkar Rem
-            Box(
+            Image(
+                painter = painterResource(id = R.drawable.rem_chat_avatar),
+                contentDescription = "Rem",
+                contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .padding(top = 2.dp)
-                    .size(32.dp)
+                    .size(34.dp)
                     .clip(CircleShape)
-                    .background(DominantBg)
-                    .border(1.dp, BorderLight, CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "R",
-                    fontFamily = EditorialSerif,
-                    fontSize = 16.sp,
-                    color = AccentBlue
-                )
-            }
+                    .border(1.dp, BorderLight, CircleShape)
+            )
 
             Spacer(modifier = Modifier.width(10.dp))
 
@@ -560,6 +643,19 @@ private fun ChatInputCapsule(
     onSend: () -> Unit
 ) {
     val inputText by inputTextFlow.collectAsStateWithLifecycle()
+    val speechLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val matches = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+            val spoken = matches?.firstOrNull()?.trim().orEmpty()
+            if (spoken.isNotEmpty()) {
+                val combined = if (inputText.isBlank()) spoken else "${inputText.trim()} $spoken"
+                onInputChanged(combined)
+            }
+        }
+    }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -569,7 +665,7 @@ private fun ChatInputCapsule(
             .clip(RoundedCornerShape(50))
             .background(ElevatedSurface)
             .border(1.dp, BorderSubtle, RoundedCornerShape(50))
-            .padding(start = 16.dp, end = 6.dp),
+            .padding(start = 16.dp, end = 7.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
@@ -599,20 +695,34 @@ private fun ChatInputCapsule(
 
         Spacer(modifier = Modifier.width(8.dp))
 
-        // Tombol Mikrofon (UI-only sesuai konfirmasi)
-        IconButton(
-            onClick = {},
+        // Tombol Mikrofon (Input Suara STT Android)
+        Box(
             modifier = Modifier
-                .size(36.dp)
+                .size(34.dp)
                 .shadow(8.dp, CircleShape, ambientColor = AccentBlue, spotColor = AccentBlue)
                 .clip(CircleShape)
                 .background(AccentBlue)
+                .clickable(
+                    enabled = !isThinking,
+                    role = Role.Button,
+                    onClick = {
+                        runCatching {
+                            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "id-ID")
+                                putExtra(RecognizerIntent.EXTRA_PROMPT, "Bicara dengan Rem...")
+                            }
+                            speechLauncher.launch(intent)
+                        }
+                    }
+                ),
+            contentAlignment = Alignment.Center
         ) {
             Icon(
                 imageVector = Icons.Outlined.Mic,
-                contentDescription = "Input Suara (UI Preview)",
+                contentDescription = "Input Suara",
                 tint = DominantBg,
-                modifier = Modifier.size(18.dp)
+                modifier = Modifier.size(17.dp)
             )
         }
 
@@ -620,19 +730,19 @@ private fun ChatInputCapsule(
 
         // Tombol Kirim (Aktif -> /api/chat SSE + /api/tts)
         val canSend = inputText.isNotBlank() && !isThinking
-        IconButton(
-            onClick = onSend,
-            enabled = canSend,
+        Box(
             modifier = Modifier
-                .size(36.dp)
+                .size(34.dp)
                 .clip(CircleShape)
                 .background(if (canSend) AccentBlue else AccentBlue.copy(alpha = 0.45f))
+                .clickable(enabled = canSend, role = Role.Button, onClick = onSend),
+            contentAlignment = Alignment.Center
         ) {
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.Send,
                 contentDescription = "Kirim Pesan",
                 tint = DominantBg,
-                modifier = Modifier.size(16.dp)
+                modifier = Modifier.size(15.dp)
             )
         }
     }

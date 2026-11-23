@@ -1,9 +1,12 @@
 package com.ecosystemku.assistant.data.network
 
 import com.ecosystemku.assistant.BuildConfig
+import com.ecosystemku.assistant.data.local.ApiKeyStore
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -59,7 +62,45 @@ class ChatSseClient(
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .writeTimeout(20, TimeUnit.SECONDS)
+        .addInterceptor { chain ->
+            val headers = ApiKeyStore.activeHeaders()
+            if (headers.isEmpty()) {
+                chain.proceed(chain.request())
+            } else {
+                val builder = chain.request().newBuilder()
+                headers.forEach { (k, v) -> builder.header(k, v) }
+                chain.proceed(builder.build())
+            }
+        }
         .build()
+
+    suspend fun testConnection(): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+        val usingPersonal = ApiKeyStore.isUsingPersonalKeys()
+        if (usingPersonal) {
+            val sumopod = ApiKeyStore.getKey("Sumopod")
+            val groq = ApiKeyStore.getKey("Groq")
+            val fish = ApiKeyStore.getKey("Fish Audio")
+            if (sumopod.isBlank() && groq.isBlank() && fish.isBlank()) {
+                return@withContext false to "Belum ada Personal Key yang diisi"
+            }
+        }
+        runCatching {
+            val req = Request.Builder()
+                .url("${baseUrl.trimEnd('/')}/api/chat")
+                .method("OPTIONS", null)
+                .build()
+            httpClient.newCall(req).execute().use { resp ->
+                if (resp.isSuccessful || resp.code in 200..499) {
+                    val mode = if (usingPersonal) "Personal Key" else "Server Default"
+                    true to "Terhubung ($mode)"
+                } else {
+                    false to "Server HTTP ${resp.code}"
+                }
+            }
+        }.getOrElse { err ->
+            false to "Gagal: ${err.message?.take(36) ?: "Tidak terjangkau"}"
+        }
+    }
 
     fun streamChat(
         messages: List<ChatTurnDto>,

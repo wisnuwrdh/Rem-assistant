@@ -12,7 +12,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const sumopodKey = process.env.SUMOPOD_API_KEY;
+  const sumopodKey = req.headers['x-sumopod-key']?.trim() || process.env.SUMOPOD_API_KEY;
   if (!sumopodKey) {
     return res.status(503).json({ error: 'SUMOPOD_API_KEY belum dikonfigurasi' });
   }

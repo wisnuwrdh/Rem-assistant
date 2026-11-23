@@ -19,7 +19,7 @@ const HOST = '0.0.0.0';
 app.use('/api', (req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Sumopod-Key, X-Groq-Key, X-Fish-Key');
   next();
 });
 

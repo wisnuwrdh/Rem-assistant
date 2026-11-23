@@ -21,9 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.outlined.AccountBalanceWallet
-import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.CheckCircle
-import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Lightbulb
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.LocalFireDepartment
@@ -59,7 +57,6 @@ import com.ecosystemku.assistant.ui.apps.dailyos.DailyOsUiState
 import com.ecosystemku.assistant.ui.apps.ideku.IdekuUiState
 import com.ecosystemku.assistant.ui.apps.kronik.KronikHelpers
 import com.ecosystemku.assistant.ui.apps.linkku.LinkkuHelpers
-import com.ecosystemku.assistant.ui.theme.AccentBlue
 import com.ecosystemku.assistant.ui.theme.AppCuciMoney
 import com.ecosystemku.assistant.ui.theme.AppCuciMoneyLight
 import com.ecosystemku.assistant.ui.theme.AppDailyOs
@@ -87,6 +84,7 @@ import java.util.Locale
  */
 @Composable
 fun AppsHubScreen(
+    profileName: String = "Mahfud",
     kronikEntries: List<KronikEntryEntity> = emptyList(),
     linkkuLinks: List<LinkkuLinkEntity> = emptyList(),
     cuciMoneyState: CuciMoneyUiState = CuciMoneyUiState(),
@@ -104,6 +102,15 @@ fun AppsHubScreen(
         SimpleDateFormat("EEEE, dd MMM yyyy", Locale("in", "ID"))
             .format(Date())
             .replaceFirstChar { it.uppercase() }
+    }
+    val timeGreeting = remember {
+        val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        when (hour) {
+            in 4..10 -> "Selamat Pagi"
+            in 11..14 -> "Selamat Siang"
+            in 15..17 -> "Selamat Sore"
+            else -> "Selamat Malam"
+        }
     }
     LazyColumn(
         modifier = modifier
@@ -130,7 +137,7 @@ fun AppsHubScreen(
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "Selamat Malam, Mahfud",
+                        text = "$timeGreeting, ${profileName.ifBlank { "Tuan" }}",
                         fontFamily = EditorialSerif,
                         fontSize = 24.sp,
                         lineHeight = 28.sp,
@@ -682,20 +689,18 @@ fun AppsHubScreen(
             }
         }
 
-        // Section 2: Aplikasi EcosystemKu (4-column grid, 7 modul)
+        // Section 2: Aplikasi EcosystemKu (4-column grid, 5 modul)
         item {
             val modules = listOf(
                 AppTileData("Daily OS", Icons.Outlined.CheckCircle, AppDailyOs, AppDailyOs.copy(alpha = 0.14f), onClick = onOpenDailyOs),
                 AppTileData("IdeKu", Icons.Outlined.Lightbulb, AppIdeKu, AppIdeKu.copy(alpha = 0.14f), onClick = onOpenIdeku),
                 AppTileData("Kronik", Icons.AutoMirrored.Outlined.MenuBook, AppKronik, AppKronik.copy(alpha = 0.14f), onClick = onOpenKronik),
                 AppTileData("CuciMoney+", Icons.Outlined.AccountBalanceWallet, Color(0xFF4D88C2), AppCuciMoney.copy(alpha = 0.16f), onClick = onOpenCuciMoney),
-                AppTileData("LinkKu", Icons.Outlined.Link, AppLinkKu, AppLinkKu.copy(alpha = 0.14f), onClick = onOpenLinkku),
-                AppTileData("Asisten", Icons.Outlined.AutoAwesome, AccentBlue, AccentBlue.copy(alpha = 0.14f)),
-                AppTileData("Hesych", Icons.Outlined.Language, TextMuted, TextMuted.copy(alpha = 0.12f), isExternal = true)
+                AppTileData("LinkKu", Icons.Outlined.Link, AppLinkKu, AppLinkKu.copy(alpha = 0.14f), onClick = onOpenLinkku)
             )
 
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                SectionHeaderRow(title = "APLIKASI ECOSYSTEMKU", subtitle = "7 Modul")
+                SectionHeaderRow(title = "APLIKASI ECOSYSTEMKU", subtitle = "5 Modul")
 
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     modules.chunked(4).forEach { rowItems ->

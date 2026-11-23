@@ -172,8 +172,18 @@ class TtsAudioManager(
             }
     }
 
+    @Volatile
+    private var isMuted: Boolean = false
+
+    fun setMuted(muted: Boolean) {
+        isMuted = muted
+        if (muted) {
+            stop()
+        }
+    }
+
     fun playTts(text: String, isJapanese: Boolean) {
-        if (text.isBlank()) return
+        if (isMuted || text.isBlank()) return
         stop()
 
         val myGen = playbackGen.incrementAndGet()
@@ -191,7 +201,7 @@ class TtsAudioManager(
                 }
             }.filterNotNull()
 
-            if (myGen != playbackGen.get() || files.isEmpty()) {
+            if (isMuted || myGen != playbackGen.get() || files.isEmpty()) {
                 _isSpeaking.value = false
                 _mouthLevel.value = 0f
                 return@launch
@@ -206,7 +216,7 @@ class TtsAudioManager(
     }
 
     fun playBundledAssetClip(filename: String) {
-        if (filename.isBlank()) return
+        if (isMuted || filename.isBlank()) return
         scope.launch {
             if (_isSpeaking.value && activeBundledClip == null) return@launch
             playbackGen.incrementAndGet()
