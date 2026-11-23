@@ -247,14 +247,13 @@ fun EcosystemKuShell(
                         }
                     }
                 }
-            }
 
-            EcosystemBottomNavBar(
-                selectedTab = selectedTab,
-                onSelectTab = { selectedTab = it },
-                onAsistenDoubleTap = asistenViewModel::toggleChatOpen
-            )
-        }
+                EcosystemBottomNavBar(
+                    selectedTab = selectedTab,
+                    onSelectTab = { selectedTab = it },
+                    onAsistenDoubleTap = asistenViewModel::toggleChatOpen
+                )
+            }
 
         if (showKronik) {
             Box(
@@ -338,6 +337,7 @@ fun EcosystemKuShell(
                     modifier = Modifier.fillMaxSize()
                 )
             }
+        }
         }
     }
 }
