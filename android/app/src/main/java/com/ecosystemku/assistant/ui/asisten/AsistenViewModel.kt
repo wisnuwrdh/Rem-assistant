@@ -4,7 +4,9 @@ import android.app.Application
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
 import android.net.Uri
+import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ecosystemku.assistant.data.audio.TtsAudioManager
@@ -658,36 +660,53 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
 
     private fun decodeAndSaveWallpaperFile(app: Application, uri: Uri): String? {
         return runCatching {
-            val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            app.contentResolver.openInputStream(uri)?.use { stream ->
-                BitmapFactory.decodeStream(stream, null, boundsOpts)
-            } ?: return null
-
-            val srcW = boundsOpts.outWidth
-            val srcH = boundsOpts.outHeight
-            if (srcW <= 0 || srcH <= 0) return null
-
             val maxDim = 1600
-            var sampleSize = 1
-            while (maxOf(srcW / sampleSize, srcH / sampleSize) > maxDim) {
-                sampleSize *= 2
-            }
-
-            val decodeOpts = BitmapFactory.Options().apply { inSampleSize = sampleSize }
-            val decoded = app.contentResolver.openInputStream(uri)?.use { stream ->
-                BitmapFactory.decodeStream(stream, null, decodeOpts)
-            } ?: return null
-
-            val longest = maxOf(decoded.width, decoded.height)
-            val finalBitmap = if (longest > maxDim) {
-                val scale = maxDim.toFloat() / longest.toFloat()
-                val targetW = (decoded.width * scale).toInt().coerceAtLeast(1)
-                val targetH = (decoded.height * scale).toInt().coerceAtLeast(1)
-                Bitmap.createScaledBitmap(decoded, targetW, targetH, true).also {
-                    if (it !== decoded) decoded.recycle()
+            val finalBitmap: Bitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val source = ImageDecoder.createSource(app.contentResolver, uri)
+                ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+                    decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                    val srcW = info.size.width
+                    val srcH = info.size.height
+                    val longest = maxOf(srcW, srcH)
+                    if (longest > maxDim && srcW > 0 && srcH > 0) {
+                        val scale = maxDim.toFloat() / longest.toFloat()
+                        val targetW = (srcW * scale).toInt().coerceAtLeast(1)
+                        val targetH = (srcH * scale).toInt().coerceAtLeast(1)
+                        decoder.setTargetSize(targetW, targetH)
+                    }
                 }
             } else {
-                decoded
+                val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                val boundsStream = app.contentResolver.openInputStream(uri) ?: return null
+                boundsStream.use { stream ->
+                    BitmapFactory.decodeStream(stream, null, boundsOpts)
+                }
+
+                val srcW = boundsOpts.outWidth
+                val srcH = boundsOpts.outHeight
+                if (srcW <= 0 || srcH <= 0) return null
+
+                var sampleSize = 1
+                while (maxOf(srcW / sampleSize, srcH / sampleSize) > maxDim) {
+                    sampleSize *= 2
+                }
+
+                val decodeOpts = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+                val decoded = app.contentResolver.openInputStream(uri)?.use { stream ->
+                    BitmapFactory.decodeStream(stream, null, decodeOpts)
+                } ?: return null
+
+                val longest = maxOf(decoded.width, decoded.height)
+                if (longest > maxDim) {
+                    val scale = maxDim.toFloat() / longest.toFloat()
+                    val targetW = (decoded.width * scale).toInt().coerceAtLeast(1)
+                    val targetH = (decoded.height * scale).toInt().coerceAtLeast(1)
+                    Bitmap.createScaledBitmap(decoded, targetW, targetH, true).also {
+                        if (it !== decoded) decoded.recycle()
+                    }
+                } else {
+                    decoded
+                }
             }
 
             val dir = File(app.filesDir, "stage_wallpaper").apply { mkdirs() }
