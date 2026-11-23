@@ -72,7 +72,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -259,11 +258,9 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
 
         // Pisahkan isSpeaking agar _uiState hanya update saat status bicara berubah
         viewModelScope.launch {
-            audioManager.isSpeaking
-                .distinctUntilChanged()
-                .collect { speaking ->
-                    _uiState.update { it.copy(isSpeaking = speaking) }
-                }
+            audioManager.isSpeaking.collect { speaking ->
+                _uiState.update { it.copy(isSpeaking = speaking) }
+            }
         }
 
         // Throttle RMS lip-sync ke WebView (~30Hz) dan hindari panggilan redundant saat diam
