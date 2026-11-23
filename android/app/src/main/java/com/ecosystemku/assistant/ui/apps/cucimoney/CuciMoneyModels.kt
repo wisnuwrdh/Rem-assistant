@@ -433,6 +433,9 @@ object CuciMoneyHelpers {
         return cal.get(Calendar.YEAR) to cal.get(Calendar.MONTH)
     }
 
+    fun yearMonthPrefix(year: Int, month: Int): String =
+        String.format(Locale.US, "%04d-%02d-", year, month + 1)
+
     fun daysInMonth(year: Int, month: Int): Int {
         val cal = Calendar.getInstance()
         cal.set(year, month, 1)
@@ -450,6 +453,13 @@ object CuciMoneyHelpers {
 
     fun activeBook(state: CuciMoneyUiState): CuciBookEntity? =
         state.books.firstOrNull { it.id == state.currentBookId } ?: state.books.firstOrNull()
+
+    fun bookAccounts(state: CuciMoneyUiState, bookId: Long): List<CuciAccountEntity> {
+        val book = state.books.firstOrNull { it.id == bookId } ?: activeBook(state)
+        val ids = book?.let { parseAccountIds(it.accountIdsJson).toSet() } ?: emptySet()
+        val filtered = state.accounts.filter { !it.isSavings && it.id in ids }
+        return filtered.ifEmpty { state.accounts.filter { !it.isSavings } }
+    }
 
     fun activeBookBalance(state: CuciMoneyUiState): Long {
         val book = activeBook(state) ?: return 0L

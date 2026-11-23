@@ -183,7 +183,7 @@ fun AsistenScreen(
                 }
 
                 // Idle / Touch Thought Bubble
-                AnimatedVisibility(
+                androidx.compose.animation.AnimatedVisibility(
                     visible = uiState.idleBubbleText != null,
                     enter = fadeIn(),
                     exit = fadeOut(),
