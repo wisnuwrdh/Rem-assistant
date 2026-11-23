@@ -3,8 +3,14 @@ package com.ecosystemku.assistant.live2d
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
+import android.util.Log
+import android.view.View
+import android.view.ViewGroup
+import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
 import android.webkit.RenderProcessGoneDetail
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
@@ -50,7 +56,14 @@ class WebViewLive2DStageController(
             .build()
 
         return WebView(context).apply {
-            setBackgroundColor(Color.TRANSPARENT)
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            // Gunakan warna solid DominantBg (#0F0E0C) agar WebGL canvas tidak hilang
+            // akibat bug compositing WebView transparan di dalam Compose AndroidView.
+            setBackgroundColor(Color.parseColor("#0F0E0C"))
+            setLayerType(View.LAYER_TYPE_HARDWARE, null)
             isVerticalScrollBarEnabled = false
             isHorizontalScrollBarEnabled = false
             overScrollMode = WebView.OVER_SCROLL_NEVER
@@ -66,6 +79,18 @@ class WebViewLive2DStageController(
 
             addJavascriptInterface(StageJsBridge(callbacks), "AndroidStageBridge")
 
+            webChromeClient = object : WebChromeClient() {
+                override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
+                    val msg = "${consoleMessage.message()} (${consoleMessage.sourceId()}:${consoleMessage.lineNumber()})"
+                    if (consoleMessage.messageLevel() == ConsoleMessage.MessageLevel.ERROR) {
+                        Log.e("Live2DStage", msg)
+                    } else {
+                        Log.d("Live2DStage", msg)
+                    }
+                    return super.onConsoleMessage(consoleMessage)
+                }
+            }
+
             webViewClient = object : WebViewClient() {
                 override fun shouldInterceptRequest(
                     view: WebView,
@@ -76,6 +101,16 @@ class WebViewLive2DStageController(
 
                 override fun onPageFinished(view: WebView, url: String?) {
                     if (!isActive) evalJs("window.StageAPI?.pause?.();")
+                }
+
+                override fun onReceivedError(
+                    view: WebView,
+                    request: WebResourceRequest,
+                    error: WebResourceError
+                ) {
+                    if (request.isForMainFrame) {
+                        callbacks.onModelError("webview_error: ${error.description}")
+                    }
                 }
 
                 // Renderer WebView bisa dimatikan sistem saat memori menipis (sering terjadi

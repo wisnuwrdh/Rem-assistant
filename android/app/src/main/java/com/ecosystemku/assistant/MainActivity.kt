@@ -20,7 +20,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -160,7 +159,6 @@ fun EcosystemKuShell(
                     modifier = Modifier
                         .fillMaxSize()
                         .zIndex(if (selectedTab == AppTab.ASISTEN) 1f else 0f)
-                        .alpha(if (selectedTab == AppTab.ASISTEN) 1f else 0f)
                 )
 
                 if (selectedTab == AppTab.APPS) {
@@ -222,25 +220,37 @@ fun EcosystemKuShell(
         }
 
         if (showKronik) {
-            KronikScreen(
-                entries = asistenState.kronikEntries,
-                actions = kronikActions,
-                onClose = { showKronik = false },
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .zIndex(10f)
-            )
+                    .background(DominantBg)
+                    .clickable(interactionSource = blockerInteraction, indication = null) {}
+            ) {
+                KronikScreen(
+                    entries = asistenState.kronikEntries,
+                    actions = kronikActions,
+                    onClose = { showKronik = false },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
         }
 
         if (showLinkku) {
-            LinkkuScreen(
-                uiState = asistenState.linkkuState,
-                actions = linkkuActions,
-                onClose = { showLinkku = false },
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .zIndex(11f)
-            )
+                    .background(DominantBg)
+                    .clickable(interactionSource = blockerInteraction, indication = null) {}
+            ) {
+                LinkkuScreen(
+                    uiState = asistenState.linkkuState,
+                    actions = linkkuActions,
+                    onClose = { showLinkku = false },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
         }
 
         if (showCuciMoney) {
@@ -248,6 +258,8 @@ fun EcosystemKuShell(
                 modifier = Modifier
                     .fillMaxSize()
                     .zIndex(12f)
+                    .background(DominantBg)
+                    .clickable(interactionSource = blockerInteraction, indication = null) {}
             ) {
                 CuciMoneyScreen(
                     uiState = asistenState.cuciMoneyState,
@@ -258,25 +270,37 @@ fun EcosystemKuShell(
         }
 
         if (showIdeku) {
-            IdekuScreen(
-                uiState = asistenState.idekuState,
-                actions = idekuActions,
-                onClose = { showIdeku = false },
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .zIndex(13f)
-            )
+                    .background(DominantBg)
+                    .clickable(interactionSource = blockerInteraction, indication = null) {}
+            ) {
+                IdekuScreen(
+                    uiState = asistenState.idekuState,
+                    actions = idekuActions,
+                    onClose = { showIdeku = false },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
         }
 
         if (showDailyOs) {
-            DailyOsScreen(
-                uiState = asistenState.dailyOsState,
-                actions = dailyOsActions,
-                onClose = { showDailyOs = false },
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .zIndex(14f)
-            )
+                    .background(DominantBg)
+                    .clickable(interactionSource = blockerInteraction, indication = null) {}
+            ) {
+                DailyOsScreen(
+                    uiState = asistenState.dailyOsState,
+                    actions = dailyOsActions,
+                    onClose = { showDailyOs = false },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
         }
     }
 }

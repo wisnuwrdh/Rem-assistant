@@ -3,18 +3,38 @@
 
   const canvas = document.getElementById('live2d-canvas');
   const bridge = window.AndroidStageBridge || null;
+  let modelReadySent = false;
+
+  function reportError(msg) {
+    if (!modelReadySent) {
+      bridge?.onModelError?.(String(msg || 'unknown_error'));
+    }
+  }
+
+  window.addEventListener('error', (e) => {
+    reportError(e?.message || 'js_error');
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    reportError(e?.reason?.message || e?.reason || 'unhandled_rejection');
+  });
 
   const app = new PIXI.Application({
     view: canvas,
     width: window.innerWidth || 390,
     height: window.innerHeight || 480,
     backgroundAlpha: 0,
-    antialias: true,
-    resolution: window.devicePixelRatio || 1,
+    antialias: false,
+    preserveDrawingBuffer: true,
+    resolution: Math.min(window.devicePixelRatio || 1, 2),
     autoDensity: true,
     powerPreference: 'default',
     sharedTicker: false,
   });
+
+  if (!app.renderer || !app.renderer.gl) {
+    reportError('webgl_unavailable');
+    return;
+  }
 
   app.renderer.gl.pixelStorei(app.renderer.gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
   app.ticker.maxFPS = 60;
@@ -388,19 +408,48 @@
     }
   };
 
+  if (typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(() => resizeStage()).observe(document.documentElement);
+  }
+
   async function init() {
     try {
       const { Live2DModel } = PIXI.live2d;
+      if (typeof Live2DModel.registerTicker === 'function') {
+        Live2DModel.registerTicker(PIXI.Ticker);
+      }
       model = await Live2DModel.from('./characters/rem/Character.model3.json', {
         autoInteract: false,
       });
+
+      const gl = app.renderer.gl;
+      if (!gl || (gl.isContextLost && gl.isContextLost())) {
+        reportError('webgl_context_lost_on_init');
+        return;
+      }
+      if (!model.textures || model.textures.length === 0 || !model.textures.every((t) => t && t.valid)) {
+        reportError('texture_invalid_after_load');
+        return;
+      }
+      if (!model.internalModel || !model.internalModel.width || !model.internalModel.height) {
+        reportError('internal_model_invalid');
+        return;
+      }
+
       app.stage.addChild(model);
       resizeStage();
       app.ticker.add(onTick, null, -50);
       app.ticker.add(tickRemHand, null, -100);
+      app.render();
+      requestAnimationFrame(() => {
+        resizeStage();
+        app.render();
+      });
+
+      modelReadySent = true;
       bridge?.onModelReady?.();
     } catch (err) {
-      bridge?.onModelError?.(err?.message || String(err));
+      reportError(err?.message || String(err));
     }
   }
 
