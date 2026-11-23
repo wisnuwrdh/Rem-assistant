@@ -43,6 +43,7 @@ import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.HorizontalDivider
@@ -555,7 +556,8 @@ internal fun BukuTabContent(
                                     val fromAcc = accById[outTrx?.accountId]?.name ?: "Akun"
                                     val toAcc = accById[inTrx?.accountId]?.name ?: "Akun"
                                     CuciTransactionRow(
-                                        emoji = "⇄",
+                                        emoji = "",
+                                        isTransfer = true,
                                         iconBg = Color(0x247C8FF5),
                                         title = "$fromAcc → $toAcc",
                                         subtitle = "Transfer",
@@ -1697,6 +1699,7 @@ internal fun CuciTransactionRow(
     subtitle: String,
     amountText: String,
     amountColor: Color,
+    isTransfer: Boolean = false,
     onClick: () -> Unit
 ) {
     Row(
@@ -1713,7 +1716,16 @@ internal fun CuciTransactionRow(
                 .background(iconBg),
             contentAlignment = Alignment.Center
         ) {
-            Text(emoji, fontSize = 18.sp)
+            if (isTransfer) {
+                Icon(
+                    imageVector = Icons.Outlined.SwapHoriz,
+                    contentDescription = "Transfer",
+                    tint = CuciMoneyColors.Transfer,
+                    modifier = Modifier.size(20.dp)
+                )
+            } else {
+                Text(emoji, fontSize = 18.sp)
+            }
         }
         Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {

@@ -31,6 +31,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.FormatListBulleted
+import androidx.compose.material.icons.automirrored.outlined.SubdirectoryArrowRight
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.BarChart
@@ -1971,7 +1972,18 @@ private fun AiTabContent(
                                         }
                                     }
                                     if (!r.alasan.isNullOrBlank()) {
-                                        Text("↳ ${r.alasan}", fontFamily = UiSans, fontSize = 11.sp, color = pal.text2)
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.AutoMirrored.Outlined.SubdirectoryArrowRight,
+                                                contentDescription = null,
+                                                tint = pal.text2,
+                                                modifier = Modifier.size(13.dp)
+                                            )
+                                            Text(r.alasan, fontFamily = UiSans, fontSize = 11.sp, color = pal.text2)
+                                        }
                                     }
                                 }
                                 Box(

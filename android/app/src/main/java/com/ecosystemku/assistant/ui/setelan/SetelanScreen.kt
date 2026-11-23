@@ -91,6 +91,10 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import com.ecosystemku.assistant.data.local.AiConfigField
+import com.ecosystemku.assistant.data.local.AiConfigSnapshot
 import com.ecosystemku.assistant.data.local.ConversationSummaryEntity
 import com.ecosystemku.assistant.data.local.UserMemoryEntity
 import com.ecosystemku.assistant.notifications.DailyOsNotificationHelper
@@ -110,12 +114,9 @@ fun SetelanScreen(
     profileName: String = "Mahfud",
     lastBackupLabel: String = "Belum pernah",
     themeMode: String = "dark",
-    usePersonalKeys: Boolean = false,
-    sumopodMaskedKey: String = "Belum diisi",
-    groqMaskedKey: String = "Belum diisi",
-    fishMaskedKey: String = "Belum diisi",
-    apiConnectionOk: Boolean = true,
-    apiConnectionLabel: String = "Terhubung",
+    aiConfig: AiConfigSnapshot = AiConfigSnapshot(),
+    apiConnectionOk: Boolean = false,
+    apiConnectionLabel: String = "LLM belum diatur",
     isTestingApi: Boolean = false,
     notifHabitEnabled: Boolean = true,
     notifTodoEnabled: Boolean = true,
@@ -127,9 +128,8 @@ fun SetelanScreen(
     isLearningMemory: Boolean = false,
     onUpdateProfileName: (String) -> Unit = {},
     onSetThemeMode: (String) -> Unit = {},
-    onSetUsingPersonalKeys: (Boolean) -> Unit = {},
-    onGetRawApiKey: (String) -> String = { "" },
-    onSaveApiKey: (String, String) -> Unit = { _, _ -> },
+    onGetAiConfigValue: (AiConfigField) -> String = { "" },
+    onSaveAiConfigValue: (AiConfigField, String) -> Unit = { _, _ -> },
     onTestApiConnection: () -> Unit = {},
     onSetNotifHabitEnabled: (Boolean) -> Unit = {},
     onSetNotifTodoEnabled: (Boolean) -> Unit = {},
@@ -161,8 +161,8 @@ fun SetelanScreen(
     var showProfileDialog by remember { mutableStateOf(false) }
     var profileInput by remember(profileName) { mutableStateOf(profileName) }
 
-    var editingKeyProvider by remember { mutableStateOf<String?>(null) }
-    var apiKeyInput by remember { mutableStateOf("") }
+    var editingAiField by remember { mutableStateOf<AiConfigField?>(null) }
+    var aiFieldInput by remember { mutableStateOf("") }
     var revealKeyInput by remember { mutableStateOf(false) }
 
     var showImportModeDialog by remember { mutableStateOf(false) }
@@ -310,69 +310,95 @@ fun SetelanScreen(
         )
     }
 
-    editingKeyProvider?.let { provider ->
+    editingAiField?.let { field ->
         AlertDialog(
-            onDismissRequest = { editingKeyProvider = null },
+            onDismissRequest = { editingAiField = null },
             containerColor = SecondarySurface,
             titleContentColor = TextPrimary,
             textContentColor = TextPrimary,
             title = {
-                Text("API Key $provider", fontFamily = EditorialSerif, fontSize = 20.sp, color = TextPrimary)
+                Text(field.title, fontFamily = EditorialSerif, fontSize = 20.sp, color = TextPrimary)
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        "Disimpan terenkripsi dengan AES-256-GCM di Android Keystore perangkat ini. Kosongkan lalu simpan untuk menghapus key.",
+                        field.helper,
                         fontFamily = UiSans,
                         fontSize = 12.sp,
                         lineHeight = 17.sp,
                         color = TextMuted
                     )
-                    Box(
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(10.dp))
                             .background(ElevatedSurface)
                             .border(1.dp, BorderLight, RoundedCornerShape(10.dp))
-                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        if (apiKeyInput.isEmpty()) {
-                            Text("Masukkan API Key $provider...", fontFamily = UiSans, fontSize = 13.sp, color = TextSubtle)
+                        Box(modifier = Modifier.weight(1f)) {
+                            if (aiFieldInput.isEmpty()) {
+                                Text(
+                                    field.placeholder,
+                                    fontFamily = UiSans,
+                                    fontSize = 13.sp,
+                                    color = TextSubtle,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            BasicTextField(
+                                value = aiFieldInput,
+                                onValueChange = { aiFieldInput = it },
+                                singleLine = true,
+                                visualTransformation = if (field.isSecret && !revealKeyInput) {
+                                    PasswordVisualTransformation()
+                                } else {
+                                    VisualTransformation.None
+                                },
+                                textStyle = TextStyle(fontFamily = UiSans, fontSize = 13.sp, color = TextPrimary),
+                                cursorBrush = SolidColor(AccentBlue),
+                                modifier = Modifier.fillMaxWidth()
+                            )
                         }
-                        BasicTextField(
-                            value = apiKeyInput,
-                            onValueChange = { apiKeyInput = it },
-                            singleLine = true,
-                            textStyle = TextStyle(fontFamily = UiSans, fontSize = 13.sp, color = TextPrimary),
-                            cursorBrush = SolidColor(AccentBlue),
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                        if (field.isSecret) {
+                            Icon(
+                                imageVector = if (revealKeyInput) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                                contentDescription = if (revealKeyInput) "Sembunyikan" else "Tampilkan",
+                                tint = TextMuted,
+                                modifier = Modifier
+                                    .size(18.dp)
+                                    .clickable { revealKeyInput = !revealKeyInput }
+                            )
+                        }
                     }
                 }
             },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        onSaveApiKey(provider, apiKeyInput)
-                        editingKeyProvider = null
+                        onSaveAiConfigValue(field, aiFieldInput)
+                        editingAiField = null
                     }
                 ) {
-                    Text("Simpan Key", color = AccentBlue, fontFamily = UiSans, fontWeight = FontWeight.SemiBold)
+                    Text("Simpan", color = AccentBlue, fontFamily = UiSans, fontWeight = FontWeight.SemiBold)
                 }
             },
             dismissButton = {
                 Row {
-                    if (apiKeyInput.isNotBlank()) {
+                    if (aiFieldInput.isNotBlank()) {
                         TextButton(
                             onClick = {
-                                onSaveApiKey(provider, "")
-                                editingKeyProvider = null
+                                onSaveAiConfigValue(field, "")
+                                editingAiField = null
                             }
                         ) {
                             Text("Hapus", color = SemanticDanger, fontFamily = UiSans)
                         }
                     }
-                    TextButton(onClick = { editingKeyProvider = null }) {
+                    TextButton(onClick = { editingAiField = null }) {
                         Text("Batal", color = TextMuted, fontFamily = UiSans)
                     }
                 }
@@ -967,84 +993,63 @@ fun SetelanScreen(
                 }
             }
 
-            // 2. AI & API Key (AKTIF — Android Keystore Fase 2)
+            // 2. AI & Suara (Full Custom LLM + TTS — Android Keystore)
             item {
-                SettingsSection(title = "AI & API KEY", trailing = "Android Keystore") {
+                SettingsSection(title = "AI & SUARA", trailing = "Full Custom") {
+                    val openFieldEditor: (AiConfigField) -> Unit = { field ->
+                        aiFieldInput = onGetAiConfigValue(field)
+                        revealKeyInput = false
+                        editingAiField = field
+                    }
+
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        // Segmented Control
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(ElevatedSurface)
-                                .border(1.dp, BorderSubtle, RoundedCornerShape(12.dp))
-                                .padding(4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(9.dp))
-                                    .background(if (!usePersonalKeys) AccentBlue else Color.Transparent)
-                                    .clickable { onSetUsingPersonalKeys(false) }
-                                    .padding(vertical = 7.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "Server (Default)",
-                                    fontFamily = UiSans,
-                                    fontSize = 12.sp,
-                                    fontWeight = if (!usePersonalKeys) FontWeight.SemiBold else FontWeight.Medium,
-                                    color = if (!usePersonalKeys) DominantBg else TextMuted
-                                )
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(9.dp))
-                                    .background(if (usePersonalKeys) AccentBlue else Color.Transparent)
-                                    .clickable { onSetUsingPersonalKeys(true) }
-                                    .padding(vertical = 7.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "Personal Key",
-                                    fontFamily = UiSans,
-                                    fontSize = 12.sp,
-                                    fontWeight = if (usePersonalKeys) FontWeight.SemiBold else FontWeight.Medium,
-                                    color = if (usePersonalKeys) DominantBg else TextMuted
+                        Text(
+                            text = "LLM (Chat & Semua Fitur AI)",
+                            fontFamily = UiSans,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = TextMuted
+                        )
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf(
+                                AiConfigField.LLM_BASE_URL,
+                                AiConfigField.LLM_MODEL,
+                                AiConfigField.LLM_API_KEY
+                            ).forEach { field ->
+                                AiConfigRow(
+                                    label = field.title,
+                                    displayValue = aiConfig.displayFor(field),
+                                    filled = aiConfig.isFilled(field),
+                                    isSecret = field.isSecret,
+                                    onClick = { openFieldEditor(field) }
                                 )
                             }
                         }
 
+                        HorizontalDivider(thickness = 1.dp, color = BorderSubtle)
+
+                        Text(
+                            text = "TTS (Suara Rem — Fish Audio)",
+                            fontFamily = UiSans,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = TextMuted
+                        )
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            ApiKeyRow(
-                                label = "Sumopod",
-                                maskedValue = sumopodMaskedKey,
-                                onClick = {
-                                    apiKeyInput = onGetRawApiKey("Sumopod")
-                                    revealKeyInput = false
-                                    editingKeyProvider = "Sumopod"
-                                }
-                            )
-                            ApiKeyRow(
-                                label = "Groq",
-                                maskedValue = groqMaskedKey,
-                                onClick = {
-                                    apiKeyInput = onGetRawApiKey("Groq")
-                                    revealKeyInput = false
-                                    editingKeyProvider = "Groq"
-                                }
-                            )
-                            ApiKeyRow(
-                                label = "Fish Audio",
-                                maskedValue = fishMaskedKey,
-                                onClick = {
-                                    apiKeyInput = onGetRawApiKey("Fish Audio")
-                                    revealKeyInput = false
-                                    editingKeyProvider = "Fish Audio"
-                                }
-                            )
+                            listOf(
+                                AiConfigField.TTS_API_KEY,
+                                AiConfigField.TTS_VOICE_ID,
+                                AiConfigField.TTS_MODEL,
+                                AiConfigField.TTS_BASE_URL
+                            ).forEach { field ->
+                                AiConfigRow(
+                                    label = field.title,
+                                    displayValue = aiConfig.displayFor(field),
+                                    filled = aiConfig.isFilled(field),
+                                    isSecret = field.isSecret,
+                                    onClick = { openFieldEditor(field) }
+                                )
+                            }
                         }
 
                         Row(
@@ -1579,12 +1584,13 @@ private fun NestedPill(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun ApiKeyRow(
+private fun AiConfigRow(
     label: String,
-    maskedValue: String,
+    displayValue: String,
+    filled: Boolean,
+    isSecret: Boolean,
     onClick: () -> Unit
 ) {
-    val hasKey = maskedValue != "Belum diisi"
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1593,28 +1599,46 @@ private fun ApiKeyRow(
             .border(1.dp, BorderSubtle, RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
             Box(
                 modifier = Modifier
                     .size(6.dp)
                     .clip(CircleShape)
-                    .background(if (hasKey) AccentBlue else TextSubtle)
+                    .background(if (filled) AccentBlue else TextSubtle)
             )
-            Text(label, fontFamily = UiSans, fontSize = 12.5.sp, fontWeight = FontWeight.Medium, color = TextPrimary)
-        }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
-                text = maskedValue,
+                text = label,
+                fontFamily = UiSans,
+                fontSize = 12.5.sp,
+                fontWeight = FontWeight.Medium,
+                color = TextPrimary,
+                maxLines = 1,
+                softWrap = false
+            )
+        }
+        Row(
+            modifier = Modifier.weight(1f),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
+        ) {
+            Text(
+                text = displayValue,
                 fontFamily = UiSans,
                 fontSize = 12.sp,
-                color = if (hasKey) TextMuted else TextSubtle
+                color = if (filled) TextMuted else TextSubtle,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false)
             )
             Icon(
-                imageVector = if (hasKey) Icons.Outlined.VisibilityOff else Icons.Outlined.Edit,
-                contentDescription = "Ubah API Key",
+                imageVector = if (filled && isSecret) Icons.Outlined.VisibilityOff else Icons.Outlined.Edit,
+                contentDescription = "Ubah $label",
                 tint = TextSubtle,
                 modifier = Modifier.size(16.dp)
             )

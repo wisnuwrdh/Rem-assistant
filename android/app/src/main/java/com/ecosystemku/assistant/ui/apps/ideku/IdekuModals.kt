@@ -33,6 +33,8 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Lightbulb
 import androidx.compose.material.icons.outlined.ShoppingCart
 import androidx.compose.material3.CircularProgressIndicator
@@ -345,7 +347,12 @@ internal fun IdekuFormDialog(
                     ) {
                         Icon(curIconDef.icon, null, tint = TextPrimary, modifier = Modifier.size(18.dp))
                         Text(curIconDef.label, color = TextPrimary, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                        Text(if (iconPickerExpanded) "▲" else "▼", color = TextMuted, fontSize = 11.sp)
+                        Icon(
+                            imageVector = if (iconPickerExpanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
+                            contentDescription = null,
+                            tint = TextMuted,
+                            modifier = Modifier.size(18.dp)
+                        )
                     }
                     if (iconPickerExpanded) {
                         Spacer(modifier = Modifier.height(8.dp))

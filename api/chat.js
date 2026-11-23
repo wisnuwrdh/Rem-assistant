@@ -1,12 +1,11 @@
 
  // api/chat.js
 // Vercel Serverless Function — Liro Assistant
-// Provider : Sumopod (glm-5.3-flash)
+// Provider : LLM OpenAI-compatible dari header client (X-LLM-Base/Model/Key)
 // Request  : POST { messages, context: { systemPrompt, expression, userName, ecosystem } }
 // Response : { text, model, usage }
 
-const SUMOPOD_API_URL = 'https://ai.sumopod.com/v1/chat/completions';
-const SUMOPOD_MODEL = 'glm-5.3-flash';
+import { resolveLlm, LLM_MISSING_MESSAGE } from './_llm.js';
 const MAX_TOKENS = 1000; // besar: model bisa memakai token untuk reasoning + output 2 bahasa
 const MAX_MESSAGES = 10; // sesuai trim di index.html
 const STREAM = true; // kirim SSE ke client supaya teks muncul bertahap
@@ -18,11 +17,10 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // Validasi API key (mendukung Personal Key via header X-Sumopod-Key)
-  const sumopodKey = req.headers['x-sumopod-key']?.trim() || process.env.SUMOPOD_API_KEY;
-  if (!sumopodKey) {
-    console.error('[chat] SUMOPOD_API_KEY tidak ditemukan');
-    return res.status(500).json({ error: 'Server configuration error' });
+  // Konfigurasi LLM sepenuhnya dari client (tanpa default di server)
+  const llm = resolveLlm(req);
+  if (!llm) {
+    return res.status(503).json({ error: LLM_MISSING_MESSAGE });
   }
 
   // Parse body
@@ -49,8 +47,8 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Tidak ada pesan valid' });
   }
 
-  const sumopodBody = {
-    model: SUMOPOD_MODEL,
+  const llmBody = {
+    model: llm.model,
     messages: [
       { role: 'system', content: systemPrompt + JA_RULE },
       ...sanitized,
@@ -63,62 +61,62 @@ export default async function handler(req, res) {
   if (!STREAM) {
     // ── Mode lama (non-stream), disimpan sebagai fallback ──
     try {
-      const sumopodRes = await fetch(SUMOPOD_API_URL, {
+      const llmRes = await fetch(llm.url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${sumopodKey}`,
+          Authorization: `Bearer ${llm.key}`,
         },
-        body: JSON.stringify({ ...sumopodBody, stream: false }),
+        body: JSON.stringify({ ...llmBody, stream: false }),
       });
 
-      if (!sumopodRes.ok) {
-        const errBody = await sumopodRes.text().catch(() => '');
-        console.error(`[chat] Sumopod ${sumopodRes.status}:`, errBody);
-        if (sumopodRes.status === 429) {
-          return res.status(429).json({ error: 'Rate limit Sumopod, coba lagi sebentar' });
+      if (!llmRes.ok) {
+        const errBody = await llmRes.text().catch(() => '');
+        console.error(`[chat] LLM provider ${llmRes.status}:`, errBody);
+        if (llmRes.status === 429) {
+          return res.status(429).json({ error: 'Rate limit LLM provider, coba lagi sebentar' });
         }
-        return res.status(502).json({ error: `AI provider error (${sumopodRes.status})` });
+        return res.status(502).json({ error: `AI provider error (${llmRes.status})` });
       }
 
-      const data = await sumopodRes.json();
+      const data = await llmRes.json();
       const full = data.choices?.[0]?.message?.content ?? '';
       const { text, tts } = splitTextAndJapanese(full);
 
       if (!text) {
-        console.error('[chat] Respons Sumopod kosong:', JSON.stringify(data));
+        console.error('[chat] Respons LLM provider kosong:', JSON.stringify(data));
         return res.status(502).json({ error: 'Respons AI kosong' });
       }
 
-      return res.status(200).json({ text, tts, model: SUMOPOD_MODEL, usage: data.usage ?? null });
+      return res.status(200).json({ text, tts, model: llm.model, usage: data.usage ?? null });
     } catch (err) {
       console.error('[chat] Unhandled error:', err);
       return res.status(500).json({ error: 'Internal server error' });
     }
   }
 
-  // ── Mode stream: teruskan token Sumopod ke client lewat SSE ──
+  // ── Mode stream: teruskan token LLM provider ke client lewat SSE ──
   // Event yang dikirim ke client:
   //   event: delta  data: {"delta":"..."}   -> potongan teks mentah (masih ada [JA]/[EXPR] campur, client yang buffer)
   //   event: done   data: {"text":"...","tts":"...","model":"..."}  -> hasil final sudah dipisah
   //   event: error  data: {"error":"..."}
   try {
-    const sumopodRes = await fetch(SUMOPOD_API_URL, {
+    const llmRes = await fetch(llm.url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${sumopodKey}`,
+        Authorization: `Bearer ${llm.key}`,
       },
-      body: JSON.stringify(sumopodBody),
+      body: JSON.stringify(llmBody),
     });
 
-    if (!sumopodRes.ok || !sumopodRes.body) {
-      const errBody = await sumopodRes.text().catch(() => '');
-      console.error(`[chat] Sumopod ${sumopodRes.status}:`, errBody);
-      const status = sumopodRes.status === 429 ? 429 : 502;
-      const msg = sumopodRes.status === 429
-        ? 'Rate limit Sumopod, coba lagi sebentar'
-        : `AI provider error (${sumopodRes.status})`;
+    if (!llmRes.ok || !llmRes.body) {
+      const errBody = await llmRes.text().catch(() => '');
+      console.error(`[chat] LLM provider ${llmRes.status}:`, errBody);
+      const status = llmRes.status === 429 ? 429 : 502;
+      const msg = llmRes.status === 429
+        ? 'Rate limit LLM provider, coba lagi sebentar'
+        : `AI provider error (${llmRes.status})`;
       return res.status(status).json({ error: msg });
     }
 
@@ -133,7 +131,7 @@ export default async function handler(req, res) {
       res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
     };
 
-    const reader = sumopodRes.body.getReader();
+    const reader = llmRes.body.getReader();
     const decoder = new TextDecoder();
     let buf = '';
     let full = '';
@@ -171,12 +169,12 @@ export default async function handler(req, res) {
     const { text, tts } = splitTextAndJapanese(full);
 
     if (!text) {
-      console.error('[chat] Respons Sumopod kosong (stream). Full:', full);
+      console.error('[chat] Respons LLM provider kosong (stream). Full:', full);
       sendEvent('error', { error: 'Respons AI kosong' });
       return res.end();
     }
 
-    sendEvent('done', { text, tts, model: SUMOPOD_MODEL });
+    sendEvent('done', { text, tts, model: llm.model });
     return res.end();
 
   } catch (err) {

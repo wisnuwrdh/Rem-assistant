@@ -12,6 +12,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -20,6 +21,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -35,7 +37,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
@@ -43,11 +44,22 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.ArrowForward
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.CheckBox
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.FileDownload
+import androidx.compose.material.icons.outlined.FileUpload
+import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -71,9 +83,11 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -263,128 +277,155 @@ fun KronikScreen(
         )
 
         if (phase != KronikPhase.EDITOR) {
-            Column(
+            BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxSize()
                     .statusBarsPadding()
-                    .navigationBarsPadding(),
-                horizontalAlignment = Alignment.CenterHorizontally
+                    .navigationBarsPadding()
             ) {
-                // Top bar tombol kembali ke Apps Hub
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 18.dp, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                val bookWidth = minOf(310.dp, maxWidth * 0.86f)
+                val bookHeight = minOf(390.dp, (maxHeight - 130.dp).coerceAtLeast(240.dp))
+
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Text(
-                        text = "← Apps",
-                        fontFamily = FontFamily.Serif,
-                        fontSize = 13.sp,
-                        letterSpacing = 1.2.sp,
-                        color = KronikGold.copy(alpha = 0.72f),
+                    // Top bar tombol kembali ke Apps Hub
+                    Row(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { onClose() }
-                            .padding(horizontal = 8.dp, vertical = 6.dp)
-                    )
-                    Text(
-                        text = "${entries.size} LEMBARAN",
-                        fontFamily = FontFamily.Serif,
-                        fontSize = 10.sp,
-                        letterSpacing = 2.4.sp,
-                        color = KronikGold.copy(alpha = 0.45f)
-                    )
-                }
-
-                Spacer(modifier = Modifier.weight(1f))
-
-                // Book container (Cover + Spread)
-                Box(
-                    modifier = Modifier
-                        .widthIn(max = 336.dp)
-                        .fillMaxWidth(0.88f)
-                        .heightIn(min = 380.dp, max = 460.dp)
-                        .shadow(28.dp, RoundedCornerShape(10.dp)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (phase == KronikPhase.COVER) {
-                        KronikBookCover(
-                            isFlipping = isCoverFlipping,
-                            onOpen = ::triggerOpenBook,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    } else {
-                        KronikBookSpread(
-                            entries = entries,
-                            showSettingsMenu = showSettingsMenu,
-                            selectMode = selectMode,
-                            selectedIds = selectedIds,
-                            onToggleSettings = {
-                                showSettingsMenu = !showSettingsMenu
-                                if (!showSettingsMenu && selectMode) {
-                                    selectMode = false
-                                    selectedIds = emptySet()
-                                }
-                            },
-                            onToggleSelectMode = {
-                                selectMode = !selectMode
-                                selectedIds = emptySet()
-                            },
-                            onToggleSelectItem = { id ->
-                                selectedIds = if (id in selectedIds) selectedIds - id else selectedIds + id
-                            },
-                            onDeleteSelected = {
-                                if (selectedIds.isNotEmpty()) {
-                                    actions.onDeleteEntries(selectedIds)
-                                    selectedIds = emptySet()
-                                    selectMode = false
-                                    showSettingsMenu = false
-                                }
-                            },
-                            onExport = {
-                                showSettingsMenu = false
-                                exportLauncher.launch("kronik-backup-${KronikHelpers.todayDateStr()}.json")
-                            },
-                            onImport = {
-                                showSettingsMenu = false
-                                importLauncher.launch(arrayOf("application/json", "*/*"))
-                            },
-                            onOpenEntry = { id -> openEditorFor(id) },
-                            onTogglePin = { id -> actions.onTogglePin(id) },
-                            onNewEntry = { createNewEntryAndOpen() },
-                            onSwipeCloseBook = ::triggerCloseBook,
-                            modifier = Modifier.fillMaxSize()
+                            .fillMaxWidth()
+                            .padding(horizontal = 18.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { onClose() }
+                                .padding(horizontal = 8.dp, vertical = 6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
+                                contentDescription = "Kembali",
+                                tint = KronikGold.copy(alpha = 0.72f),
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Text(
+                                text = "Apps",
+                                fontFamily = FontFamily.Serif,
+                                fontSize = 13.sp,
+                                letterSpacing = 1.2.sp,
+                                color = KronikGold.copy(alpha = 0.72f)
+                            )
+                        }
+                        Text(
+                            text = "${entries.size} LEMBARAN",
+                            fontFamily = FontFamily.Serif,
+                            fontSize = 10.sp,
+                            letterSpacing = 2.4.sp,
+                            color = KronikGold.copy(alpha = 0.45f)
                         )
                     }
-                }
 
-                Spacer(modifier = Modifier.height(18.dp))
+                    Spacer(modifier = Modifier.weight(1f))
 
-                if (phase == KronikPhase.COVER) {
-                    Text(
-                        text = "— JURNAL & LEGENDA —",
-                        fontFamily = FontFamily.Serif,
-                        fontSize = 11.sp,
-                        letterSpacing = 3.5.sp,
-                        color = KronikGold.copy(alpha = 0.28f)
-                    )
-                } else {
-                    Text(
-                        text = "← KEMBALI KE COVER",
-                        fontFamily = FontFamily.Serif,
-                        fontSize = 10.5.sp,
-                        letterSpacing = 2.6.sp,
-                        color = KronikGold.copy(alpha = 0.45f),
+                    // Book container (Cover + Spread — proporsi min(310dp, 86vw) x min(390dp, 100vh - 130dp))
+                    Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { triggerCloseBook() }
-                            .padding(horizontal = 12.dp, vertical = 6.dp)
-                    )
-                }
+                            .size(width = bookWidth, height = bookHeight)
+                            .shadow(28.dp, RoundedCornerShape(10.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (phase == KronikPhase.COVER) {
+                            KronikBookCover(
+                                isFlipping = isCoverFlipping,
+                                onOpen = ::triggerOpenBook,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        } else {
+                            KronikBookSpread(
+                                entries = entries,
+                                showSettingsMenu = showSettingsMenu,
+                                selectMode = selectMode,
+                                selectedIds = selectedIds,
+                                onToggleSettings = {
+                                    showSettingsMenu = !showSettingsMenu
+                                    if (!showSettingsMenu && selectMode) {
+                                        selectMode = false
+                                        selectedIds = emptySet()
+                                    }
+                                },
+                                onToggleSelectMode = {
+                                    selectMode = !selectMode
+                                    selectedIds = emptySet()
+                                },
+                                onToggleSelectItem = { id ->
+                                    selectedIds = if (id in selectedIds) selectedIds - id else selectedIds + id
+                                },
+                                onDeleteSelected = {
+                                    if (selectedIds.isNotEmpty()) {
+                                        actions.onDeleteEntries(selectedIds)
+                                        selectedIds = emptySet()
+                                        selectMode = false
+                                        showSettingsMenu = false
+                                    }
+                                },
+                                onExport = {
+                                    showSettingsMenu = false
+                                    exportLauncher.launch("kronik-backup-${KronikHelpers.todayDateStr()}.json")
+                                },
+                                onImport = {
+                                    showSettingsMenu = false
+                                    importLauncher.launch(arrayOf("application/json", "*/*"))
+                                },
+                                onOpenEntry = { id -> openEditorFor(id) },
+                                onTogglePin = { id -> actions.onTogglePin(id) },
+                                onNewEntry = { createNewEntryAndOpen() },
+                                onSwipeCloseBook = ::triggerCloseBook,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+                    }
 
-                Spacer(modifier = Modifier.weight(1f))
+                    Spacer(modifier = Modifier.height(18.dp))
+
+                    if (phase == KronikPhase.COVER) {
+                        Text(
+                            text = "— JURNAL & LEGENDA —",
+                            fontFamily = FontFamily.Serif,
+                            fontSize = 11.sp,
+                            letterSpacing = 3.5.sp,
+                            color = KronikGold.copy(alpha = 0.28f)
+                        )
+                    } else {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { triggerCloseBook() }
+                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
+                                contentDescription = null,
+                                tint = KronikGold.copy(alpha = 0.45f),
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Text(
+                                text = "KEMBALI KE COVER",
+                                fontFamily = FontFamily.Serif,
+                                fontSize = 10.5.sp,
+                                letterSpacing = 2.6.sp,
+                                color = KronikGold.copy(alpha = 0.45f)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.weight(1f))
+                }
             }
         } else {
             val activeIndex = entries.indexOfFirst { it.id == currentEntryId }.let { idx ->
@@ -585,13 +626,24 @@ fun KronikScreen(
                                             modifier = Modifier.size(16.dp)
                                         )
                                     } else {
-                                        Text(
-                                            text = "✦ DETEKSI MOOD",
-                                            fontFamily = FontFamily.Serif,
-                                            fontSize = 10.5.sp,
-                                            letterSpacing = 1.8.sp,
-                                            color = KronikGold.copy(alpha = 0.8f)
-                                        )
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Outlined.AutoAwesome,
+                                                contentDescription = null,
+                                                tint = KronikGold.copy(alpha = 0.8f),
+                                                modifier = Modifier.size(13.dp)
+                                            )
+                                            Text(
+                                                text = "DETEKSI MOOD",
+                                                fontFamily = FontFamily.Serif,
+                                                fontSize = 10.5.sp,
+                                                letterSpacing = 1.8.sp,
+                                                color = KronikGold.copy(alpha = 0.8f)
+                                            )
+                                        }
                                     }
                                 }
 
@@ -738,10 +790,10 @@ private fun KronikBookCover(
                 verticalArrangement = Arrangement.spacedBy(18.dp),
                 modifier = Modifier.padding(horizontal = 24.dp)
             ) {
-                Text(
-                    text = "✦  ✦  ✦",
-                    fontSize = 14.sp,
-                    color = KronikGold.copy(alpha = 0.5f)
+                KronikFourPointStarRow(
+                    color = KronikGold.copy(alpha = 0.5f),
+                    starSize = 11.dp,
+                    spacing = 10.dp
                 )
 
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -749,14 +801,14 @@ private fun KronikBookCover(
                         text = "Kronik",
                         fontFamily = FontFamily.Serif,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 30.sp,
+                        fontSize = 27.sp,
                         letterSpacing = 1.sp,
                         color = KronikGold
                     )
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
                     Box(
                         modifier = Modifier
-                            .width(64.dp)
+                            .width(56.dp)
                             .height(1.dp)
                             .background(
                                 Brush.horizontalGradient(
@@ -764,21 +816,21 @@ private fun KronikBookCover(
                                 )
                             )
                     )
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
                     Text(
                         text = "jurnal pribadi",
                         fontFamily = FontFamily.Serif,
                         fontStyle = FontStyle.Italic,
-                        fontSize = 13.sp,
+                        fontSize = 12.sp,
                         letterSpacing = 2.sp,
-                        color = KronikGold.copy(alpha = 0.48f)
+                        color = KronikGold.copy(alpha = 0.45f)
                     )
                 }
 
-                Text(
-                    text = "✦  ✦  ✦",
-                    fontSize = 14.sp,
-                    color = KronikGold.copy(alpha = 0.5f)
+                KronikFourPointStarRow(
+                    color = KronikGold.copy(alpha = 0.5f),
+                    starSize = 11.dp,
+                    spacing = 10.dp
                 )
             }
 
@@ -893,15 +945,15 @@ private fun KronikBookSpread(
                         )
                     }
 
-                    Text(
-                        text = "⋯",
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = if (showSettingsMenu) InkColor else InkLight,
+                    Icon(
+                        imageVector = Icons.Outlined.MoreHoriz,
+                        contentDescription = "Pengaturan Daftar Isi",
+                        tint = if (showSettingsMenu) InkColor else InkLight,
                         modifier = Modifier
                             .clip(RoundedCornerShape(6.dp))
                             .clickable { onToggleSettings() }
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                            .size(20.dp)
                     )
                 }
 
@@ -928,14 +980,14 @@ private fun KronikBookSpread(
                             .border(1.dp, Color(0x33A07846), RoundedCornerShape(6.dp))
                     ) {
                         SpreadMenuItem(
-                            icon = "☑",
+                            icon = Icons.Outlined.CheckBox,
                             label = if (selectMode) "Mode Pilih: Aktif" else "Pilih Lembaran",
                             tint = if (selectMode) Color(0xFF8C501E) else InkColor,
                             onClick = onToggleSelectMode
                         )
                         if (selectMode) {
                             SpreadMenuItem(
-                                icon = "✕",
+                                icon = Icons.Outlined.Close,
                                 label = if (confirmBatchDelete) "Yakin hapus ${selectedIds.size} lembaran?" else "Hapus Dipilih (${selectedIds.size})",
                                 tint = Color(0xFFA0321E),
                                 onClick = {
@@ -950,8 +1002,8 @@ private fun KronikBookSpread(
                             )
                         } else {
                             HorizontalDivider(thickness = 1.dp, color = Color(0x26A07846))
-                            SpreadMenuItem(icon = "↑", label = "Export Data (JSON)", tint = InkColor, onClick = onExport)
-                            SpreadMenuItem(icon = "↓", label = "Import Data (JSON)", tint = InkColor, onClick = onImport)
+                            SpreadMenuItem(icon = Icons.Outlined.FileUpload, label = "Export Data (JSON)", tint = InkColor, onClick = onExport)
+                            SpreadMenuItem(icon = Icons.Outlined.FileDownload, label = "Import Data (JSON)", tint = InkColor, onClick = onImport)
                         }
                     }
                 }
@@ -963,15 +1015,21 @@ private fun KronikBookSpread(
                             .fillMaxWidth(),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = "Belum ada lembaran.\nKetuk tombol di bawah untuk mulai ✦",
-                            fontFamily = FontFamily.Serif,
-                            fontStyle = FontStyle.Italic,
-                            fontSize = 12.sp,
-                            lineHeight = 20.sp,
-                            color = InkLight,
-                            textAlign = TextAlign.Center
-                        )
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            KronikFourPointStar(color = InkLight, modifier = Modifier.size(12.dp))
+                            Text(
+                                text = "Belum ada lembaran.\nKetuk tombol di bawah untuk mulai",
+                                fontFamily = FontFamily.Serif,
+                                fontStyle = FontStyle.Italic,
+                                fontSize = 11.5.sp,
+                                lineHeight = 19.sp,
+                                color = InkLight,
+                                textAlign = TextAlign.Center
+                            )
+                        }
                     }
                 } else {
                     LazyColumn(
@@ -1014,7 +1072,7 @@ private fun KronikBookSpread(
                                             }
                                         }
                                     )
-                                    .padding(vertical = 7.dp, horizontal = if (mood != null) 7.dp else 2.dp),
+                                    .padding(vertical = 6.dp, horizontal = if (mood != null) 7.dp else 2.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 if (selectMode) {
@@ -1028,7 +1086,12 @@ private fun KronikBookSpread(
                                         contentAlignment = Alignment.Center
                                     ) {
                                         if (isSelected) {
-                                            Text("✓", fontSize = 9.sp, color = Color(0xFF7A5030))
+                                            Icon(
+                                                imageVector = Icons.Outlined.Check,
+                                                contentDescription = "Dipilih",
+                                                tint = Color(0xFF7A5030),
+                                                modifier = Modifier.size(10.dp)
+                                            )
                                         }
                                     }
                                 }
@@ -1037,15 +1100,15 @@ private fun KronikBookSpread(
                                     text = "${idx + 1}",
                                     fontFamily = FontFamily.Serif,
                                     fontStyle = FontStyle.Italic,
-                                    fontSize = 10.sp,
+                                    fontSize = 9.5.sp,
                                     color = InkLight,
-                                    modifier = Modifier.width(20.dp)
+                                    modifier = Modifier.width(19.dp)
                                 )
 
                                 Text(
                                     text = entry.title.ifBlank { "(tanpa judul)" },
                                     fontFamily = FontFamily.Serif,
-                                    fontSize = 12.5.sp,
+                                    fontSize = 12.sp,
                                     color = InkColor,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
@@ -1058,7 +1121,7 @@ private fun KronikBookSpread(
                                     text = KronikHelpers.formatShortIdDate(entry.date),
                                     fontFamily = FontFamily.Serif,
                                     fontStyle = FontStyle.Italic,
-                                    fontSize = 9.5.sp,
+                                    fontSize = 9.sp,
                                     color = InkLight
                                 )
 
@@ -1087,21 +1150,27 @@ private fun KronikBookSpread(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                Box(
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(5.dp))
                         .background(Color(0x1A8C501E))
                         .border(1.dp, Color(0x40A06428), RoundedCornerShape(5.dp))
                         .clickable { onNewEntry() }
-                        .padding(vertical = 9.dp),
-                    contentAlignment = Alignment.Center
+                        .padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
+                    KronikFourPointStar(
+                        color = Color(0xFF7A5030),
+                        modifier = Modifier.size(10.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "✦  + Lembaran Baru",
+                        text = "+ Lembaran Baru",
                         fontFamily = FontFamily.Serif,
                         fontStyle = FontStyle.Italic,
-                        fontSize = 12.sp,
+                        fontSize = 11.5.sp,
                         color = Color(0xFF7A5030)
                     )
                 }
@@ -1111,8 +1180,47 @@ private fun KronikBookSpread(
 }
 
 @Composable
+private fun KronikFourPointStar(
+    color: Color,
+    modifier: Modifier = Modifier
+) {
+    Canvas(modifier = modifier) {
+        val cx = size.width / 2f
+        val cy = size.height / 2f
+        val rx = size.width / 2f
+        val ry = size.height / 2f
+        val pinch = 0.22f
+        val p = Path().apply {
+            moveTo(cx, 0f)
+            quadraticTo(cx + rx * pinch, cy - ry * pinch, size.width, cy)
+            quadraticTo(cx + rx * pinch, cy + ry * pinch, cx, size.height)
+            quadraticTo(cx - rx * pinch, cy + ry * pinch, 0f, cy)
+            quadraticTo(cx - rx * pinch, cy - ry * pinch, cx, 0f)
+            close()
+        }
+        drawPath(p, color = color)
+    }
+}
+
+@Composable
+private fun KronikFourPointStarRow(
+    color: Color,
+    starSize: androidx.compose.ui.unit.Dp,
+    spacing: androidx.compose.ui.unit.Dp
+) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(spacing),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        repeat(3) {
+            KronikFourPointStar(color = color, modifier = Modifier.size(starSize))
+        }
+    }
+}
+
+@Composable
 private fun SpreadMenuItem(
-    icon: String,
+    icon: ImageVector,
     label: String,
     tint: Color,
     onClick: () -> Unit
@@ -1125,7 +1233,7 @@ private fun SpreadMenuItem(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Text(icon, fontSize = 12.sp, color = tint, modifier = Modifier.width(16.dp), textAlign = TextAlign.Center)
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(15.dp))
         Text(label, fontFamily = FontFamily.Serif, fontSize = 11.5.sp, color = tint)
     }
 }
@@ -1239,12 +1347,9 @@ private fun KronikJournalPageEditor(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text(
-                        text = "← TUTUP",
-                        fontFamily = FontFamily.Serif,
-                        fontSize = 11.sp,
-                        letterSpacing = 1.6.sp,
-                        color = InkLight,
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(3.dp),
                         modifier = Modifier
                             .clip(RoundedCornerShape(6.dp))
                             .clickable {
@@ -1252,7 +1357,21 @@ private fun KronikJournalPageEditor(
                                 onBackToSpread()
                             }
                             .padding(vertical = 4.dp, horizontal = 4.dp)
-                    )
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
+                            contentDescription = "Tutup",
+                            tint = InkLight,
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Text(
+                            text = "TUTUP",
+                            fontFamily = FontFamily.Serif,
+                            fontSize = 11.sp,
+                            letterSpacing = 1.6.sp,
+                            color = InkLight
+                        )
+                    }
 
                     Text(
                         text = if (confirmArchive) "ARSIP?" else "HAPUS",
@@ -1476,7 +1595,12 @@ private fun KronikJournalPageEditor(
                             verticalAlignment = Alignment.Top,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text("✦", fontSize = 11.sp, color = Color(0x80966432))
+                            KronikFourPointStar(
+                                color = Color(0x80966432),
+                                modifier = Modifier
+                                    .padding(top = 3.dp)
+                                    .size(9.dp)
+                            )
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = item.habitName,
@@ -1510,16 +1634,33 @@ private fun KronikJournalPageEditor(
         }
 
         if (showSwipeHint) {
-            Text(
-                text = "← GESER HALAMAN →",
-                fontFamily = FontFamily.Serif,
-                fontSize = 9.sp,
-                letterSpacing = 2.6.sp,
-                color = Color(0x33785028),
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(bottom = 18.dp)
-            )
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
+                    contentDescription = null,
+                    tint = Color(0x33785028),
+                    modifier = Modifier.size(11.dp)
+                )
+                Text(
+                    text = "GESER HALAMAN",
+                    fontFamily = FontFamily.Serif,
+                    fontSize = 9.sp,
+                    letterSpacing = 2.6.sp,
+                    color = Color(0x33785028)
+                )
+                Icon(
+                    imageVector = Icons.AutoMirrored.Outlined.ArrowForward,
+                    contentDescription = null,
+                    tint = Color(0x33785028),
+                    modifier = Modifier.size(11.dp)
+                )
+            }
         }
     }
 

@@ -5,6 +5,9 @@ import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ecosystemku.assistant.data.audio.TtsAudioManager
+import com.ecosystemku.assistant.data.local.AiConfigField
+import com.ecosystemku.assistant.data.local.AiConfigSnapshot
+import com.ecosystemku.assistant.data.local.ApiKeyStore
 import com.ecosystemku.assistant.data.local.AssistantDatabase
 import com.ecosystemku.assistant.data.local.ChatMessageEntity
 import com.ecosystemku.assistant.data.local.ConversationSummaryEntity
@@ -136,12 +139,9 @@ data class AsistenUiState(
     val isMuted: Boolean = false,
     val lastBackupLabel: String = "Belum pernah",
     val themeMode: String = "dark", // "system" | "light" | "dark"
-    val usePersonalKeys: Boolean = false,
-    val sumopodMaskedKey: String = "Belum diisi",
-    val groqMaskedKey: String = "Belum diisi",
-    val fishMaskedKey: String = "Belum diisi",
-    val apiConnectionOk: Boolean = true,
-    val apiConnectionLabel: String = "Terhubung",
+    val aiConfig: AiConfigSnapshot = AiConfigSnapshot(),
+    val apiConnectionOk: Boolean = false,
+    val apiConnectionLabel: String = "LLM belum diatur",
     val isTestingApi: Boolean = false,
     val notifHabitEnabled: Boolean = true,
     val notifTodoEnabled: Boolean = true,
@@ -335,10 +335,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         val todoNotifOn = asistenPrefs.getBoolean("asisten_notif_todo_on", true)
         val autoLearn = asistenPrefs.getBoolean("asisten_auto_learn", true)
         val frac = asistenPrefs.getFloat("asisten_stage_fraction", 0.56f).coerceIn(0.35f, 0.70f)
-        val usePersonal = com.ecosystemku.assistant.data.local.ApiKeyStore.isUsingPersonalKeys(app)
-        val sumopodMask = com.ecosystemku.assistant.data.local.ApiKeyStore.maskedKey("Sumopod", app)
-        val groqMask = com.ecosystemku.assistant.data.local.ApiKeyStore.maskedKey("Groq", app)
-        val fishMask = com.ecosystemku.assistant.data.local.ApiKeyStore.maskedKey("Fish Audio", app)
+        val aiSnap = ApiKeyStore.snapshot(app)
         audioManager.setMuted(muted)
         _uiState.update {
             it.copy(
@@ -346,10 +343,13 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 isMuted = muted,
                 lastBackupLabel = lastBackup,
                 themeMode = themeMode,
-                usePersonalKeys = usePersonal,
-                sumopodMaskedKey = sumopodMask,
-                groqMaskedKey = groqMask,
-                fishMaskedKey = fishMask,
+                aiConfig = aiSnap,
+                apiConnectionOk = aiSnap.isLlmConfigured,
+                apiConnectionLabel = if (aiSnap.isLlmConfigured) {
+                    "Siap (${aiSnap.llmModel})"
+                } else {
+                    "LLM belum diatur"
+                },
                 notifHabitEnabled = habitNotifOn,
                 notifTodoEnabled = todoNotifOn,
                 autoLearnMemory = autoLearn,
@@ -600,23 +600,18 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         refreshDailyOsPrefsIntoState()
     }
 
-    fun setUsingPersonalKeys(enabled: Boolean) {
-        val app = getApplication<Application>()
-        com.ecosystemku.assistant.data.local.ApiKeyStore.setUsingPersonalKeys(enabled, app)
-        _uiState.update { it.copy(usePersonalKeys = enabled) }
-        showBannerMessage(if (enabled) "Mode Personal Key diaktifkan" else "Mode Server (Default) diaktifkan")
-    }
+    fun getAiConfigValue(field: AiConfigField): String =
+        ApiKeyStore.getValue(field, getApplication())
 
-    fun getRawApiKey(provider: String): String {
-        val app = getApplication<Application>()
-        return com.ecosystemku.assistant.data.local.ApiKeyStore.getKey(provider, app)
-    }
-
-    fun saveApiKey(provider: String, value: String) {
-        val app = getApplication<Application>()
-        com.ecosystemku.assistant.data.local.ApiKeyStore.setKey(provider, value, app)
+    fun saveAiConfigValue(field: AiConfigField, value: String) {
+        ApiKeyStore.setValue(field, value, getApplication())
         refreshAsistenPrefsIntoState()
-        showBannerMessage("API Key $provider disimpan di Android Keystore")
+        val label = if (field.isSecret) {
+            "${field.title} disimpan di Android Keystore"
+        } else {
+            "${field.title} diperbarui"
+        }
+        showBannerMessage(label)
     }
 
     fun testApiConnection() {
@@ -2550,6 +2545,12 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
     fun sendMessage() {
         val text = _inputText.value.trim()
         if (text.isEmpty() || _uiState.value.isThinking) return
+        if (!ApiKeyStore.isLlmConfigured(getApplication())) {
+            _uiState.update {
+                it.copy(errorMessage = "LLM belum diatur. Isi Base URL, Model, & API Key di Setelan.")
+            }
+            return
+        }
 
         resetIdleTimer()
         hideIdleBubble()

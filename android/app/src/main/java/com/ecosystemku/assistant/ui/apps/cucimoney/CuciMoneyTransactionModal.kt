@@ -28,6 +28,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowForward
 import androidx.compose.material.icons.automirrored.outlined.Backspace
 import androidx.compose.material.icons.outlined.AccountBalanceWallet
 import androidx.compose.material.icons.outlined.Add
@@ -314,7 +315,12 @@ internal fun AddEditTransactionModal(
                             acc = fromAcc,
                             onClick = { showWalletFor = "from" }
                         )
-                        Text("→", color = CuciMoneyColors.Transfer, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Outlined.ArrowForward,
+                            contentDescription = null,
+                            tint = CuciMoneyColors.Transfer,
+                            modifier = Modifier.size(22.dp)
+                        )
                         TransferAccountCard(
                             modifier = Modifier.weight(1f),
                             label = "Ke Akun",
@@ -368,7 +374,12 @@ internal fun AddEditTransactionModal(
                                 .padding(vertical = 10.dp, horizontal = 4.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            Text("➕", fontSize = 21.sp)
+                            Icon(
+                                imageVector = Icons.Outlined.Add,
+                                contentDescription = "Tambah",
+                                tint = CuciMoneyColors.Primary,
+                                modifier = Modifier.size(24.dp)
+                            )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text("Tambah", color = CuciMoneyColors.Primary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         }

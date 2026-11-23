@@ -1,12 +1,11 @@
-const FISH_AUDIO_BASE = 'https://api.fish.audio/v1/tts';
+import { resolveLlm } from './_llm.js';
 
+// TTS dikonfigurasi dari client lewat header: X-TTS-Key (wajib), X-TTS-Base, X-TTS-Model, X-TTS-Voice.
+// Base/Model/Voice kosong -> pakai nilai bawaan penyedia Fish Audio di bawah (bukan kredensial).
+const FISH_AUDIO_BASE = 'https://api.fish.audio/v1/tts';
 const TTS_MODEL = 's2.1-pro-free';
 const DEFAULT_VOICE_ID = 'eb79df9571014449b42bcd869f86fe0a';
 const MAX_CHARS = 500;
-
-// Cadangan terjemah (dipakai hanya bila chat tidak mengirim versi Jepang)
-const SUMOPOD_API_URL = 'https://ai.sumopod.com/v1/chat/completions';
-const SUMOPOD_MODEL = 'glm-5.3-flash';
 
 function cleanText(raw) {
   return raw
@@ -20,19 +19,19 @@ function cleanText(raw) {
     .trim();
 }
 
-async function translateToJapanese(text, customKey) {
-  const key = customKey || process.env.SUMOPOD_API_KEY;
-  if (!key) return text;
+// Cadangan terjemah (dipakai hanya bila chat tidak mengirim versi Jepang), memakai LLM yang diatur di Setelan
+async function translateToJapanese(text, llm) {
+  if (!llm) return text;
 
   try {
-    const r = await fetch(SUMOPOD_API_URL, {
+    const r = await fetch(llm.url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${key}`,
+        Authorization: `Bearer ${llm.key}`,
       },
       body: JSON.stringify({
-        model: SUMOPOD_MODEL,
+        model: llm.model,
         temperature: 0.3,
         max_tokens: 800,
         stream: false,
@@ -92,12 +91,15 @@ export default async function handler(req, res) {
     });
   }
 
-  const apiKey = req.headers['x-fish-key']?.trim() || process.env.FISH_AUDIO_API_KEY;
-  const customSumopodKey = req.headers['x-sumopod-key']?.trim();
+  const apiKey = req.headers['x-tts-key']?.trim();
+  const ttsBase = req.headers['x-tts-base']?.trim() || FISH_AUDIO_BASE;
+  const ttsModel = req.headers['x-tts-model']?.trim() || TTS_MODEL;
+  const ttsVoice = req.headers['x-tts-voice']?.trim();
+  const llm = resolveLlm(req);
 
   if (!apiKey) {
-    return res.status(500).json({
-      error: 'FISH_AUDIO_API_KEY belum diatur'
+    return res.status(503).json({
+      error: 'TTS belum dikonfigurasi. Isi API Key suara di Setelan.'
     });
   }
 
@@ -110,7 +112,7 @@ export default async function handler(req, res) {
   }
 
   const cleaned = cleanText(text);
-  const japanese = !cleaned ? '' : translated ? cleaned : await translateToJapanese(cleaned, customSumopodKey);
+  const japanese = !cleaned ? '' : translated ? cleaned : await translateToJapanese(cleaned, llm);
   const finalText = truncate(japanese, MAX_CHARS);
 
   if (!finalText) {
@@ -119,15 +121,15 @@ export default async function handler(req, res) {
     });
   }
 
-  const targetVoice = voiceId || DEFAULT_VOICE_ID;
+  const targetVoice = ttsVoice || voiceId || DEFAULT_VOICE_ID;
 
   try {
-    const fishRes = await fetch(FISH_AUDIO_BASE, {
+    const fishRes = await fetch(ttsBase, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
-        'model': TTS_MODEL,
+        'model': ttsModel,
         'Accept': 'audio/mpeg'
       },
       body: JSON.stringify({

@@ -32,6 +32,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.ArrowDropDown
+import androidx.compose.material.icons.outlined.ArrowDropUp
 import androidx.compose.material.icons.outlined.BarChart
 import androidx.compose.material.icons.outlined.ChevronLeft
 import androidx.compose.material.icons.outlined.ChevronRight
@@ -57,8 +59,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -752,14 +756,24 @@ private fun SummaryStatCard(
             Spacer(modifier = Modifier.height(4.dp))
             val isGood = if (positiveIsGood) deltaPct >= 0 else deltaPct <= 0
             val c = if (isGood) CuciMoneyColors.Income else CuciMoneyColors.Expense
-            val arrow = if (deltaPct >= 0) "▲" else "▼"
             val sign = if (deltaPct > 0) "+" else ""
-            Text(
-                text = "$arrow $sign$deltaPct%",
-                color = c,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(1.dp)
+            ) {
+                Icon(
+                    imageVector = if (deltaPct >= 0) Icons.Outlined.ArrowDropUp else Icons.Outlined.ArrowDropDown,
+                    contentDescription = null,
+                    tint = c,
+                    modifier = Modifier.size(14.dp)
+                )
+                Text(
+                    text = "$sign$deltaPct%",
+                    color = c,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
     }
 }
@@ -1248,13 +1262,225 @@ internal fun SetupMasterBudgetModal(
     }
 }
 
+private enum class CuciLainnyaIcon(val tint: Color, val bg: Color) {
+    BUKU(Color(0xFF00BFA5), Color(0x1F00BFA5)),
+    AKUN(Color(0xFF7C8FF5), Color(0x1F7C8FF5)),
+    TRANSAKSI(Color(0xFF00B0FF), Color(0x1F00B0FF)),
+    CARI(Color(0xFFFF5370), Color(0x1FFF5370)),
+    BUDGET(Color(0xFF64DD17), Color(0x1F64DD17)),
+    TABUNGAN(Color(0xFFFFC107), Color(0x21FFC107)),
+    KATEGORI(Color(0xFF7C4DFF), Color(0x1F7C4DFF)),
+    ANGGOTA(Color(0xFFFF6D00), Color(0x1FFF6D00)),
+    EXPORT_CSV(Color(0xFF00BFA5), Color(0x1A00BFA5)),
+    BACKUP(Color(0xFF63B3ED), Color(0x2163B3ED)),
+    RESTORE(Color(0xFFF6AD55), Color(0x21F6AD55)),
+    RESET(Color(0xFFFF5370), Color(0x1AFF5370))
+}
+
 private data class LainnyaTileItem(
-    val icon: String,
+    val icon: CuciLainnyaIcon,
     val label: String,
     val count: String? = null,
     val danger: Boolean = false,
     val onClick: () -> Unit
 )
+
+@Composable
+private fun CuciLainnyaSvgIcon(icon: CuciLainnyaIcon, modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier) {
+        val s = size.minDimension / 24f
+        val stroke = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+        val c = icon.tint
+        when (icon) {
+            CuciLainnyaIcon.BUKU -> {
+                val spine = Path().apply {
+                    moveTo(4f * s, 19.5f * s)
+                    cubicTo(4f * s, 18.1f * s, 5.1f * s, 17f * s, 6.5f * s, 17f * s)
+                    lineTo(20f * s, 17f * s)
+                }
+                val cover = Path().apply {
+                    moveTo(6.5f * s, 2f * s)
+                    lineTo(20f * s, 2f * s)
+                    lineTo(20f * s, 22f * s)
+                    lineTo(6.5f * s, 22f * s)
+                    cubicTo(5.1f * s, 22f * s, 4f * s, 20.9f * s, 4f * s, 19.5f * s)
+                    lineTo(4f * s, 4.5f * s)
+                    cubicTo(4f * s, 3.1f * s, 5.1f * s, 2f * s, 6.5f * s, 2f * s)
+                    close()
+                }
+                drawPath(cover, c, style = stroke)
+                drawPath(spine, c, style = stroke)
+            }
+            CuciLainnyaIcon.AKUN -> {
+                val p = Path().apply {
+                    moveTo(20f * s, 12f * s)
+                    lineTo(20f * s, 7f * s)
+                    lineTo(5f * s, 7f * s)
+                    cubicTo(3.9f * s, 7f * s, 3f * s, 6.1f * s, 3f * s, 5f * s)
+                    cubicTo(3f * s, 3.9f * s, 3.9f * s, 3f * s, 5f * s, 3f * s)
+                    lineTo(18f * s, 3f * s)
+                    lineTo(18f * s, 7f * s)
+                }
+                val body = Path().apply {
+                    moveTo(3f * s, 5f * s)
+                    lineTo(3f * s, 19f * s)
+                    cubicTo(3f * s, 20.1f * s, 3.9f * s, 21f * s, 5f * s, 21f * s)
+                    lineTo(20f * s, 21f * s)
+                    lineTo(20f * s, 16f * s)
+                }
+                drawPath(p, c, style = stroke)
+                drawPath(body, c, style = stroke)
+                drawRoundRect(
+                    color = c,
+                    topLeft = Offset(16f * s, 12f * s),
+                    size = Size(5f * s, 4f * s),
+                    cornerRadius = CornerRadius(2f * s, 2f * s),
+                    style = stroke
+                )
+            }
+            CuciLainnyaIcon.TRANSAKSI -> {
+                listOf(6f, 12f, 18f).forEach { y ->
+                    drawCircle(c, radius = 1.1f * s, center = Offset(3.5f * s, y * s))
+                    drawLine(c, Offset(8f * s, y * s), Offset(21f * s, y * s), strokeWidth = stroke.width, cap = StrokeCap.Round)
+                }
+            }
+            CuciLainnyaIcon.CARI -> {
+                drawCircle(c, radius = 7.5f * s, center = Offset(11f * s, 11f * s), style = stroke)
+                drawLine(c, Offset(16.65f * s, 16.65f * s), Offset(21f * s, 21f * s), strokeWidth = stroke.width, cap = StrokeCap.Round)
+            }
+            CuciLainnyaIcon.BUDGET -> {
+                drawLine(c, Offset(12f * s, 2f * s), Offset(12f * s, 22f * s), strokeWidth = stroke.width, cap = StrokeCap.Round)
+                val dollar = Path().apply {
+                    moveTo(16.5f * s, 5.5f * s)
+                    lineTo(9.5f * s, 5.5f * s)
+                    cubicTo(7.6f * s, 5.5f * s, 6f * s, 7f * s, 6f * s, 8.75f * s)
+                    cubicTo(6f * s, 10.5f * s, 7.6f * s, 12f * s, 9.5f * s, 12f * s)
+                    lineTo(14.5f * s, 12f * s)
+                    cubicTo(16.4f * s, 12f * s, 18f * s, 13.5f * s, 18f * s, 15.25f * s)
+                    cubicTo(18f * s, 17f * s, 16.4f * s, 18.5f * s, 14.5f * s, 18.5f * s)
+                    lineTo(6.5f * s, 18.5f * s)
+                }
+                drawPath(dollar, c, style = stroke)
+            }
+            CuciLainnyaIcon.TABUNGAN -> {
+                drawCircle(c, radius = 9f * s, center = Offset(12f * s, 12f * s), style = stroke)
+                drawCircle(c, radius = 5f * s, center = Offset(12f * s, 12f * s), style = stroke)
+                drawCircle(c, radius = 1.4f * s, center = Offset(12f * s, 12f * s))
+            }
+            CuciLainnyaIcon.KATEGORI -> {
+                val box = Size(7f * s, 7f * s)
+                val r = CornerRadius(1.5f * s, 1.5f * s)
+                drawRoundRect(c, Offset(3f * s, 3f * s), box, r, style = stroke)
+                drawRoundRect(c, Offset(14f * s, 3f * s), box, r, style = stroke)
+                drawRoundRect(c, Offset(3f * s, 14f * s), box, r, style = stroke)
+                drawRoundRect(c, Offset(14f * s, 14f * s), box, r, style = stroke)
+            }
+            CuciLainnyaIcon.ANGGOTA -> {
+                drawCircle(c, radius = 3.8f * s, center = Offset(9f * s, 7f * s), style = stroke)
+                val u1 = Path().apply {
+                    moveTo(2f * s, 21f * s)
+                    lineTo(2f * s, 19f * s)
+                    cubicTo(2f * s, 16.8f * s, 3.8f * s, 15f * s, 6f * s, 15f * s)
+                    lineTo(12f * s, 15f * s)
+                    cubicTo(14.2f * s, 15f * s, 16f * s, 16.8f * s, 16f * s, 19f * s)
+                    lineTo(16f * s, 21f * s)
+                }
+                val u2Head = Path().apply {
+                    moveTo(15.5f * s, 3.5f * s)
+                    cubicTo(17.5f * s, 4f * s, 18.8f * s, 5.8f * s, 18.4f * s, 7.8f * s)
+                    cubicTo(18.1f * s, 9.2f * s, 17f * s, 10.3f * s, 15.5f * s, 10.7f * s)
+                }
+                val u2Body = Path().apply {
+                    moveTo(22f * s, 21f * s)
+                    lineTo(22f * s, 19f * s)
+                    cubicTo(22f * s, 17.2f * s, 20.8f * s, 15.6f * s, 19f * s, 15.1f * s)
+                }
+                drawPath(u1, c, style = stroke)
+                drawPath(u2Head, c, style = stroke)
+                drawPath(u2Body, c, style = stroke)
+            }
+            CuciLainnyaIcon.EXPORT_CSV -> {
+                val tray = Path().apply {
+                    moveTo(3f * s, 15f * s)
+                    lineTo(3f * s, 19f * s)
+                    cubicTo(3f * s, 20.1f * s, 3.9f * s, 21f * s, 5f * s, 21f * s)
+                    lineTo(19f * s, 21f * s)
+                    cubicTo(20.1f * s, 21f * s, 21f * s, 20.1f * s, 21f * s, 19f * s)
+                    lineTo(21f * s, 15f * s)
+                }
+                val arrow = Path().apply {
+                    moveTo(7f * s, 10f * s)
+                    lineTo(12f * s, 15f * s)
+                    lineTo(17f * s, 10f * s)
+                }
+                drawPath(tray, c, style = stroke)
+                drawPath(arrow, c, style = stroke)
+                drawLine(c, Offset(12f * s, 15f * s), Offset(12f * s, 3f * s), strokeWidth = stroke.width, cap = StrokeCap.Round)
+            }
+            CuciLainnyaIcon.BACKUP -> {
+                val top = Path().apply {
+                    moveTo(12f * s, 2f * s)
+                    lineTo(2f * s, 7f * s)
+                    lineTo(12f * s, 12f * s)
+                    lineTo(22f * s, 7f * s)
+                    close()
+                }
+                val mid = Path().apply {
+                    moveTo(2f * s, 12f * s)
+                    lineTo(12f * s, 17f * s)
+                    lineTo(22f * s, 12f * s)
+                }
+                val bot = Path().apply {
+                    moveTo(2f * s, 17f * s)
+                    lineTo(12f * s, 22f * s)
+                    lineTo(22f * s, 17f * s)
+                }
+                drawPath(top, c, style = stroke)
+                drawPath(mid, c, style = stroke)
+                drawPath(bot, c, style = stroke)
+            }
+            CuciLainnyaIcon.RESTORE -> {
+                val tray = Path().apply {
+                    moveTo(3f * s, 15f * s)
+                    lineTo(3f * s, 19f * s)
+                    cubicTo(3f * s, 20.1f * s, 3.9f * s, 21f * s, 5f * s, 21f * s)
+                    lineTo(19f * s, 21f * s)
+                    cubicTo(20.1f * s, 21f * s, 21f * s, 20.1f * s, 21f * s, 19f * s)
+                    lineTo(21f * s, 15f * s)
+                }
+                val arrow = Path().apply {
+                    moveTo(17f * s, 8f * s)
+                    lineTo(12f * s, 3f * s)
+                    lineTo(7f * s, 8f * s)
+                }
+                drawPath(tray, c, style = stroke)
+                drawPath(arrow, c, style = stroke)
+                drawLine(c, Offset(12f * s, 3f * s), Offset(12f * s, 15f * s), strokeWidth = stroke.width, cap = StrokeCap.Round)
+            }
+            CuciLainnyaIcon.RESET -> {
+                drawLine(c, Offset(3f * s, 6f * s), Offset(21f * s, 6f * s), strokeWidth = stroke.width, cap = StrokeCap.Round)
+                val lid = Path().apply {
+                    moveTo(8f * s, 6f * s)
+                    lineTo(8f * s, 4f * s)
+                    cubicTo(8f * s, 3.4f * s, 8.4f * s, 3f * s, 9f * s, 3f * s)
+                    lineTo(15f * s, 3f * s)
+                    cubicTo(15.6f * s, 3f * s, 16f * s, 3.4f * s, 16f * s, 4f * s)
+                    lineTo(16f * s, 6f * s)
+                }
+                val bin = Path().apply {
+                    moveTo(5f * s, 6f * s)
+                    lineTo(6f * s, 19.5f * s)
+                    cubicTo(6f * s, 20.3f * s, 6.7f * s, 21f * s, 7.5f * s, 21f * s)
+                    lineTo(16.5f * s, 21f * s)
+                    cubicTo(17.3f * s, 21f * s, 18f * s, 20.3f * s, 18f * s, 19.5f * s)
+                    lineTo(19f * s, 6f * s)
+                }
+                drawPath(lid, c, style = stroke)
+                drawPath(bin, c, style = stroke)
+            }
+        }
+    }
+}
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -1279,18 +1505,18 @@ internal fun LainnyaTabContent(
     val bookTrxCount = uiState.transactions.count { it.bookId == bookId }
 
     val tiles = listOf(
-        LainnyaTileItem("📖", "Buku", "${uiState.books.size}", onClick = onOpenBooks),
-        LainnyaTileItem("💳", "Akun", "$nonSavingsAccCount", onClick = onOpenAccounts),
-        LainnyaTileItem("🧾", "Transaksi", "$bookTrxCount", onClick = onOpenAllTransactions),
-        LainnyaTileItem("🔍", "Cari", onClick = onOpenSearch),
-        LainnyaTileItem("🎯", "Budget", onClick = onOpenBudget),
-        LainnyaTileItem("🐷", "Tabungan", onClick = onOpenTabungan),
-        LainnyaTileItem("🏷️", "Kategori", "${uiState.categories.size}", onClick = onOpenCategories),
-        LainnyaTileItem("👥", "Anggota", "${uiState.members.size}", onClick = onOpenMembers),
-        LainnyaTileItem("📊", "Export CSV", onClick = onExportCsv),
-        LainnyaTileItem("💾", "Backup", onClick = onBackupJson),
-        LainnyaTileItem("📥", "Restore", onClick = onRestoreJson),
-        LainnyaTileItem("🗑️", "Reset Data", danger = true, onClick = onResetData)
+        LainnyaTileItem(CuciLainnyaIcon.BUKU, "Buku", "${uiState.books.size}", onClick = onOpenBooks),
+        LainnyaTileItem(CuciLainnyaIcon.AKUN, "Akun", "$nonSavingsAccCount", onClick = onOpenAccounts),
+        LainnyaTileItem(CuciLainnyaIcon.TRANSAKSI, "Transaksi", "$bookTrxCount", onClick = onOpenAllTransactions),
+        LainnyaTileItem(CuciLainnyaIcon.CARI, "Cari", onClick = onOpenSearch),
+        LainnyaTileItem(CuciLainnyaIcon.BUDGET, "Budget", onClick = onOpenBudget),
+        LainnyaTileItem(CuciLainnyaIcon.TABUNGAN, "Tabungan", onClick = onOpenTabungan),
+        LainnyaTileItem(CuciLainnyaIcon.KATEGORI, "Kategori", "${uiState.categories.size}", onClick = onOpenCategories),
+        LainnyaTileItem(CuciLainnyaIcon.ANGGOTA, "Anggota", "${uiState.members.size}", onClick = onOpenMembers),
+        LainnyaTileItem(CuciLainnyaIcon.EXPORT_CSV, "Export CSV", onClick = onExportCsv),
+        LainnyaTileItem(CuciLainnyaIcon.BACKUP, "Backup", onClick = onBackupJson),
+        LainnyaTileItem(CuciLainnyaIcon.RESTORE, "Restore", onClick = onRestoreJson),
+        LainnyaTileItem(CuciLainnyaIcon.RESET, "Reset Data", danger = true, onClick = onResetData)
     )
 
     LazyColumn(
@@ -1323,6 +1549,7 @@ internal fun LainnyaTabContent(
                     Column(
                         modifier = Modifier
                             .weight(1f)
+                            .height(118.dp)
                             .clip(RoundedCornerShape(18.dp))
                             .background(if (tile.danger) CuciMoneyColors.ExpenseDim else CuciMoneyColors.Card)
                             .border(
@@ -1331,11 +1558,23 @@ internal fun LainnyaTabContent(
                                 RoundedCornerShape(18.dp)
                             )
                             .clickable { tile.onClick() }
-                            .padding(vertical = 16.dp, horizontal = 8.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                            .padding(vertical = 12.dp, horizontal = 8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
                     ) {
-                        Text(tile.icon, fontSize = 24.sp)
-                        Spacer(modifier = Modifier.height(6.dp))
+                        Box(
+                            modifier = Modifier
+                                .size(50.dp)
+                                .clip(RoundedCornerShape(15.dp))
+                                .background(tile.icon.bg),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CuciLainnyaSvgIcon(
+                                icon = tile.icon,
+                                modifier = Modifier.size(25.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(7.dp))
                         Text(
                             text = tile.label,
                             color = if (tile.danger) CuciMoneyColors.Expense else CuciMoneyColors.TextMain,
@@ -1345,11 +1584,11 @@ internal fun LainnyaTabContent(
                             overflow = TextOverflow.Ellipsis
                         )
                         if (tile.count != null) {
-                            Spacer(modifier = Modifier.height(2.dp))
+                            Spacer(modifier = Modifier.height(1.dp))
                             Text(
                                 text = tile.count,
                                 color = CuciMoneyColors.Primary,
-                                fontSize = 11.sp,
+                                fontSize = 10.5.sp,
                                 fontWeight = FontWeight.ExtraBold
                             )
                         }

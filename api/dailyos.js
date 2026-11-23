@@ -1,10 +1,9 @@
 // api/dailyos.js
-// AI Coach, 30-day Coach Memory, Smart To-Do Parser, dan Rekomendasi Task untuk Daily OS menggunakan Sumopod AI
+// AI Coach, 30-day Coach Memory, Smart To-Do Parser, dan Rekomendasi Task untuk Daily OS menggunakan LLM yang diatur di Setelan
 // Request  : POST { mode: "coach" | "memory" | "parse_todo" | "recommend_todo", ... }
 // Response : mode-specific JSON payload
 
-const SUMOPOD_API_URL = 'https://ai.sumopod.com/v1/chat/completions';
-const SUMOPOD_MODEL = 'glm-5.3-flash';
+import { resolveLlm, LLM_MISSING_MESSAGE } from './_llm.js';
 
 function stripJsonFences(raw) {
   let clean = String(raw || '').trim();
@@ -42,9 +41,9 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const sumopodKey = req.headers['x-sumopod-key']?.trim() || process.env.SUMOPOD_API_KEY;
-  if (!sumopodKey) {
-    return res.status(503).json({ error: 'SUMOPOD_API_KEY belum dikonfigurasi' });
+  const llm = resolveLlm(req);
+  if (!llm) {
+    return res.status(503).json({ error: LLM_MISSING_MESSAGE });
   }
 
   const body = req.body || {};
@@ -215,14 +214,14 @@ Return HANYA JSON array tanpa penjelasan, tanpa backtick, tanpa markdown:
   }
 
   try {
-    const sumopodRes = await fetch(SUMOPOD_API_URL, {
+    const llmRes = await fetch(llm.url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${sumopodKey}`,
+        Authorization: `Bearer ${llm.key}`,
       },
       body: JSON.stringify({
-        model: SUMOPOD_MODEL,
+        model: llm.model,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt },
@@ -233,14 +232,14 @@ Return HANYA JSON array tanpa penjelasan, tanpa backtick, tanpa markdown:
       }),
     });
 
-    if (!sumopodRes.ok) {
-      if (sumopodRes.status === 429) {
+    if (!llmRes.ok) {
+      if (llmRes.status === 429) {
         return res.status(429).json({ error: 'quota' });
       }
-      return res.status(502).json({ error: `AI provider error (${sumopodRes.status})` });
+      return res.status(502).json({ error: `AI provider error (${llmRes.status})` });
     }
 
-    const data = await sumopodRes.json();
+    const data = await llmRes.json();
     const raw = (data?.choices?.[0]?.message?.content ?? '').trim();
     if (!raw) {
       return res.status(502).json({ error: 'Respons AI kosong' });

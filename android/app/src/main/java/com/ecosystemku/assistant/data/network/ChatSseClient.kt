@@ -1,6 +1,7 @@
 package com.ecosystemku.assistant.data.network
 
 import com.ecosystemku.assistant.BuildConfig
+import com.ecosystemku.assistant.data.local.AiConfigField
 import com.ecosystemku.assistant.data.local.ApiKeyStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
@@ -39,6 +40,13 @@ data class ChatRequestDto(
 )
 
 @Serializable
+private data class LlmPingRequestDto(
+    val model: String,
+    val messages: List<ChatTurnDto>,
+    val stream: Boolean = false
+)
+
+@Serializable
 private data class SseDeltaPayload(val delta: String = "")
 
 @Serializable
@@ -74,31 +82,73 @@ class ChatSseClient(
         }
         .build()
 
+    private val rawTestClient: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(25, TimeUnit.SECONDS)
+        .writeTimeout(15, TimeUnit.SECONDS)
+        .build()
+
     suspend fun testConnection(): Pair<Boolean, String> = withContext(Dispatchers.IO) {
-        val usingPersonal = ApiKeyStore.isUsingPersonalKeys()
-        if (usingPersonal) {
-            val sumopod = ApiKeyStore.getKey("Sumopod")
-            val groq = ApiKeyStore.getKey("Groq")
-            val fish = ApiKeyStore.getKey("Fish Audio")
-            if (sumopod.isBlank() && groq.isBlank() && fish.isBlank()) {
-                return@withContext false to "Belum ada Personal Key yang diisi"
-            }
+        val llmBase = ApiKeyStore.getValue(AiConfigField.LLM_BASE_URL)
+        val llmModel = ApiKeyStore.getValue(AiConfigField.LLM_MODEL)
+        val llmKey = ApiKeyStore.getValue(AiConfigField.LLM_API_KEY)
+        if (llmBase.isBlank() || llmModel.isBlank() || llmKey.isBlank()) {
+            return@withContext false to "Lengkapi Base URL, Model, & API Key LLM"
         }
-        runCatching {
+        if (!llmBase.startsWith("http://", ignoreCase = true) &&
+            !llmBase.startsWith("https://", ignoreCase = true)
+        ) {
+            return@withContext false to "Base URL harus diawali http:// atau https://"
+        }
+
+        // 1. Cek jangkauan server backend
+        val backendCheck = runCatching {
             val req = Request.Builder()
                 .url("${baseUrl.trimEnd('/')}/api/chat")
                 .method("OPTIONS", null)
                 .build()
-            httpClient.newCall(req).execute().use { resp ->
-                if (resp.isSuccessful || resp.code in 200..499) {
-                    val mode = if (usingPersonal) "Personal Key" else "Server Default"
-                    true to "Terhubung ($mode)"
-                } else {
-                    false to "Server HTTP ${resp.code}"
+            rawTestClient.newCall(req).execute().use { resp ->
+                resp.isSuccessful || resp.code in 200..499
+            }
+        }.getOrElse { err ->
+            return@withContext false to "Backend: ${err.message?.take(32) ?: "Tidak terjangkau"}"
+        }
+        if (!backendCheck) {
+            return@withContext false to "Server backend tidak merespons"
+        }
+
+        // 2. Uji endpoint LLM kustom secara langsung
+        val trimmedBase = llmBase.trimEnd('/')
+        val chatUrl = if (trimmedBase.endsWith("/chat/completions", ignoreCase = true)) {
+            trimmedBase
+        } else {
+            "$trimmedBase/chat/completions"
+        }
+
+        runCatching {
+            val pingJson = json.encodeToString(
+                LlmPingRequestDto(
+                    model = llmModel,
+                    messages = listOf(ChatTurnDto("user", "ok")),
+                    stream = false
+                )
+            )
+            val llmReq = Request.Builder()
+                .url(chatUrl)
+                .header("Authorization", "Bearer $llmKey")
+                .post(pingJson.toRequestBody("application/json; charset=utf-8".toMediaType()))
+                .build()
+            rawTestClient.newCall(llmReq).execute().use { resp ->
+                when {
+                    resp.isSuccessful -> true to "Terhubung ($llmModel)"
+                    resp.code == 401 || resp.code == 403 -> false to "API Key LLM ditolak (${resp.code})"
+                    resp.code == 404 -> false to "Base URL / Model tidak ditemukan (404)"
+                    resp.code == 429 -> false to "Rate limit / kuota LLM habis (429)"
+                    else -> false to "LLM HTTP ${resp.code}"
                 }
             }
         }.getOrElse { err ->
-            false to "Gagal: ${err.message?.take(36) ?: "Tidak terjangkau"}"
+            false to "LLM gagal: ${err.message?.take(32) ?: "Tidak terjangkau"}"
         }
     }
 
@@ -155,8 +205,12 @@ class ChatSseClient(
             }
 
             override fun onFailure(eventSource: EventSource, t: Throwable?, response: Response?) {
+                val rawBody = runCatching { response?.body?.string() }.getOrNull().orEmpty()
+                val bodyErr = if (rawBody.isNotBlank()) {
+                    runCatching { json.decodeFromString<SseErrorPayload>(rawBody).error }.getOrNull()
+                } else null
                 val statusInfo = response?.let { "HTTP ${it.code}" }
-                val message = t?.message ?: statusInfo ?: "Gagal menghubungi server"
+                val message = bodyErr ?: t?.message ?: statusInfo ?: "Gagal menghubungi server"
                 trySend(ChatStreamEvent.Error(message))
                 close()
             }

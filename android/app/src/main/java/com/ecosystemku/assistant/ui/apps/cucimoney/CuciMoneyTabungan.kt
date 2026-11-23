@@ -220,7 +220,7 @@ internal fun TabunganViewContent(
                 WishlistCard(
                     item = w,
                     visible = uiState.visibility,
-                    actionLabel = "Selesai ✓",
+                    actionLabel = "Selesai",
                     actionPrimary = false,
                     onClick = { onOpenDetail(w) },
                     onAction = { onOpenDetail(w) }

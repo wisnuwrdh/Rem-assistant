@@ -1458,7 +1458,7 @@ private fun AddEditLinkDialog(
         if (meta.title.isNotBlank() && titleInput.isBlank()) {
             titleInput = meta.title
         }
-        fetchState = if (meta.title.isNotBlank() || meta.thumb.isNotBlank()) "✓" else "–"
+        fetchState = if (meta.title.isNotBlank() || meta.thumb.isNotBlank()) "OK" else "-"
     }
 
     Dialog(

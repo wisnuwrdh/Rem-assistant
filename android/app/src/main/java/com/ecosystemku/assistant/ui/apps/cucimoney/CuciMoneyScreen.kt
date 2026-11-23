@@ -41,6 +41,7 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -1072,7 +1073,14 @@ private fun TransactionDetailDialog(
                 .padding(20.dp)
         ) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text(if (isTransfer) "⇄ Transfer" else "${cat?.emoji ?: "📌"} ${cat?.name ?: "Transaksi"}", color = CuciMoneyColors.TextMain, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
+                if (isTransfer) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Icon(Icons.Outlined.SwapHoriz, null, tint = CuciMoneyColors.Transfer, modifier = Modifier.size(20.dp))
+                        Text("Transfer", color = CuciMoneyColors.TextMain, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
+                    }
+                } else {
+                    Text("${cat?.emoji ?: "📌"} ${cat?.name ?: "Transaksi"}", color = CuciMoneyColors.TextMain, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
+                }
                 Icon(Icons.Outlined.Close, null, tint = CuciMoneyColors.TextMuted, modifier = Modifier.size(20.dp).clickable { onClose() })
             }
             Spacer(modifier = Modifier.height(14.dp))
@@ -1222,7 +1230,8 @@ private fun SearchTransactionsModal(
                             .background(CuciMoneyColors.Card)
                     ) {
                         CuciTransactionRow(
-                            emoji = if (t.transferPair != null) "⇄" else cat?.emoji ?: "📌",
+                            emoji = cat?.emoji ?: "📌",
+                            isTransfer = t.transferPair != null,
                             iconBg = if (t.transferPair != null) Color(0x247C8FF5) else if (isIn) CuciMoneyColors.IncomeDim else CuciMoneyColors.ExpenseDim,
                             title = t.title,
                             subtitle = "${CuciMoneyHelpers.formatDateShort(t.date)} · ${acc?.name ?: ""}",
@@ -1282,7 +1291,8 @@ private fun AllTransactionsSheet(
                             .background(CuciMoneyColors.Card)
                     ) {
                         CuciTransactionRow(
-                            emoji = if (t.transferPair != null) "⇄" else cat?.emoji ?: "📌",
+                            emoji = cat?.emoji ?: "📌",
+                            isTransfer = t.transferPair != null,
                             iconBg = if (t.transferPair != null) Color(0x247C8FF5) else if (isIn) CuciMoneyColors.IncomeDim else CuciMoneyColors.ExpenseDim,
                             title = t.title,
                             subtitle = "${CuciMoneyHelpers.formatDateShort(t.date)} · ${acc?.name ?: ""}",

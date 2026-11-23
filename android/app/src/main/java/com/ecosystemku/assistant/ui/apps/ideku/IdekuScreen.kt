@@ -33,9 +33,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.ViewList
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Lightbulb
@@ -540,11 +542,30 @@ fun IdekuScreen(
                                             fontWeight = FontWeight.SemiBold
                                         )
                                         Spacer(modifier = Modifier.height(2.dp))
-                                        Text(
-                                            text = if (f.nextStep.isNotBlank()) "→ ${f.nextStep}" else "+ tulis langkah berikutnya",
-                                            color = if (f.nextStep.isNotBlank()) TextPrimary.copy(alpha = 0.86f) else TextMuted,
-                                            fontSize = 12.sp
-                                        )
+                                        if (f.nextStep.isNotBlank()) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Outlined.ChevronRight,
+                                                    contentDescription = null,
+                                                    tint = TextPrimary.copy(alpha = 0.86f),
+                                                    modifier = Modifier.size(14.dp)
+                                                )
+                                                Text(
+                                                    text = f.nextStep,
+                                                    color = TextPrimary.copy(alpha = 0.86f),
+                                                    fontSize = 12.sp
+                                                )
+                                            }
+                                        } else {
+                                            Text(
+                                                text = "+ tulis langkah berikutnya",
+                                                color = TextMuted,
+                                                fontSize = 12.sp
+                                            )
+                                        }
                                     }
                                 }
                                 val slots = (IdekuHelpers.FOCUS_LIMIT - fokusIdeas.size).coerceAtLeast(0)
@@ -616,15 +637,18 @@ fun IdekuScreen(
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                 Text("SEBARAN KATEGORI · ${scopedByType.size} ITEM", color = TextSubtle, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                                 if (filterCat != "Semua") {
-                                    Box(
+                                    Row(
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(50))
                                             .background(ElevatedSurface)
                                             .border(1.dp, BorderLight, RoundedCornerShape(50))
                                             .clickable { filterCat = "Semua" }
-                                            .padding(horizontal = 9.dp, vertical = 3.dp)
+                                            .padding(horizontal = 9.dp, vertical = 3.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                                     ) {
-                                        Text("$filterCat ✕", color = TextPrimary, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold)
+                                        Text(filterCat, color = TextPrimary, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold)
+                                        Icon(Icons.Outlined.Close, contentDescription = "Reset filter", tint = TextMuted, modifier = Modifier.size(12.dp))
                                     }
                                 }
                             }
@@ -815,7 +839,12 @@ fun IdekuScreen(
                                             fontSize = 11.sp
                                         )
                                         Spacer(modifier = Modifier.width(8.dp))
-                                        Text(if (collapsed) "▸" else "▾", color = TextMuted, fontSize = 12.sp)
+                                        Icon(
+                                            imageVector = if (collapsed) Icons.Outlined.ChevronRight else Icons.Outlined.ExpandMore,
+                                            contentDescription = null,
+                                            tint = TextMuted,
+                                            modifier = Modifier.size(16.dp)
+                                        )
                                     }
                                 }
                                 if (!collapsed) {

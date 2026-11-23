@@ -1,10 +1,9 @@
 // api/kronikMood.js
-// Deteksi mood jurnal Kronik menggunakan Sumopod AI
+// Deteksi mood jurnal Kronik menggunakan LLM yang diatur di Setelan
 // Request  : POST { text: string }
 // Response : { mood: "Fokus" | "Lelah" | "Terinspirasi" | "Berat" | "Stabil" | "Semangat" | "Kabur" | null }
 
-const SUMOPOD_API_URL = 'https://ai.sumopod.com/v1/chat/completions';
-const SUMOPOD_MODEL = 'glm-5.3-flash';
+import { resolveLlm, LLM_MISSING_MESSAGE } from './_llm.js';
 const VALID_MOODS = [
   'Fokus',
   'Lelah',
@@ -21,9 +20,9 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const sumopodKey = req.headers['x-sumopod-key']?.trim() || process.env.SUMOPOD_API_KEY;
-  if (!sumopodKey) {
-    return res.status(503).json({ mood: null, error: 'SUMOPOD_API_KEY belum dikonfigurasi' });
+  const llm = resolveLlm(req);
+  if (!llm) {
+    return res.status(503).json({ mood: null, error: LLM_MISSING_MESSAGE });
   }
 
   const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
@@ -32,14 +31,14 @@ export default async function handler(req, res) {
   }
 
   try {
-    const sumopodRes = await fetch(SUMOPOD_API_URL, {
+    const llmRes = await fetch(llm.url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${sumopodKey}`,
+        Authorization: `Bearer ${llm.key}`,
       },
       body: JSON.stringify({
-        model: SUMOPOD_MODEL,
+        model: llm.model,
         messages: [
           {
             role: 'user',
@@ -52,11 +51,11 @@ export default async function handler(req, res) {
       }),
     });
 
-    if (!sumopodRes.ok) {
-      return res.status(502).json({ mood: null, error: `AI error (${sumopodRes.status})` });
+    if (!llmRes.ok) {
+      return res.status(502).json({ mood: null, error: `AI error (${llmRes.status})` });
     }
 
-    const data = await sumopodRes.json();
+    const data = await llmRes.json();
     const raw = (data?.choices?.[0]?.message?.content ?? '').trim().toLowerCase();
     const found =
       VALID_MOODS.find((m) => raw === m.toLowerCase()) ||

@@ -1,11 +1,10 @@
 // api/memory.js
 // Ekstraksi fakta personal pengguna secara terstruktur dari riwayat obrolan
-// Provider : Sumopod (glm-5.3-flash)
+// Provider : LLM OpenAI-compatible dari header client (X-LLM-Base/Model/Key)
 // Request  : POST { messages: [{ role, content }], existingFacts?: [{ factKey, factValue }] }
 // Response : { facts: [{ category, factKey, factValue, confidence }], summary: string | null }
 
-const SUMOPOD_API_URL = 'https://ai.sumopod.com/v1/chat/completions';
-const SUMOPOD_MODEL = 'glm-5.3-flash';
+import { resolveLlm, LLM_MISSING_MESSAGE } from './_llm.js';
 const VALID_CATEGORIES = new Set(['identitas', 'preferensi', 'kebiasaan', 'tujuan', 'catatan']);
 
 export default async function handler(req, res) {
@@ -14,9 +13,9 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const sumopodKey = req.headers['x-sumopod-key']?.trim() || process.env.SUMOPOD_API_KEY;
-  if (!sumopodKey) {
-    return res.status(200).json({ facts: [], summary: null, skipped: 'missing_api_key' });
+  const llm = resolveLlm(req);
+  if (!llm) {
+    return res.status(200).json({ facts: [], summary: null, skipped: 'llm_not_configured' });
   }
 
   const { messages, existingFacts } = req.body ?? {};
@@ -60,14 +59,14 @@ Aturan ketat:
   const userPayload = `Memori saat ini:\n${knownFactsText}\n\nPercakapan terbaru:\n${sanitizedTurns.join('\n')}`;
 
   try {
-    const sumopodRes = await fetch(SUMOPOD_API_URL, {
+    const llmRes = await fetch(llm.url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${sumopodKey}`,
+        Authorization: `Bearer ${llm.key}`,
       },
       body: JSON.stringify({
-        model: SUMOPOD_MODEL,
+        model: llm.model,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPayload },
@@ -78,11 +77,11 @@ Aturan ketat:
       }),
     });
 
-    if (!sumopodRes.ok) {
-      return res.status(200).json({ facts: [], summary: null, skipped: `upstream_${sumopodRes.status}` });
+    if (!llmRes.ok) {
+      return res.status(200).json({ facts: [], summary: null, skipped: `upstream_${llmRes.status}` });
     }
 
-    const data = await sumopodRes.json();
+    const data = await llmRes.json();
     const rawContent = data?.choices?.[0]?.message?.content ?? '';
     const parsed = parseJsonObject(rawContent);
 
