@@ -240,7 +240,7 @@ internal fun IdekuFormDialog(
                     IdekuTextField(
                         value = jalur,
                         onValueChange = { jalur = it },
-                        placeholder = "mis. Ekosistemku, Project X"
+                        placeholder = "mis. Asisten Rem, Project X"
                     )
                     if (existingJalur.isNotEmpty()) {
                         Spacer(modifier = Modifier.height(6.dp))

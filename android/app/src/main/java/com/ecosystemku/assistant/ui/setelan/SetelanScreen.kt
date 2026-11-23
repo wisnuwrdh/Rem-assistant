@@ -576,7 +576,7 @@ fun SetelanScreen(
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
-                text = "Preferensi, AI, & Backup Ekosistem",
+                text = "Preferensi, AI, & Backup Data",
                 fontFamily = UiSans,
                 fontSize = 12.5.sp,
                 color = TextMuted

@@ -8,6 +8,11 @@ Project Android Studio siap-buka hasil migrasi dari `assistant/` + `api/` sesuai
 3. Pastikan `BuildConfig.API_BASE_URL` di `app/build.gradle.kts` mengarah ke server backend `/api/chat` dan `/api/tts` Anda yang aktif.
 4. Jalankan **Run ▶** pada emulator atau perangkat Android (minSdk 26 / Android 8.0+).
 
+## Signing & Update Tanpa Uninstall
+- Build `debug` dan `release` memakai keystore tetap `app/rem-assistant.jks` (alias `rem`, di-commit ke repo; cukup untuk app pribadi) lewat `signingConfigs.fixed` di `app/build.gradle.kts`. Signature APK jadi sama di setiap build lokal maupun GitHub Actions, sehingga APK baru bisa menimpa versi lama tanpa uninstall.
+- Syarat update in-place: `applicationId` (`com.ecosystemku.assistant`) tetap, signature sama, dan `versionCode` tidak lebih rendah dari yang terpasang (naikkan `versionCode` tiap rilis).
+- Peralihan dari APK lama (signature acak runner CI) ke APK ini tetap butuh uninstall **sekali**. Backup dulu via Setelan → *Export ZIP Sekarang*, lalu restore setelah install.
+
 ## Struktur Fitur Saat Ini
 - **Tab 1 — `Asisten` (Logika Penuh Aktif)**:
   - Panggung Live2D Rem (`assets/live2d/characters/rem/`) berjalan offline via `WebViewAssetLoader` + `Live2DStageController` interface.

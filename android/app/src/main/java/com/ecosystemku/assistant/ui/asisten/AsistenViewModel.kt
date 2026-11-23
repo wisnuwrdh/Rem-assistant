@@ -88,7 +88,7 @@ import kotlinx.serialization.encodeToString
 @Serializable
 private data class EcosystemManifestDto(
     val version: Int = 3,
-    val app: String = "ecosystemku",
+    val app: String = "asisten-rem",
     val exportedAt: String = "",
     val profileName: String = "Mahfud"
 )
@@ -928,7 +928,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         val manifestJson = DailyOsHelpers.json.encodeToString(
             EcosystemManifestDto(
                 version = 3,
-                app = "ecosystemku",
+                app = "asisten-rem",
                 exportedAt = nowIso,
                 profileName = _uiState.value.profileName
             )

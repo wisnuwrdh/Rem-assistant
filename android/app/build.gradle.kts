@@ -31,8 +31,24 @@ android {
         )
     }
 
+    // Keystore tetap (di-commit) supaya signature APK sama di setiap build/CI,
+    // sehingga update bisa menimpa versi lama tanpa uninstall.
+    signingConfigs {
+        create("fixed") {
+            storeFile = file("rem-assistant.jks")
+            storeType = "pkcs12"
+            storePassword = "remassistant"
+            keyAlias = "rem"
+            keyPassword = "remassistant"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("fixed")
+        }
         release {
+            signingConfig = signingConfigs.getByName("fixed")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

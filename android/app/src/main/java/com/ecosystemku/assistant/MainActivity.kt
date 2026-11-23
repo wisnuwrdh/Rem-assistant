@@ -10,7 +10,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.ime
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -20,6 +22,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -248,11 +251,17 @@ fun EcosystemKuShell(
                     }
                 }
 
-                EcosystemBottomNavBar(
-                    selectedTab = selectedTab,
-                    onSelectTab = { selectedTab = it },
-                    onAsistenDoubleTap = asistenViewModel::toggleChatOpen
-                )
+                // Saat keyboard tampil, bottom nav disembunyikan: imePadding di AsistenScreen sudah
+                // menghitung tinggi keyboard penuh dari dasar layar, jadi jika bottom nav tetap
+                // ada, tingginya terhitung dua kali dan bar chat melayang jauh di atas keyboard.
+                val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+                if (!imeVisible) {
+                    EcosystemBottomNavBar(
+                        selectedTab = selectedTab,
+                        onSelectTab = { selectedTab = it },
+                        onAsistenDoubleTap = asistenViewModel::toggleChatOpen
+                    )
+                }
             }
 
         if (showKronik) {
