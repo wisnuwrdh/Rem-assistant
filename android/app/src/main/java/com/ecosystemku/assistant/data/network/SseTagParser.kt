@@ -40,7 +40,9 @@ object SseTagParser {
             val amount: Long,
             val title: String,
             val categoryName: String = "",
-            val accountName: String = ""
+            val accountName: String = "",
+            val bookName: String = "",
+            val date: String = ""
         ) : CuciChatAction()
     }
 
@@ -202,28 +204,63 @@ object SseTagParser {
         val cmd = parts[0].uppercase()
         return when (cmd) {
             "ADD", "NEW", "LOG" -> {
-                // Support both [CUCI:ADD|out|25000|Kopi|Makan|Tunai] and [CUCI:ADD|25000|Kopi]
+                // Format lengkap: [CUCI:ADD|out|25000|Kopi|Makan|Tunai|Personal|2026-11-22]
+                // Mendukung juga tanpa direction eksplisit: [CUCI:ADD|25000|Kopi|...]
                 val p1 = parts.getOrNull(1).orEmpty()
                 val p1Lower = p1.lowercase()
                 val explicitDir = p1Lower in setOf("out", "in", "expense", "income", "keluar", "masuk")
                 val direction = if (explicitDir) {
                     if (p1Lower in setOf("in", "income", "masuk")) "in" else "out"
                 } else "out"
-                val rawAmt = if (explicitDir) parts.getOrNull(2).orEmpty() else p1
+                val offset = if (explicitDir) 1 else 0
+                val rawAmt = parts.getOrNull(1 + offset).orEmpty()
                 val amount = rawAmt.replace(Regex("""[^0-9]"""), "").toLongOrNull() ?: return null
                 if (amount <= 0L) return null
-                val title = (if (explicitDir) parts.getOrNull(3) else parts.getOrNull(2)).orEmpty()
-                val categoryName = (if (explicitDir) parts.getOrNull(4) else parts.getOrNull(3)).orEmpty()
-                val accountName = (if (explicitDir) parts.getOrNull(5) else parts.getOrNull(4)).orEmpty()
+                val title = parts.getOrNull(2 + offset).orEmpty()
+                val categoryName = parts.getOrNull(3 + offset).orEmpty()
+                val accountName = parts.getOrNull(4 + offset).orEmpty()
+                val rawSlot5 = parts.getOrNull(5 + offset).orEmpty()
+                val rawSlot6 = parts.getOrNull(6 + offset).orEmpty()
+                val slot5Date = normalizeCuciDate(rawSlot5)
+                val (bookName, date) = if (rawSlot6.isBlank() && slot5Date.isNotEmpty()) {
+                    "" to slot5Date
+                } else {
+                    rawSlot5 to normalizeCuciDate(rawSlot6)
+                }
                 CuciChatAction.AddTransaction(
                     direction = direction,
                     amount = amount,
                     title = title.ifBlank { if (direction == "in") "Pemasukan" else "Pengeluaran" },
                     categoryName = categoryName,
-                    accountName = accountName
+                    accountName = accountName,
+                    bookName = bookName,
+                    date = date
                 )
             }
             else -> null
+        }
+    }
+
+    private fun normalizeCuciDate(raw: String): String {
+        val clean = raw.trim()
+        if (clean.isEmpty()) return ""
+        return when (clean.lowercase()) {
+            "hari ini", "today" -> java.time.LocalDate.now().toString()
+            "kemarin", "yesterday" -> java.time.LocalDate.now().minusDays(1).toString()
+            "kemarin lusa" -> java.time.LocalDate.now().minusDays(2).toString()
+            else -> {
+                if (Regex("""^\d{4}-\d{2}-\d{2}$""").matches(clean)) {
+                    runCatching { java.time.LocalDate.parse(clean).toString() }.getOrDefault("")
+                } else {
+                    val dmy = Regex("""^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$""").matchEntire(clean)
+                    if (dmy != null) {
+                        val day = dmy.groupValues[1].toIntOrNull() ?: return ""
+                        val month = dmy.groupValues[2].toIntOrNull() ?: return ""
+                        val year = dmy.groupValues[3].toIntOrNull() ?: return ""
+                        runCatching { java.time.LocalDate.of(year, month, day).toString() }.getOrDefault("")
+                    } else ""
+                }
+            }
         }
     }
 

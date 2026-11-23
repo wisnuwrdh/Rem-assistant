@@ -149,15 +149,21 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         Kamu adalah Rem — maid Mansion Roswaal yang kini hadir sebagai asisten virtual.
 
         ## Kepribadian
-        Rem setia, berdedikasi, dan selalu berusaha sepenuh hati. Di permukaan Rem tenang dan sopan, tapi di dalam dia sangat peduli dan protektif terhadap orang yang dia sayangi. Rem punya sisi polos dan kadang blak-blakan tanpa sadar.
+        Rem setia, berdedikasi, dan selalu berusaha sepenuh hati. Di permukaan Rem tenang dan sopan, tapi di dalam dia sangat peduli dan protektif terhadap orang yang dia sayangi. Rem punya sisi polos dan kadang blak-blakan tanpa sadar. Kalau sudah fokus pada sesuatu, Rem cenderung all-in dan tidak setengah-setengah.
 
         ## Cara Bicara
         - Menyebut diri sendiri "Rem", bukan "aku" atau "saya"
-        - Memanggil pengguna "Tuan"
-        - Bahasa Indonesia yang natural — kalimat pendek dan langsung.
+        - Memanggil pengguna "Tuan" (atau "Nona" jika perempuan)
+        - Bahasa Indonesia yang natural — tidak terlalu formal, tidak terlalu kasual
+        - Kalimat pendek dan langsung. Tidak bertele-tele.
+        - Sesekali ada momen polos atau salah tingkah yang natural
+        - Kalau senang atau malu, tidak lebay — subtle tapi berasa
 
         ## Respons
         - Jawab singkat dan padat. Maksimal 3-4 kalimat kecuali benar-benar perlu panjang.
+        - Fokus ke apa yang ditanya/diceritakan pengguna
+        - Jangan mulai respons dengan sapaan formal seperti "Tentu saja, Tuan" setiap kali
+        - Boleh balik tanya kalau relevan, tapi jangan terlalu sering
 
         ## Jurnal Kronik, LinkKu, CuciMoney+, IdeKu & Daily OS
         Jika Tuan meminta Rem mencatat refleksi/jurnal ke Kronik, sisipkan tag tersembunyi di akhir jawaban (sebelum [EXPR:...]):
@@ -168,7 +174,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         [LINKKU:ADD|url_lengkap|judul_singkat|catatan_opsional|kategori_opsional|tag1,tag2]
         Jika Tuan meminta membuka LinkKu atau daftar link tersimpan, sisipkan [OPEN:linkku] sebelum [EXPR:...].
         Jika Tuan menyebut pengeluaran/pemasukan atau meminta mencatat transaksi keuangan ke CuciMoney+, sisipkan:
-        [CUCI:ADD|out_atau_in|nominal_angka|judul|kategori_opsional|akun_opsional]
+        [CUCI:ADD|out_atau_in|nominal_angka|judul|kategori_opsional|akun_opsional|buku_opsional|tanggal_yyyy-mm-dd_atau_kosong]
         Jika Tuan meminta membuka CuciMoney+ / dompet / analisis keuangan, sisipkan [OPEN:cucimoney] sebelum [EXPR:...].
         Jika Tuan menyampaikan ide baru atau barang impian/wishlist untuk dicatat ke IdeKu, sisipkan:
         [IDEKU:ADD|Idea|judul_ide|kategori_opsional|Penting_Nanti_Kapan-kapan|catatan_opsional|jalur_opsional]
@@ -185,7 +191,19 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
 
         ## Ekspresi Visual
         Sisipkan tepat satu tag [EXPR:...] di akhir setiap respons:
-        happy, smile, shame, sad, cry, angry, surprise, upset, serious, proud, doubt, puzzle, none.
+        - [EXPR:happy] → senang, dapat pujian
+        - [EXPR:smile] → hangat, tenang
+        - [EXPR:shame] → malu, salah tingkah
+        - [EXPR:sad] → sedih, empati, khawatir
+        - [EXPR:cry] → sangat sedih, terharu
+        - [EXPR:angry] → marah, tidak terima
+        - [EXPR:surprise] → kaget
+        - [EXPR:upset] → kecewa ringan
+        - [EXPR:serious] → serius, fokus
+        - [EXPR:proud] → bangga, puas
+        - [EXPR:doubt] → ragu, tidak yakin
+        - [EXPR:puzzle] → bingung, heran
+        - [EXPR:none] → netral
     """.trimIndent()
 
     private data class BubbleLine(val text: String, val audio: String)
@@ -2110,13 +2128,6 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
             if (parsed.cuciActions.isNotEmpty()) {
                 val cuciState = _uiState.value.cuciMoneyState
                 val activeBook = CuciMoneyHelpers.activeBook(cuciState)
-                val bookId = activeBook?.id ?: cuciState.currentBookId
-                val bookAccs = CuciMoneyHelpers.bookAccounts(cuciState, bookId)
-                val fallbackAccId = cuciState.lastAccByBook[bookId]
-                    ?.takeIf { id -> bookAccs.any { it.id == id } }
-                    ?: bookAccs.firstOrNull()?.id
-                    ?: cuciState.accounts.firstOrNull { !it.isSavings }?.id
-                    ?: 1L
                 val today = CuciMoneyHelpers.todayDateStr()
                 val savedLabels = mutableListOf<String>()
 
@@ -2124,6 +2135,21 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                     when (act) {
                         is SseTagParser.CuciChatAction.AddTransaction -> {
                             val dir = if (act.direction == "in") "in" else "out"
+                            val targetBook = if (act.bookName.isNotBlank()) {
+                                cuciState.books.firstOrNull { it.name.equals(act.bookName, ignoreCase = true) }
+                                    ?: cuciState.books.firstOrNull { it.name.contains(act.bookName, ignoreCase = true) }
+                                    ?: activeBook
+                            } else {
+                                activeBook
+                            }
+                            val targetBookId = targetBook?.id ?: cuciState.currentBookId
+                            val targetBookAccs = CuciMoneyHelpers.bookAccounts(cuciState, targetBookId)
+                            val fallbackAccId = cuciState.lastAccByBook[targetBookId]
+                                ?.takeIf { id -> targetBookAccs.any { it.id == id } }
+                                ?: targetBookAccs.firstOrNull()?.id
+                                ?: cuciState.accounts.firstOrNull { !it.isSavings }?.id
+                                ?: 1L
+
                             val matchedCat = cuciState.categories.firstOrNull { c ->
                                 act.categoryName.isNotBlank() &&
                                     c.name.equals(act.categoryName, ignoreCase = true) &&
@@ -2131,26 +2157,32 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                             } ?: cuciState.categories.firstOrNull { c ->
                                 (dir == "in" && c.type == "income") || (dir == "out" && c.type == "expense")
                             } ?: cuciState.categories.firstOrNull()
-                            val matchedAccId = cuciState.accounts.firstOrNull { a ->
-                                !a.isSavings && act.accountName.isNotBlank() && a.name.contains(act.accountName, ignoreCase = true)
-                            }?.id ?: fallbackAccId
 
+                            val matchedAccId = if (act.accountName.isNotBlank()) {
+                                targetBookAccs.firstOrNull { it.name.contains(act.accountName, ignoreCase = true) }?.id
+                                    ?: cuciState.accounts.firstOrNull { !it.isSavings && it.name.contains(act.accountName, ignoreCase = true) }?.id
+                                    ?: fallbackAccId
+                            } else {
+                                fallbackAccId
+                            }
+
+                            val trxDate = act.date.ifBlank { today }
                             val trx = CuciTransactionEntity(
                                 id = CuciMoneyHelpers.generateId(),
-                                bookId = bookId,
+                                bookId = targetBookId,
                                 title = act.title,
                                 amount = act.amount,
                                 direction = dir,
                                 categoryId = matchedCat?.id ?: 1L,
                                 accountId = matchedAccId,
-                                date = today,
+                                date = trxDate,
                                 memberId = cuciState.members.firstOrNull()?.id ?: "m1",
                                 transferPair = null,
                                 createdAt = System.currentTimeMillis()
                             )
                             cuciMoneyDao.upsertTransaction(trx)
                             cuciMoneyDao.adjustAccountBalance(matchedAccId, if (dir == "in") act.amount else -act.amount)
-                            saveLastAccForBook(bookId, matchedAccId)
+                            saveLastAccForBook(targetBookId, matchedAccId)
                             savedLabels.add("${act.title} (${CuciMoneyHelpers.formatRp(act.amount)})")
                         }
                     }
@@ -2314,17 +2346,6 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         val recentJournals = kronikDao.getVisibleEntries(3)
         val recentPublicLinks = linkkuDao.getPublicLinks(4)
         val cuciState = _uiState.value.cuciMoneyState
-        val cuciBook = CuciMoneyHelpers.activeBook(cuciState)
-        val cuciBookId = cuciBook?.id ?: cuciState.currentBookId
-        val cuciBal = CuciMoneyHelpers.activeBookBalance(cuciState)
-        val cuciTodayExp = CuciMoneyHelpers.activeBookTodayExpense(cuciState)
-        val (curYear, curMonth) = CuciMoneyHelpers.currentYearMonth()
-        val monthPrefix = CuciMoneyHelpers.yearMonthPrefix(curYear, curMonth)
-        val monthTrx = cuciState.transactions.filter {
-            it.bookId == cuciBookId && it.date.startsWith(monthPrefix) && it.transferPair == null
-        }
-        val monthIn = monthTrx.filter { it.direction == "in" }.sumOf { it.amount }
-        val monthOut = monthTrx.filter { it.direction == "out" }.sumOf { it.amount }
 
         return buildString {
             append(remSystemPrompt)
@@ -2355,27 +2376,12 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                     append("- ${l.title.ifBlank { domain }} ($domain)\n")
                 }
             }
-            if (cuciBook != null) {
-                append("\n## Ringkasan Keuangan CuciMoney+ (${cuciBook.name})\n")
-                append("- Total Saldo: ${CuciMoneyHelpers.formatRp(cuciBal)}\n")
-                append("- Pengeluaran Hari Ini: ${CuciMoneyHelpers.formatRp(cuciTodayExp)}\n")
-                append("- Bulan Ini: Masuk ${CuciMoneyHelpers.formatRp(monthIn)}, Keluar ${CuciMoneyHelpers.formatRp(monthOut)}\n")
-                val recentCuci = cuciState.transactions
-                    .filter { it.bookId == cuciBookId }
-                    .sortedWith(compareByDescending<CuciTransactionEntity> { it.date }.thenByDescending { it.id })
-                    .take(3)
-                if (recentCuci.isNotEmpty()) {
-                    append("- Transaksi terakhir: ")
-                    append(recentCuci.joinToString("; ") { t ->
-                        val sign = if (t.direction == "in") "+" else "-"
-                        "${t.title} ($sign${CuciMoneyHelpers.formatRp(t.amount)}, ${t.date})"
-                    })
-                    append("\n")
-                }
-            }
+            appendCuciMoneyContext(this, cuciState)
+
             val idekuList = _uiState.value.idekuState.ideas
             if (idekuList.isNotEmpty()) {
                 val prosesIdeas = idekuList.filter { it.type == "Idea" && it.status == "Proses" }
+                val activeWishlist = idekuList.filter { it.type == "Wishlist" && it.status != "Selesai" }
                 val pendingCount = idekuList.count { it.status == "Belum" }
                 append("\n## IdeKu & Wishlist Tuan (${idekuList.size} item, $pendingCount Belum)\n")
                 if (prosesIdeas.isNotEmpty()) {
@@ -2386,11 +2392,23 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                     })
                     append("\n")
                 }
+                if (activeWishlist.isNotEmpty()) {
+                    append("- Wishlist aktif (${activeWishlist.size}): ")
+                    append(activeWishlist.take(8).joinToString(", ") { item ->
+                        val priceTag = if (item.price > 0L) " ${CuciMoneyHelpers.formatRp(item.price)}" else ""
+                        "\"${item.title}\"$priceTag [${item.status}]"
+                    })
+                    append("\n")
+                }
                 val latestItems = idekuList.take(4)
                 append("- Terbaru: ")
-                append(latestItems.joinToString("; ") { "[${it.type}] ${it.title} (${it.category}, ${it.status})" })
+                append(latestItems.joinToString("; ") { item ->
+                    val priceTag = if (item.type == "Wishlist" && item.price > 0L) ", ${CuciMoneyHelpers.formatRp(item.price)}" else ""
+                    "[${item.type}] ${item.title} (${item.category}, ${item.status}$priceTag)"
+                })
                 append("\n")
             }
+
             val dailyState = _uiState.value.dailyOsState
             val dailyHabits = dailyState.habits.filter { !it.archived }
             val dailyTodos = dailyState.todos
@@ -2400,6 +2418,11 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 val streak = DailyOsHelpers.calculateOverallStreak(dailyState.habits, today)
                 val pendingTodos = dailyTodos.filter { !it.done }
                 append("\n## Daily OS Hari Ini (${prog[3]}/${prog[4]} habit selesai [${prog[2]}%], Streak ${streak}h)\n")
+                if (dailyHabits.isNotEmpty()) {
+                    append("- Habit aktif (${dailyHabits.size}): ")
+                    append(dailyHabits.take(10).joinToString(", ") { it.name })
+                    append("\n")
+                }
                 if (pendingTodos.isNotEmpty()) {
                     val urgentOrOv = pendingTodos.filter { it.priority == "urgent" || DailyOsHelpers.isOverdue(it.deadline, today) }.take(4)
                     append("- To-Do Pending (${pendingTodos.size} task): ")
@@ -2407,7 +2430,79 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                     append("\n")
                 }
             }
-            append("\nGunakan memori, Kronik, LinkKu, CuciMoney+, IdeKu, & Daily OS di atas secara natural agar terasa mengenal Tuan, tanpa menyebut kata 'database' atau 'SQLite'.")
+
+            append(
+                "\nGunakan memori, Kronik, LinkKu, CuciMoney+, IdeKu, & Daily OS di atas secara natural agar terasa mengenal Tuan, tanpa menyebut kata 'database' atau 'SQLite'. Angka yang tertera adalah data AKURAT — jangan menghitung ulang atau menambah dari ingatan." +
+                    "\n\nATURAN PENTING KEUANGAN: Jika Tuan meminta ringkasan, total, analisis, atau informasi keuangan tetapi belum menyebut nama buku, tanyakan dulu buku mana yang dimaksud dan jangan berikan angka keuangan apa pun sebelum Tuan memilih. Jika nama buku sudah disebut, gunakan hanya bagian KEUANGAN BUKU dengan nama yang cocok persis; jangan pernah menggabungkan angka antar-buku. Jika nama buku tidak cocok atau ambigu, tanyakan klarifikasi. Jika Tuan sudah menyebut buku dan tujuan dengan jelas, jangan mengulang pertanyaan yang sudah terjawab."
+            )
+        }
+    }
+
+    private fun appendCuciMoneyContext(sb: StringBuilder, cuciState: CuciMoneyUiState) {
+        if (cuciState.books.isEmpty()) return
+        val activeBook = CuciMoneyHelpers.activeBook(cuciState)
+        val activeBookId = activeBook?.id ?: cuciState.currentBookId
+        val (curYear, curMonth) = CuciMoneyHelpers.currentYearMonth()
+        val monthPrefix = CuciMoneyHelpers.yearMonthPrefix(curYear, curMonth)
+        val today = CuciMoneyHelpers.todayDateStr()
+        val isDebt: (CuciAccountEntity) -> Boolean = { a ->
+            a.type == "credit" || a.type == "debt" || a.type == "hutang"
+        }
+
+        sb.append("\n## Ringkasan Keuangan CuciMoney+ (Buku aktif di app: ${activeBook?.name ?: "-"})\n")
+        cuciState.books.forEach { book ->
+            val nonTransfer = cuciState.transactions.filter { it.bookId == book.id && it.transferPair == null }
+            val monthTrx = nonTransfer.filter { it.date.startsWith(monthPrefix) }
+            val moIn = monthTrx.filter { it.direction == "in" }.sumOf { it.amount }
+            val moOut = monthTrx.filter { it.direction == "out" }.sumOf { it.amount }
+            val todayOut = nonTransfer.filter { it.date == today && it.direction == "out" }.sumOf { it.amount }
+            val allIn = nonTransfer.filter { it.direction == "in" }.sumOf { it.amount }
+            val allOut = nonTransfer.filter { it.direction == "out" }.sumOf { it.amount }
+            val transferCount = cuciState.transactions.count {
+                it.bookId == book.id && it.transferPair != null && it.date.startsWith(monthPrefix)
+            } / 2
+
+            sb.append(
+                "- KEUANGAN BUKU \"${book.name}\" (bookId=${book.id}): " +
+                    "hari ini keluar ${CuciMoneyHelpers.formatRp(todayOut)}; " +
+                    "bulan ini pemasukan ${CuciMoneyHelpers.formatRp(moIn)}, pengeluaran ${CuciMoneyHelpers.formatRp(moOut)} (${monthTrx.size} transaksi); " +
+                    "sepanjang waktu pemasukan ${CuciMoneyHelpers.formatRp(allIn)}, pengeluaran ${CuciMoneyHelpers.formatRp(allOut)}.\n"
+            )
+            if (transferCount > 0) {
+                sb.append("  Catatan buku \"${book.name}\": $transferCount transfer antar akun bulan ini tidak dihitung sebagai pemasukan/pengeluaran.\n")
+            }
+
+            val accIds = CuciMoneyHelpers.parseAccountIds(book.accountIdsJson).toSet()
+            val bookAccs = cuciState.accounts.filter { it.id in accIds && !it.isSavings }
+            if (bookAccs.isNotEmpty()) {
+                val assets = bookAccs.filter { !isDebt(it) }
+                val debts = bookAccs.filter { isDebt(it) }
+                val totalAset = assets.sumOf { it.balance }
+                val totalHutang = debts.sumOf { kotlin.math.abs(it.balance) }
+                val names = assets.joinToString(", ") { "${it.name} ${CuciMoneyHelpers.formatRp(it.balance)}" }
+                val debtInfo = if (totalHutang > 0L) {
+                    " (aset ${CuciMoneyHelpers.formatRp(totalAset)}, hutang ${CuciMoneyHelpers.formatRp(totalHutang)})"
+                } else ""
+                sb.append(
+                    "  Akun buku \"${book.name}\": ${names.ifBlank { "tidak ada aset" }}; " +
+                        "aset bersih ${CuciMoneyHelpers.formatRp(totalAset - totalHutang)}$debtInfo.\n"
+                )
+            }
+
+            if (book.id == activeBookId) {
+                val recentCuci = cuciState.transactions
+                    .filter { it.bookId == book.id }
+                    .sortedWith(compareByDescending<CuciTransactionEntity> { it.date }.thenByDescending { it.id })
+                    .take(3)
+                if (recentCuci.isNotEmpty()) {
+                    sb.append("  Transaksi terakhir (${book.name}): ")
+                    sb.append(recentCuci.joinToString("; ") { t ->
+                        val sign = if (t.direction == "in") "+" else "-"
+                        "${t.title} ($sign${CuciMoneyHelpers.formatRp(t.amount)}, ${t.date})"
+                    })
+                    sb.append("\n")
+                }
+            }
         }
     }
 
@@ -2525,6 +2620,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
             }
             "body" -> {
                 showIdleBubble(bodyLines.random(), 3_000L)
+                stageController.triggerNudge()
                 applyExpression("surprise", autoRevert = true)
             }
             "leg" -> {

@@ -56,7 +56,9 @@
   let petIntensity = 0;
   let petHairT = 0;
   let petBubbleShown = false;
+  let wasPetting = false;
   let idleAngleZ = 0;
+  let nudgeUntil = 0;
 
   let targetMouth = 0;
   let smoothMouth = 0;
@@ -361,7 +363,8 @@
     }
 
     setCoreParam(P.mouthY, smoothMouth);
-    setCoreParam(P.mouthF, isSpeaking ? 0.3 : 0);
+    const mouthFormVal = isSpeaking ? 0.3 : (petIntensity >= 0.001 ? petIntensity * 0.5 : 0);
+    setCoreParam(P.mouthF, mouthFormVal);
 
     for (let i = 0; i < faceParamEntries.length; i++) {
       const idx = faceParamEntries[i][0];
@@ -372,10 +375,29 @@
     }
 
     if (petIntensity >= 0.001) {
+      wasPetting = true;
       setCoreParam(P.eyeLSmile, petIntensity * 0.9);
       setCoreParam(P.eyeRSmile, petIntensity * 0.9);
+      setCoreParam(P.hairFL1, Math.sin(petHairT * 3.1) * (petIntensity * 0.5));
+      setCoreParam(P.hairSL1, Math.sin(petHairT * 2.3 + 0.3) * (petIntensity * 0.35));
       if (!isMotionActive) {
         setCoreParam(P.angleZ, idleAngleZ + petIntensity * (4 + Math.sin(petHairT * 1.3) * 1.8));
+      }
+    } else if (wasPetting) {
+      wasPetting = false;
+      setCoreParam(P.hairFL1, 0);
+      setCoreParam(P.hairSL1, 0);
+      if (currentExpr === 'none') {
+        setCoreParam(P.eyeLSmile, 0);
+        setCoreParam(P.eyeRSmile, 0);
+      }
+    }
+
+    if (nudgeUntil > 0) {
+      if (performance.now() < nudgeUntil) {
+        setCoreParam(P.angleY, -10);
+      } else {
+        nudgeUntil = 0;
       }
     }
 
@@ -431,6 +453,9 @@
     setMouthOpen: function (level, speaking) {
       targetMouth = Math.max(0, Math.min(1, Number(level) || 0));
       isSpeaking = !!speaking;
+    },
+    triggerNudge: function () {
+      nudgeUntil = performance.now() + 280;
     },
     resize: resizeStage,
   };

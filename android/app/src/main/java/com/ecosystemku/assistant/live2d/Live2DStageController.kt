@@ -23,6 +23,7 @@ interface Live2DStageController {
     fun setExpression(name: String)
     fun playMotion(name: String)
     fun setMouthOpen(level: Float, isSpeaking: Boolean)
+    fun triggerNudge()
 }
 
 interface Live2DStageCallbacks {
@@ -156,6 +157,10 @@ class WebViewLive2DStageController(
     override fun setMouthOpen(level: Float, isSpeaking: Boolean) {
         val clamped = level.coerceIn(0f, 1f)
         evalJs("window.StageAPI?.setMouthOpen($clamped, $isSpeaking);")
+    }
+
+    override fun triggerNudge() {
+        evalJs("window.StageAPI?.triggerNudge?.();")
     }
 
     private fun evalJs(script: String) {
