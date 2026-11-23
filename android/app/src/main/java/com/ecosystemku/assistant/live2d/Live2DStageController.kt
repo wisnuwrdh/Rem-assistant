@@ -166,16 +166,26 @@ class WebViewLive2DStageController(
     private class StageJsBridge(
         private val callbacks: Live2DStageCallbacks
     ) {
-        @JavascriptInterface
-        fun onModelReady() = callbacks.onModelReady()
+        private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
         @JavascriptInterface
-        fun onZoneTapped(zone: String) = callbacks.onZoneTapped(zone)
+        fun onModelReady() {
+            mainHandler.post { callbacks.onModelReady() }
+        }
 
         @JavascriptInterface
-        fun onPetTriggered() = callbacks.onPetTriggered()
+        fun onZoneTapped(zone: String) {
+            mainHandler.post { callbacks.onZoneTapped(zone) }
+        }
 
         @JavascriptInterface
-        fun onModelError(message: String) = callbacks.onModelError(message)
+        fun onPetTriggered() {
+            mainHandler.post { callbacks.onPetTriggered() }
+        }
+
+        @JavascriptInterface
+        fun onModelError(message: String) {
+            mainHandler.post { callbacks.onModelError(message) }
+        }
     }
 }

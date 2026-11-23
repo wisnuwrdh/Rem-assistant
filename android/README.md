@@ -12,10 +12,11 @@ Project Android Studio siap-buka hasil migrasi dari `assistant/` + `api/` sesuai
 - **Tab 1 — `Asisten` (Logika Penuh Aktif)**:
   - Panggung Live2D Rem (`assets/live2d/characters/rem/`) berjalan offline via `WebViewAssetLoader` + `Live2DStageController` interface.
     - `WebView` memakai latar solid `#0F0E0C` + aura CSS di `stage.html` serta `preserveDrawingBuffer: true` dan `antialias: false` agar rendering WebGL konsisten di Compose `AndroidView` (tanpa `.alpha()` layer).
+    - `StageJsBridge` men-dispatch callback ke `MainLooper`, `playRemMotion` memakai `MotionPriority.FORCE` (`3`) agar motion loop bisa berganti, dan override wajah/tangan/lip-sync diterapkan di event `beforeModelUpdate`.
     - Render dijeda (`StageAPI.pause/resume`) saat tab Apps/Setelan atau sub-app menutupi panggung, dan saat aplikasi di background.
     - Jika konteks WebGL hilang (`webgl_context_lost`) atau renderer WebView dimatikan sistem (`renderer_gone`), panggung dipulihkan otomatis; jika gagal, muncul pesan error + tombol **Muat Ulang** (membuat ulang WebView via `stageGeneration`).
   - Chat streaming SSE (`POST /api/chat` lewat `OkHttp` + `okhttp-sse`), parsing tag `[EXPR:...]` dan `[JA]...[/JA]`.
-  - Suara TTS Jepang (`POST /api/tts`) lewat `Media3 ExoPlayer` dengan `TeeAudioProcessor` RMS lip-sync real-time.
+  - Suara TTS Jepang (`POST /api/tts`) & klip suara lokal (`audio/*.mp3`) lewat `Media3 ExoPlayer` (thread-safe di `Dispatchers.Main.immediate`, dengan fallback `MediaPlayer` untuk aset lokal) dan `TeeAudioProcessor` RMS lip-sync real-time.
   - Penyimpanan riwayat chat lokal persisten di perangkat memakai **Room** (`rem_assistant.db`).
   - Tombol Mikrofon & 2 tombol kaca kanan atas masih **UI-only** sesuai rencana tahap 1.
 - **Tab 2 — `Apps` & Tab 3 — `Setelan` & Sub-App Overlay**:

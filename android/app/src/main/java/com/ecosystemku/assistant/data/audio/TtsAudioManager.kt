@@ -1,7 +1,10 @@
 package com.ecosystemku.assistant.data.audio
 
 import android.content.Context
+import android.media.AudioAttributes as PlatformAudioAttributes
+import android.media.MediaPlayer
 import android.net.Uri
+import android.util.Log
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -54,10 +57,12 @@ class TtsAudioManager(
     private val baseUrl: String = BuildConfig.API_BASE_URL
 ) {
     private val appContext = context.applicationContext
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val json = Json { ignoreUnknownKeys = true }
     private val playbackGen = AtomicInteger(0)
     private var activeFetchJob: Job? = null
+    private var activeBundledClip: String? = null
+    private var fallbackPlayer: MediaPlayer? = null
 
     private val _isSpeaking = MutableStateFlow(false)
     val isSpeaking: StateFlow<Boolean> = _isSpeaking.asStateFlow()
@@ -117,6 +122,7 @@ class TtsAudioManager(
                 addListener(object : Player.Listener {
                     override fun onPlaybackStateChanged(playbackState: Int) {
                         if (playbackState == Player.STATE_ENDED || playbackState == Player.STATE_IDLE) {
+                            activeBundledClip = null
                             _isSpeaking.value = false
                             _mouthLevel.value = 0f
                         }
@@ -129,8 +135,14 @@ class TtsAudioManager(
                     }
 
                     override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                        Log.e("TtsAudioManager", "ExoPlayer error: ${error.errorCodeName}", error)
+                        val failedClip = activeBundledClip
+                        activeBundledClip = null
                         _isSpeaking.value = false
                         _mouthLevel.value = 0f
+                        if (failedClip != null) {
+                            playAssetViaMediaPlayer(failedClip)
+                        }
                     }
                 })
             }
@@ -161,6 +173,7 @@ class TtsAudioManager(
                 return@launch
             }
 
+            activeBundledClip = null
             val mediaItems = files.map { MediaItem.fromUri(Uri.fromFile(it)) }
             exoPlayer.setMediaItems(mediaItems)
             exoPlayer.prepare()
@@ -169,27 +182,98 @@ class TtsAudioManager(
     }
 
     fun playBundledAssetClip(filename: String) {
-        if (filename.isBlank() || _isSpeaking.value) return
-        playbackGen.incrementAndGet()
-        val assetUri = Uri.parse("asset:///live2d/characters/rem/audio/$filename")
-        exoPlayer.setMediaItem(MediaItem.fromUri(assetUri))
-        exoPlayer.prepare()
-        exoPlayer.play()
+        if (filename.isBlank()) return
+        scope.launch {
+            if (_isSpeaking.value && activeBundledClip == null) return@launch
+            playbackGen.incrementAndGet()
+            activeFetchJob?.cancel()
+            activeFetchJob = null
+            releaseFallbackPlayer()
+            activeBundledClip = filename
+            runCatching {
+                val assetUri = Uri.parse("file:///android_asset/live2d/characters/rem/audio/$filename")
+                exoPlayer.setMediaItem(MediaItem.fromUri(assetUri))
+                exoPlayer.prepare()
+                exoPlayer.play()
+            }.onFailure { err ->
+                Log.e("TtsAudioManager", "ExoPlayer asset play failed, falling back to MediaPlayer", err)
+                activeBundledClip = null
+                playAssetViaMediaPlayer(filename)
+            }
+        }
+    }
+
+    private fun playAssetViaMediaPlayer(filename: String) {
+        runCatching {
+            releaseFallbackPlayer()
+            val afd = appContext.assets.openFd("live2d/characters/rem/audio/$filename")
+            val mp = MediaPlayer().apply {
+                setAudioAttributes(
+                    PlatformAudioAttributes.Builder()
+                        .setContentType(PlatformAudioAttributes.CONTENT_TYPE_SPEECH)
+                        .setUsage(PlatformAudioAttributes.USAGE_MEDIA)
+                        .build()
+                )
+                setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+                afd.close()
+                setOnPreparedListener {
+                    _isSpeaking.value = true
+                    start()
+                }
+                setOnCompletionListener {
+                    _isSpeaking.value = false
+                    _mouthLevel.value = 0f
+                    releaseFallbackPlayer()
+                }
+                setOnErrorListener { _, _, _ ->
+                    _isSpeaking.value = false
+                    _mouthLevel.value = 0f
+                    releaseFallbackPlayer()
+                    true
+                }
+                prepareAsync()
+            }
+            fallbackPlayer = mp
+        }.onFailure { err ->
+            Log.e("TtsAudioManager", "MediaPlayer asset fallback failed for $filename", err)
+            _isSpeaking.value = false
+            _mouthLevel.value = 0f
+        }
+    }
+
+    private fun releaseFallbackPlayer() {
+        fallbackPlayer?.let { mp ->
+            runCatching {
+                if (mp.isPlaying) mp.stop()
+                mp.release()
+            }
+        }
+        fallbackPlayer = null
     }
 
     fun stop() {
-        playbackGen.incrementAndGet()
-        activeFetchJob?.cancel()
-        activeFetchJob = null
-        exoPlayer.stop()
-        exoPlayer.clearMediaItems()
-        _isSpeaking.value = false
-        _mouthLevel.value = 0f
+        scope.launch {
+            playbackGen.incrementAndGet()
+            activeFetchJob?.cancel()
+            activeFetchJob = null
+            activeBundledClip = null
+            releaseFallbackPlayer()
+            exoPlayer.stop()
+            exoPlayer.clearMediaItems()
+            _isSpeaking.value = false
+            _mouthLevel.value = 0f
+        }
     }
 
     fun release() {
-        stop()
-        exoPlayer.release()
+        scope.launch {
+            playbackGen.incrementAndGet()
+            activeFetchJob?.cancel()
+            activeFetchJob = null
+            activeBundledClip = null
+            releaseFallbackPlayer()
+            exoPlayer.release()
+        }
     }
 
     private fun fetchTtsChunkToFile(

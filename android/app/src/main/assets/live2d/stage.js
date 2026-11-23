@@ -201,6 +201,9 @@
   }
   scheduleNextBlink();
 
+  let blinkEyeVal = 1;
+  let idleBreathVal = 0;
+
   function tickBlink(delta) {
     const dt = delta / 60;
     blinkTimer -= dt;
@@ -216,17 +219,15 @@
       blinkT += dt / 0.10; eyeVal = Math.min(1, blinkT);
       if (blinkT >= 1) { scheduleNextBlink(); eyeVal = 1; }
     }
-    setCoreParam(P.eyeR, eyeVal);
-    setCoreParam(P.eyeL, eyeVal);
+    blinkEyeVal = eyeVal;
   }
 
   function tickIdle(delta) {
     const dt = delta / 60;
     idleBreath += dt;
     idleHead += dt;
-    setCoreParam(P.breath, Math.sin(idleBreath * (Math.PI * 2 / 4)) * 0.4);
+    idleBreathVal = Math.sin(idleBreath * (Math.PI * 2 / 4)) * 0.4;
     idleAngleZ = Math.sin(idleHead * (Math.PI * 2 / 7)) * 4;
-    setCoreParam(P.angleZ, idleAngleZ);
   }
 
   function tickFollow(delta) {
@@ -234,30 +235,20 @@
     const lerp = 3.5 * dt;
     smoothCX += (cursorX - smoothCX) * lerp;
     smoothCY += (cursorY - smoothCY) * lerp;
-    const angleX = (smoothCX - 0.5) * 40;
-    const angleY = (0.5 - smoothCY) * 30;
-    setCoreParam(P.angleX, angleX);
-    setCoreParam(P.angleY, angleY);
-    setCoreParam(P.eyeX, (smoothCX - 0.5) * 2);
-    setCoreParam(P.eyeY, (0.5 - smoothCY) * 1.2);
-    setCoreParam(P.bodyX, angleX * 0.12);
   }
 
   function tickLipSync() {
     const speed = targetMouth > smoothMouth ? 0.35 : 0.15;
     smoothMouth += (targetMouth - smoothMouth) * speed;
-    setCoreParam(P.mouthY, smoothMouth);
-    setCoreParam(P.mouthF, isSpeaking ? 0.3 : 0);
   }
 
   function tickExpression() {
-    for (const [paramId, s] of Object.entries(remFaceParams)) {
+    for (const s of Object.values(remFaceParams)) {
       if (s.current !== s.target) {
         const speed = Math.abs(s.target) > Math.abs(s.current) ? s.fadeIn : s.fadeOut;
         s.current += (s.target - s.current) * speed;
         if (Math.abs(s.current - s.target) < 0.001) s.current = s.target;
       }
-      setCoreParam(paramId, s.current);
     }
   }
 
@@ -278,9 +269,6 @@
       petBubbleShown = true;
       bridge?.onPetTriggered?.();
     }
-    setCoreParam(P.eyeLSmile, petIntensity * 0.9);
-    setCoreParam(P.eyeRSmile, petIntensity * 0.9);
-    setCoreParam(P.angleZ, idleAngleZ + petIntensity * (4 + Math.sin(petHairT * 1.3) * 1.8));
   }
 
   function tickRemHand() {
@@ -289,6 +277,47 @@
     Object.entries(remCurrentHandMap).forEach(([p, v]) => setCoreParam(p, v));
     setCoreParam('PARAM_ARM_R_ORDER', remCurrentArmOrder.r);
     setCoreParam('PARAM_ARM_L_ORDER', remCurrentArmOrder.l);
+  }
+
+  let currentMotion = 'idle';
+
+  function applyModelParams() {
+    if (!model) return;
+    const angleX = (smoothCX - 0.5) * 40;
+    const angleY = (0.5 - smoothCY) * 30;
+    const isMotionActive = currentMotion !== 'idle' || (currentExpr !== 'none' && currentExpr !== 'idle');
+
+    setCoreParam(P.eyeR, blinkEyeVal);
+    setCoreParam(P.eyeL, blinkEyeVal);
+    setCoreParam(P.eyeX, (smoothCX - 0.5) * 2);
+    setCoreParam(P.eyeY, (0.5 - smoothCY) * 1.2);
+
+    if (!isMotionActive) {
+      setCoreParam(P.breath, idleBreathVal);
+      setCoreParam(P.angleZ, idleAngleZ);
+      setCoreParam(P.angleX, angleX);
+      setCoreParam(P.angleY, angleY);
+      setCoreParam(P.bodyX, angleX * 0.12);
+    }
+
+    setCoreParam(P.mouthY, smoothMouth);
+    setCoreParam(P.mouthF, isSpeaking ? 0.3 : 0);
+
+    for (const [paramId, s] of Object.entries(remFaceParams)) {
+      if (Math.abs(s.current) > 0.001 || Math.abs(s.target) > 0.001) {
+        setCoreParam(paramId, s.current);
+      }
+    }
+
+    if (petIntensity >= 0.001) {
+      setCoreParam(P.eyeLSmile, petIntensity * 0.9);
+      setCoreParam(P.eyeRSmile, petIntensity * 0.9);
+      if (!isMotionActive) {
+        setCoreParam(P.angleZ, idleAngleZ + petIntensity * (4 + Math.sin(petHairT * 1.3) * 1.8));
+      }
+    }
+
+    tickRemHand();
   }
 
   function onTick(delta) {
@@ -305,13 +334,15 @@
     if (!model) return;
     const count = REM_MOTION_MAP[name];
     if (!count) return;
+    currentMotion = name;
     const idx = Math.floor(Math.random() * count);
     remCurrentHandMap = REM_HAND_MAP[name]?.[idx] ?? {};
     remCurrentArmOrder = REM_ARM_ORDER_MAP[name]?.[idx] ?? { r: 1, l: 1 };
+    // Gunakan MotionPriority.FORCE (3) agar motion baru langsung menggantikan motion sebelumnya (termasuk motion yang Loop=true)
     try {
-      model.motion(name, idx, 2);
+      model.motion(name, idx, 3);
     } catch (_) {
-      try { model.internalModel.motionManager.startMotion(name, idx, 2); } catch (_2) {}
+      try { model.internalModel.motionManager.startMotion(name, idx, 3); } catch (_2) {}
     }
   }
 
@@ -340,7 +371,7 @@
   };
 
   // Pointer & touch zones
-  let tapStartX = 0, tapStartY = 0, tapMoved = false;
+  let tapStartX = 0, tapStartY = 0, tapMoved = false, didPetThisTouch = false;
   const isHead = (y, x) => y < 0.48 && x > 0.12 && x < 0.88;
   const isBody = (y, x) => y >= 0.48 && y < 0.75 && x > 0.15 && x < 0.85;
   const isLeg = (y, x) => y >= 0.75 && y < 0.95 && x > 0.20 && x < 0.80;
@@ -351,6 +382,7 @@
     const y = (e.clientY - rect.top) / rect.height;
     cursorX = Math.max(0, Math.min(1, x));
     cursorY = Math.max(0, Math.min(1, y));
+    didPetThisTouch = false;
     if (isHead(y, x)) petActive = true;
     tapStartX = e.clientX;
     tapStartY = e.clientY;
@@ -361,15 +393,17 @@
     const rect = canvas.getBoundingClientRect();
     cursorX = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     cursorY = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
-    if (Math.abs(e.clientX - tapStartX) > 10 || Math.abs(e.clientY - tapStartY) > 10) {
+    if (petBubbleShown) didPetThisTouch = true;
+    if (Math.abs(e.clientX - tapStartX) > 16 || Math.abs(e.clientY - tapStartY) > 16) {
       tapMoved = true;
     }
   });
 
   canvas.addEventListener('pointerup', (e) => {
+    const wasPetted = didPetThisTouch || petBubbleShown;
     petActive = false;
     if (blinkState === 'open') blinkTimer = 0;
-    if (tapMoved) return;
+    if (tapMoved || wasPetted) return;
     const rect = canvas.getBoundingClientRect();
     const x = (e.clientX - rect.left) / rect.width;
     const y = (e.clientY - rect.top) / rect.height;
@@ -437,9 +471,9 @@
       }
 
       app.stage.addChild(model);
+      model.internalModel.on('beforeModelUpdate', applyModelParams);
       resizeStage();
       app.ticker.add(onTick, null, -50);
-      app.ticker.add(tickRemHand, null, -100);
       app.render();
       requestAnimationFrame(() => {
         resizeStage();

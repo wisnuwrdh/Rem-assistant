@@ -2481,12 +2481,16 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             delay(450)
             stageController.playMotion("appeal")
+            delay(3_200)
+            if (_uiState.value.currentExpression == "none") {
+                stageController.playMotion("idle")
+            }
         }
     }
 
     override fun onZoneTapped(zone: String) {
         val now = System.currentTimeMillis()
-        if (now - lastBubbleAt < 4_000L) return
+        if (now - lastBubbleAt < 1_800L) return
         lastBubbleAt = now
         resetIdleTimer()
 
