@@ -108,7 +108,7 @@ class TtsAudioManager(
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setContentType(C.AUDIO_CONTENT_TYPE_SPEECH)
-                    .setUsage(C.USAGE_ASSISTANT)
+                    .setUsage(C.USAGE_MEDIA)
                     .build(),
                 true
             )
