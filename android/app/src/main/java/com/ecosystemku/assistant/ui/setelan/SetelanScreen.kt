@@ -1049,7 +1049,7 @@ fun SetelanScreen(
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Box(
@@ -1069,7 +1069,9 @@ fun SetelanScreen(
                                         fontFamily = UiSans,
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.Medium,
-                                        color = TextPrimary
+                                        color = TextPrimary,
+                                        maxLines = 1,
+                                        softWrap = false
                                     )
                                 }
                             }
@@ -1079,23 +1081,30 @@ fun SetelanScreen(
                                 apiConnectionOk -> SemanticSuccess
                                 else -> SemanticDanger
                             }
-                            Row(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(statusColor.copy(alpha = 0.1f))
-                                    .border(1.dp, statusColor.copy(alpha = 0.25f), RoundedCornerShape(12.dp))
-                                    .padding(horizontal = 10.dp, vertical = 5.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            Box(
+                                modifier = Modifier.weight(1f),
+                                contentAlignment = Alignment.CenterEnd
                             ) {
-                                Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(statusColor))
-                                Text(
-                                    text = apiConnectionLabel,
-                                    fontFamily = UiSans,
-                                    fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = statusColor
-                                )
+                                Row(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(statusColor.copy(alpha = 0.1f))
+                                        .border(1.dp, statusColor.copy(alpha = 0.25f), RoundedCornerShape(12.dp))
+                                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(statusColor))
+                                    Text(
+                                        text = apiConnectionLabel,
+                                        fontFamily = UiSans,
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = statusColor,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                             }
                         }
                     }
@@ -1483,19 +1492,39 @@ private fun SettingsSection(
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = title,
-                fontFamily = UiSans,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold,
-                letterSpacing = 0.9.sp,
-                color = TextMuted
-            )
-            if (trailing != null) {
-                Text(trailing, fontFamily = UiSans, fontSize = 11.sp, color = TextSubtle)
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text(
+                    text = title,
+                    fontFamily = UiSans,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 0.9.sp,
+                    color = TextMuted
+                )
+                if (trailing != null && badgeText != null) {
+                    Text(
+                        text = trailing,
+                        fontFamily = UiSans,
+                        fontSize = 11.sp,
+                        color = TextSubtle
+                    )
+                }
+            }
+            if (trailing != null && badgeText == null) {
+                Text(
+                    text = trailing,
+                    fontFamily = UiSans,
+                    fontSize = 11.sp,
+                    color = TextSubtle,
+                    maxLines = 1,
+                    softWrap = false
+                )
             }
             if (badgeText != null) {
                 Row(
@@ -1503,12 +1532,20 @@ private fun SettingsSection(
                         .clip(RoundedCornerShape(12.dp))
                         .background(SemanticSuccess.copy(alpha = 0.1f))
                         .border(1.dp, SemanticSuccess.copy(alpha = 0.25f), RoundedCornerShape(12.dp))
-                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                        .padding(horizontal = 8.dp, vertical = 3.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(SemanticSuccess))
-                    Text(badgeText, fontFamily = UiSans, fontSize = 10.5.sp, fontWeight = FontWeight.Medium, color = SemanticSuccess)
+                    Text(
+                        text = badgeText,
+                        fontFamily = UiSans,
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = SemanticSuccess,
+                        maxLines = 1,
+                        softWrap = false
+                    )
                 }
             }
         }
