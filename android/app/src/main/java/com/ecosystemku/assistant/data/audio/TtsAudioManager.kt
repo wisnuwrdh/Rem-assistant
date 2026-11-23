@@ -41,6 +41,7 @@ import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.abs
 import kotlin.math.min
 import kotlin.math.sqrt
 
@@ -92,7 +93,10 @@ class TtsAudioManager(
             }
             val rms = if (sampled > 0) sqrt(sumSq / sampled) else 0.0
             val normalized = min(1.0, rms * 3.8).toFloat()
-            _mouthLevel.value = normalized
+            val prev = _mouthLevel.value
+            if ((normalized == 0f && prev != 0f) || abs(normalized - prev) >= 0.02f) {
+                _mouthLevel.value = normalized
+            }
         }
     }
 

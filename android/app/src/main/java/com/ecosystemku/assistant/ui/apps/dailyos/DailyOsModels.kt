@@ -1,5 +1,6 @@
 package com.ecosystemku.assistant.ui.apps.dailyos
 
+import android.util.LruCache
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.DirectionsRun
 import androidx.compose.material.icons.outlined.AttachMoney
@@ -355,29 +356,35 @@ object DailyOsHelpers {
         }.getOrDefault(false)
     }
 
+    private val fmtTopDate = DateTimeFormatter.ofPattern("EEEE, d MMMM", ID_LOCALE)
+    private val fmtFullDate = DateTimeFormatter.ofPattern("d MMMM yyyy", ID_LOCALE)
+    private val fmtShortDate = DateTimeFormatter.ofPattern("d MMM", ID_LOCALE)
+
+    private val activeDaysCache = LruCache<String, List<Int>>(64)
+    private val subTasksCache = LruCache<String, List<DailyOsSubTask>>(64)
+    private val historyCache = LruCache<String, Map<String, List<DailyOsHistoryLog>>>(128)
+    private val todoSubtasksCache = LruCache<String, List<DailyOsTodoSubtask>>(64)
+
     fun todayStr(): String = LocalDate.now().toString()
 
     fun tomorrowStr(): String = LocalDate.now().plusDays(1).toString()
 
     fun formatTopDate(date: LocalDate = LocalDate.now()): String {
-        val fmt = DateTimeFormatter.ofPattern("EEEE, d MMMM", ID_LOCALE)
-        return date.format(fmt).replaceFirstChar { it.uppercase(ID_LOCALE) }
+        return date.format(fmtTopDate).replaceFirstChar { it.uppercase(ID_LOCALE) }
     }
 
     fun formatFullDate(dateStr: String): String {
         return runCatching {
             val d = LocalDate.parse(dateStr)
             val dow = DAY_NAMES_FULL[dayOfWeekNum(d)]
-            val fmt = DateTimeFormatter.ofPattern("d MMMM yyyy", ID_LOCALE)
-            "$dow, ${d.format(fmt)}"
+            "$dow, ${d.format(fmtFullDate)}"
         }.getOrDefault(dateStr)
     }
 
     fun formatShortDate(dateStr: String): String {
         if (dateStr.isBlank()) return ""
         return runCatching {
-            val d = LocalDate.parse(dateStr)
-            d.format(DateTimeFormatter.ofPattern("d MMM", ID_LOCALE))
+            LocalDate.parse(dateStr).format(fmtShortDate)
         }.getOrDefault(dateStr)
     }
 
@@ -395,23 +402,30 @@ object DailyOsHelpers {
 
     fun parseActiveDays(raw: String): List<Int> {
         if (raw.isBlank() || raw == "[]") return emptyList()
-        return runCatching {
+        activeDaysCache.get(raw)?.let { return it }
+        val parsed = runCatching {
             json.decodeFromString<List<Int>>(raw).filter { it in 0..6 }.distinct()
         }.getOrDefault(emptyList())
+        activeDaysCache.put(raw, parsed)
+        return parsed
     }
 
     fun encodeActiveDays(days: List<Int>): String = json.encodeToString(days.filter { it in 0..6 }.distinct())
 
     fun parseSubTasks(raw: String): List<DailyOsSubTask> {
         if (raw.isBlank() || raw == "[]") return emptyList()
-        return runCatching { json.decodeFromString<List<DailyOsSubTask>>(raw) }.getOrDefault(emptyList())
+        subTasksCache.get(raw)?.let { return it }
+        val parsed = runCatching { json.decodeFromString<List<DailyOsSubTask>>(raw) }.getOrDefault(emptyList())
+        subTasksCache.put(raw, parsed)
+        return parsed
     }
 
     fun encodeSubTasks(subs: List<DailyOsSubTask>): String = json.encodeToString(subs)
 
     fun parseHistory(raw: String): Map<String, List<DailyOsHistoryLog>> {
         if (raw.isBlank() || raw == "{}") return emptyMap()
-        return runCatching {
+        historyCache.get(raw)?.let { return it }
+        val parsed = runCatching {
             val obj = json.parseToJsonElement(raw).jsonObject
             obj.mapValues { (_, arrEl) ->
                 val arr = arrEl as? JsonArray ?: return@mapValues emptyList()
@@ -429,13 +443,18 @@ object DailyOsHelpers {
                 }
             }
         }.getOrDefault(emptyMap())
+        historyCache.put(raw, parsed)
+        return parsed
     }
 
     fun encodeHistory(history: Map<String, List<DailyOsHistoryLog>>): String = json.encodeToString(history)
 
     fun parseTodoSubtasks(raw: String): List<DailyOsTodoSubtask> {
         if (raw.isBlank() || raw == "[]") return emptyList()
-        return runCatching { json.decodeFromString<List<DailyOsTodoSubtask>>(raw) }.getOrDefault(emptyList())
+        todoSubtasksCache.get(raw)?.let { return it }
+        val parsed = runCatching { json.decodeFromString<List<DailyOsTodoSubtask>>(raw) }.getOrDefault(emptyList())
+        todoSubtasksCache.put(raw, parsed)
+        return parsed
     }
 
     fun encodeTodoSubtasks(subs: List<DailyOsTodoSubtask>): String = json.encodeToString(subs)

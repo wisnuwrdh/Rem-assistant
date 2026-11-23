@@ -1014,7 +1014,7 @@ internal fun BudgetDetailSheet(
             Text("RINCIAN PER KATEGORI", color = CuciMoneyColors.TextMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
             Spacer(modifier = Modifier.height(8.dp))
             LazyColumn(modifier = Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(expByCat) { (emoji, name, amt) ->
+                items(expByCat, key = { (emoji, name, _) -> "${emoji}_${name}" }) { (emoji, name, amt) ->
                     val share = if (budget.limitAmount > 0) (amt.toFloat() / budget.limitAmount.toFloat()).coerceIn(0f, 1f) else 0f
                     Column(
                         modifier = Modifier

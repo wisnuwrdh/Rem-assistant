@@ -1,5 +1,6 @@
 package com.ecosystemku.assistant.ui.apps.cucimoney
 
+import android.util.LruCache
 import androidx.compose.ui.graphics.Color
 import com.ecosystemku.assistant.data.local.CuciAccountEntity
 import com.ecosystemku.assistant.data.local.CuciBackupAccountDto
@@ -23,9 +24,11 @@ import com.ecosystemku.assistant.data.local.CuciWishlistEntity
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.text.NumberFormat
-import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 import java.util.Calendar
-import java.util.Date
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToLong
@@ -328,11 +331,31 @@ object CuciMoneyHelpers {
     fun svIconEmoji(key: String): String =
         SV_ICONS.firstOrNull { it.key == key }?.emoji ?: "🛍️"
 
+    private val accountIdsCache = LruCache<String, List<Long>>(64)
+    private val fmtShortDate = DateTimeFormatter.ofPattern("d MMM yyyy", idLocale)
+    private val fmtDayMonth = DateTimeFormatter.ofPattern("d MMM", idLocale)
+    private val fmtGroupDay = DateTimeFormatter.ofPattern("EEE, d MMM", idLocale)
+    private val fmtLongDate = DateTimeFormatter.ofPattern("EEEE, d MMMM yyyy", idLocale)
+
+    private val nf0 = ThreadLocal.withInitial {
+        NumberFormat.getNumberInstance(idLocale).apply { maximumFractionDigits = 0 }
+    }
+    private val nf1 = ThreadLocal.withInitial {
+        NumberFormat.getNumberInstance(idLocale).apply { maximumFractionDigits = 1 }
+    }
+    private val nf2 = ThreadLocal.withInitial {
+        NumberFormat.getNumberInstance(idLocale).apply { maximumFractionDigits = 2 }
+    }
+
     fun generateId(): Long = System.currentTimeMillis() * 1000L + Random.nextInt(100, 999)
 
-    fun parseAccountIds(raw: String): List<Long> = runCatching {
-        json.decodeFromString<List<Long>>(raw)
-    }.getOrDefault(emptyList())
+    fun parseAccountIds(raw: String): List<Long> {
+        if (raw.isBlank() || raw == "[]") return emptyList()
+        accountIdsCache.get(raw)?.let { return it }
+        val parsed = runCatching { json.decodeFromString<List<Long>>(raw) }.getOrDefault(emptyList())
+        accountIdsCache.put(raw, parsed)
+        return parsed
+    }
 
     fun encodeAccountIds(ids: List<Long>): String = runCatching {
         json.encodeToString(ids.distinct())
@@ -358,31 +381,23 @@ object CuciMoneyHelpers {
     fun accountGroup(typeId: String): String =
         ACCOUNT_TYPES.firstOrNull { it.id == typeId }?.group ?: "Lainnya"
 
-    fun todayDateStr(): String =
-        SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+    fun todayDateStr(): String = LocalDate.now().toString()
 
-    fun yesterdayDateStr(): String {
-        val cal = Calendar.getInstance()
-        cal.add(Calendar.DAY_OF_YEAR, -1)
-        return SimpleDateFormat("yyyy-MM-dd", Locale.US).format(cal.time)
-    }
+    fun yesterdayDateStr(): String = LocalDate.now().minusDays(1).toString()
 
     fun formatRp(amount: Long, visible: Boolean = true): String {
         if (!visible) return "••••••"
-        val nf = NumberFormat.getNumberInstance(idLocale)
-        nf.maximumFractionDigits = 0
         val sign = if (amount < 0) "-" else ""
-        return "${sign}Rp ${nf.format(abs(amount))}"
+        return "${sign}Rp ${nf0.get()!!.format(abs(amount))}"
     }
 
     fun formatCompact(amount: Long, visible: Boolean = true): String {
         if (!visible) return "••••••"
         val a = abs(amount).toDouble()
         val sign = if (amount < 0) "-" else ""
-        val nf1 = NumberFormat.getNumberInstance(idLocale).apply { maximumFractionDigits = 1 }
         return when {
-            a >= 1_000_000_000.0 -> "${sign}Rp ${nf1.format(a / 1_000_000_000.0)}M"
-            a >= 1_000_000.0 -> "${sign}Rp ${nf1.format(a / 1_000_000.0)}Jt"
+            a >= 1_000_000_000.0 -> "${sign}Rp ${nf1.get()!!.format(a / 1_000_000_000.0)}M"
+            a >= 1_000_000.0 -> "${sign}Rp ${nf1.get()!!.format(a / 1_000_000.0)}Jt"
             a >= 1_000.0 -> "${sign}Rp ${(a / 1_000.0).roundToLong()}rb"
             else -> formatRp(amount, true)
         }
@@ -392,11 +407,9 @@ object CuciMoneyHelpers {
         if (!visible) return "••••••"
         val a = abs(amount).toDouble()
         val sign = if (amount < 0) "-" else ""
-        val nf1 = NumberFormat.getNumberInstance(idLocale).apply { maximumFractionDigits = 1 }
-        val nf2 = NumberFormat.getNumberInstance(idLocale).apply { maximumFractionDigits = 2 }
         return when {
-            a >= 1_000_000_000.0 -> "${sign}Rp ${nf2.format(a / 1_000_000_000.0)} M"
-            a >= 100_000_000.0 -> "${sign}Rp ${nf1.format(a / 1_000_000.0)} Jt"
+            a >= 1_000_000_000.0 -> "${sign}Rp ${nf2.get()!!.format(a / 1_000_000_000.0)} M"
+            a >= 100_000_000.0 -> "${sign}Rp ${nf1.get()!!.format(a / 1_000_000.0)} Jt"
             else -> formatRp(amount, true)
         }
     }
@@ -404,8 +417,7 @@ object CuciMoneyHelpers {
     fun formatDateShort(dateStr: String): String {
         if (dateStr.isBlank()) return ""
         return runCatching {
-            val d = SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(dateStr) ?: return dateStr
-            SimpleDateFormat("d MMM yyyy", idLocale).format(d)
+            LocalDate.parse(dateStr).format(fmtShortDate)
         }.getOrDefault(dateStr)
     }
 
@@ -413,24 +425,21 @@ object CuciMoneyHelpers {
         if (dateStr == todayDateStr()) return "Today"
         if (dateStr == yesterdayDateStr()) return "Kemarin"
         return runCatching {
-            val d = SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(dateStr) ?: return dateStr
-            SimpleDateFormat("d MMM", idLocale).format(d)
+            LocalDate.parse(dateStr).format(fmtDayMonth)
         }.getOrDefault(dateStr)
     }
 
     fun formatGroupDayLabel(dateStr: String): String = runCatching {
-        val d = SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(dateStr) ?: return dateStr.uppercase()
-        SimpleDateFormat("EEE, d MMM", idLocale).format(d).uppercase(idLocale)
+        LocalDate.parse(dateStr).format(fmtGroupDay).uppercase(idLocale)
     }.getOrDefault(dateStr)
 
     fun formatLongDate(dateStr: String): String = runCatching {
-        val d = SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(dateStr) ?: return dateStr
-        SimpleDateFormat("EEEE, d MMMM yyyy", idLocale).format(d)
+        LocalDate.parse(dateStr).format(fmtLongDate)
     }.getOrDefault(dateStr)
 
     fun currentYearMonth(): Pair<Int, Int> {
-        val cal = Calendar.getInstance()
-        return cal.get(Calendar.YEAR) to cal.get(Calendar.MONTH)
+        val now = LocalDate.now()
+        return now.year to (now.monthValue - 1)
     }
 
     fun yearMonthPrefix(year: Int, month: Int): String =
@@ -443,12 +452,10 @@ object CuciMoneyHelpers {
     }
 
     fun daysLeftUntil(endDate: String): Int? = runCatching {
-        val today = todayDateStr()
-        if (today > endDate) return null
-        val fmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-        val t = fmt.parse(today)?.time ?: return null
-        val e = fmt.parse(endDate)?.time ?: return null
-        ((e - t) / 86_400_000L).toInt().coerceAtLeast(0)
+        val today = LocalDate.now()
+        val end = LocalDate.parse(endDate)
+        if (today.isAfter(end)) return null
+        ChronoUnit.DAYS.between(today, end).toInt().coerceAtLeast(0)
     }.getOrNull()
 
     fun activeBook(state: CuciMoneyUiState): CuciBookEntity? =
@@ -569,7 +576,7 @@ object CuciMoneyHelpers {
     }
 
     fun buildBackupJson(state: CuciMoneyUiState): String {
-        val nowIso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).format(Date())
+        val nowIso = Instant.now().toString()
         val pots = mutableMapOf<String, CuciBackupPotDto>()
         state.wishlists.forEach { w ->
             val hist = parseWishlistHistory(w.historyJson)

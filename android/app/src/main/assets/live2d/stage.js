@@ -25,7 +25,7 @@
     backgroundAlpha: 0,
     antialias: false,
     preserveDrawingBuffer: true,
-    resolution: Math.min(window.devicePixelRatio || 1, 2),
+    resolution: Math.min(window.devicePixelRatio || 1, 1.5),
     autoDensity: true,
     powerPreference: 'default',
     sharedTicker: false,
@@ -166,15 +166,56 @@
 
   let remCurrentHandMap = REM_HAND_MAP.idle[0];
   let remCurrentArmOrder = REM_ARM_ORDER_MAP.idle[0];
+  let cachedCore = null;
+  let paramIndexCache = Object.create(null);
+  let allHandIndices = [];
+  let activeHandPairs = [];
+  let armOrderRIdx = -1;
+  let armOrderLIdx = -1;
+  let faceParamEntries = [];
+
+  function getParamIdx(name) {
+    let idx = paramIndexCache[name];
+    if (idx !== undefined) return idx;
+    if (!cachedCore) return -1;
+    idx = cachedCore.getParameterIndex(name);
+    paramIndexCache[name] = idx;
+    return idx;
+  }
+
+  function setCoreParamByIdx(idx, value) {
+    if (idx < 0 || !cachedCore) return;
+    cachedCore.setParameterValueByIndex(idx, value, 1.0);
+  }
 
   function setCoreParam(name, value) {
-    try {
-      const core = model?.internalModel?.coreModel;
-      if (!core) return;
-      const idx = core.getParameterIndex(name);
-      if (idx < 0) return;
-      core.setParameterValueByIndex(idx, value, 1.0);
-    } catch (_) {}
+    const idx = getParamIdx(name);
+    if (idx >= 0 && cachedCore) {
+      cachedCore.setParameterValueByIndex(idx, value, 1.0);
+    }
+  }
+
+  function updateActiveHandPairs() {
+    const pairs = [];
+    for (const [name, val] of Object.entries(remCurrentHandMap)) {
+      const idx = getParamIdx(name);
+      if (idx >= 0) pairs.push([idx, val]);
+    }
+    activeHandPairs = pairs;
+  }
+
+  function buildParamCache() {
+    cachedCore = model?.internalModel?.coreModel || null;
+    paramIndexCache = Object.create(null);
+    if (!cachedCore) return;
+    for (const name of Object.values(P)) getParamIdx(name);
+    allHandIndices = ALL_HAND_PARAMS.map((name) => getParamIdx(name)).filter((idx) => idx >= 0);
+    armOrderRIdx = getParamIdx('PARAM_ARM_R_ORDER');
+    armOrderLIdx = getParamIdx('PARAM_ARM_L_ORDER');
+    faceParamEntries = Object.entries(remFaceParams)
+      .map(([name, state]) => [getParamIdx(name), state])
+      .filter(([idx]) => idx >= 0);
+    updateActiveHandPairs();
   }
 
   function positionModel(m, w, h) {
@@ -186,13 +227,28 @@
     m.y = h * 1.44;
   }
 
-  function resizeStage() {
+  let lastStageW = 0;
+  let lastStageH = 0;
+  let resizeRafId = 0;
+
+  function resizeStage(force) {
     const w = window.innerWidth || 390;
     const h = window.innerHeight || 480;
+    if (!force && w === lastStageW && h === lastStageH) return;
+    lastStageW = w;
+    lastStageH = h;
     app.renderer.resize(w, h);
     if (model) positionModel(model, w, h);
   }
-  window.addEventListener('resize', resizeStage);
+
+  function scheduleResize() {
+    if (resizeRafId) return;
+    resizeRafId = requestAnimationFrame(() => {
+      resizeRafId = 0;
+      resizeStage(false);
+    });
+  }
+  window.addEventListener('resize', scheduleResize);
 
   function scheduleNextBlink() {
     blinkTimer = 2.5 + Math.random() * 3.5;
@@ -272,17 +328,21 @@
   }
 
   function tickRemHand() {
-    if (!model) return;
-    ALL_HAND_PARAMS.forEach((p) => setCoreParam(p, 0));
-    Object.entries(remCurrentHandMap).forEach(([p, v]) => setCoreParam(p, v));
-    setCoreParam('PARAM_ARM_R_ORDER', remCurrentArmOrder.r);
-    setCoreParam('PARAM_ARM_L_ORDER', remCurrentArmOrder.l);
+    if (!cachedCore) return;
+    for (let i = 0; i < allHandIndices.length; i++) {
+      cachedCore.setParameterValueByIndex(allHandIndices[i], 0, 1.0);
+    }
+    for (let i = 0; i < activeHandPairs.length; i++) {
+      cachedCore.setParameterValueByIndex(activeHandPairs[i][0], activeHandPairs[i][1], 1.0);
+    }
+    setCoreParamByIdx(armOrderRIdx, remCurrentArmOrder.r);
+    setCoreParamByIdx(armOrderLIdx, remCurrentArmOrder.l);
   }
 
   let currentMotion = 'idle';
 
   function applyModelParams() {
-    if (!model) return;
+    if (!model || !cachedCore) return;
     const angleX = (smoothCX - 0.5) * 40;
     const angleY = (0.5 - smoothCY) * 30;
     const isMotionActive = currentMotion !== 'idle' || (currentExpr !== 'none' && currentExpr !== 'idle');
@@ -303,9 +363,11 @@
     setCoreParam(P.mouthY, smoothMouth);
     setCoreParam(P.mouthF, isSpeaking ? 0.3 : 0);
 
-    for (const [paramId, s] of Object.entries(remFaceParams)) {
+    for (let i = 0; i < faceParamEntries.length; i++) {
+      const idx = faceParamEntries[i][0];
+      const s = faceParamEntries[i][1];
       if (Math.abs(s.current) > 0.001 || Math.abs(s.target) > 0.001) {
-        setCoreParam(paramId, s.current);
+        cachedCore.setParameterValueByIndex(idx, s.current, 1.0);
       }
     }
 
@@ -328,6 +390,8 @@
     tickLipSync();
     tickExpression();
     tickPet(delta);
+    // Satu ticker tunggal: update internalModel langsung sebelum app.render()
+    model.update(app.ticker.deltaMS);
   }
 
   function playRemMotion(name) {
@@ -338,6 +402,7 @@
     const idx = Math.floor(Math.random() * count);
     remCurrentHandMap = REM_HAND_MAP[name]?.[idx] ?? {};
     remCurrentArmOrder = REM_ARM_ORDER_MAP[name]?.[idx] ?? { r: 1, l: 1 };
+    updateActiveHandPairs();
     // Gunakan MotionPriority.FORCE (3) agar motion baru langsung menggantikan motion sebelumnya (termasuk motion yang Loop=true)
     try {
       model.motion(name, idx, 3);
@@ -443,7 +508,7 @@
   };
 
   if (typeof ResizeObserver !== 'undefined') {
-    new ResizeObserver(() => resizeStage()).observe(document.documentElement);
+    new ResizeObserver(() => scheduleResize()).observe(document.documentElement);
   }
 
   async function init() {
@@ -454,6 +519,7 @@
       }
       model = await Live2DModel.from('./characters/rem/Character.model3.json', {
         autoInteract: false,
+        autoUpdate: false,
       });
 
       const gl = app.renderer.gl;
@@ -470,13 +536,15 @@
         return;
       }
 
+      model.autoUpdate = false;
+      buildParamCache();
       app.stage.addChild(model);
       model.internalModel.on('beforeModelUpdate', applyModelParams);
-      resizeStage();
-      app.ticker.add(onTick, null, -50);
+      resizeStage(true);
+      app.ticker.add(onTick, null, 0);
       app.render();
       requestAnimationFrame(() => {
-        resizeStage();
+        resizeStage(false);
         app.render();
       });
 

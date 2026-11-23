@@ -17,11 +17,12 @@ import com.ecosystemku.assistant.data.local.KronikMoodDto
 import com.ecosystemku.assistant.data.network.KronikMoodDetectResult
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import java.text.SimpleDateFormat
 import java.time.Instant
-import java.util.Date
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
 import java.util.Locale
-import java.util.TimeZone
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -68,10 +69,11 @@ object KronikHelpers {
         encodeDefaults = true
     }
 
-    fun todayDateStr(): String {
-        val fmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-        return fmt.format(Date())
-    }
+    private val idLocale = Locale("in", "ID")
+    private val fmtShortIdDate = DateTimeFormatter.ofPattern("d MMM yyyy", idLocale)
+    private val fmtTimeHm = DateTimeFormatter.ofPattern("HH:mm", idLocale)
+
+    fun todayDateStr(): String = LocalDate.now().toString()
 
     fun nowIsoStr(): String = Instant.now().toString()
 
@@ -82,37 +84,26 @@ object KronikHelpers {
     }
 
     fun formatShortIdDate(dateStr: String): String {
+        if (dateStr.isBlank()) return "—"
         return runCatching {
-            val inFmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-            val d = inFmt.parse(dateStr) ?: return dateStr
-            val outFmt = SimpleDateFormat("d MMM yyyy", Locale("in", "ID"))
-            outFmt.format(d)
-        }.getOrDefault(dateStr.ifBlank { "—" })
+            LocalDate.parse(dateStr).format(fmtShortIdDate)
+        }.getOrDefault(dateStr)
     }
 
     fun formatTimeFromIso(iso: String): String {
         return runCatching {
-            val instant = Instant.parse(iso)
-            val fmt = SimpleDateFormat("HH:mm", Locale("in", "ID"))
-            fmt.format(Date.from(instant))
+            Instant.parse(iso).atZone(ZoneId.systemDefault()).format(fmtTimeHm)
         }.getOrDefault("")
     }
 
     fun dateStrToUtcMillis(dateStr: String): Long {
         return runCatching {
-            val fmt = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
-                timeZone = TimeZone.getTimeZone("UTC")
-            }
-            fmt.parse(dateStr)?.time ?: System.currentTimeMillis()
+            LocalDate.parse(dateStr).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
         }.getOrDefault(System.currentTimeMillis())
     }
 
-    fun utcMillisToDateStr(millis: Long): String {
-        val fmt = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
-            timeZone = TimeZone.getTimeZone("UTC")
-        }
-        return fmt.format(Date(millis))
-    }
+    fun utcMillisToDateStr(millis: Long): String =
+        Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalDate().toString()
 
     fun parseHabitLogs(rawJson: String): List<KronikHabitLogDto> {
         if (rawJson.isBlank() || rawJson == "[]") return emptyList()

@@ -66,6 +66,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.ecosystemku.assistant.data.local.ChatMessageEntity
 import com.ecosystemku.assistant.live2d.WebViewLive2DStageController
 import com.ecosystemku.assistant.ui.theme.AccentBlue
 import com.ecosystemku.assistant.ui.theme.BorderLight
@@ -80,11 +82,17 @@ import com.ecosystemku.assistant.ui.theme.TextMuted
 import com.ecosystemku.assistant.ui.theme.TextPrimary
 import com.ecosystemku.assistant.ui.theme.TextSubtle
 import com.ecosystemku.assistant.ui.theme.UiSans
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 
 @Composable
 fun AsistenScreen(
     uiState: AsistenUiState,
     stageController: WebViewLive2DStageController,
+    inputTextFlow: StateFlow<String> = MutableStateFlow(""),
+    streamingTextFlow: StateFlow<String> = MutableStateFlow(""),
+    idleBubbleTextFlow: StateFlow<String?> = MutableStateFlow(null),
     onInputChanged: (String) -> Unit,
     onSend: () -> Unit,
     onStageDragDelta: (Float) -> Unit,
@@ -126,19 +134,21 @@ fun AsistenScreen(
                     .weight(stageWeight)
                     .background(DominantBg)
             ) {
-                // Aura cahaya radial biru neon di belakang Rem
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    drawRect(
-                        brush = Brush.radialGradient(
-                            colors = listOf(
-                                AccentBlue.copy(alpha = 0.26f),
-                                AccentBlue.copy(alpha = 0.09f),
-                                Color.Transparent
-                            ),
-                            center = Offset(size.width * 0.5f, size.height * 0.55f),
-                            radius = size.maxDimension * 0.55f
+                // Aura cahaya radial biru neon fallback sebelum WebView siap
+                if (!uiState.isModelReady) {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        drawRect(
+                            brush = Brush.radialGradient(
+                                colors = listOf(
+                                    AccentBlue.copy(alpha = 0.26f),
+                                    AccentBlue.copy(alpha = 0.09f),
+                                    Color.Transparent
+                                ),
+                                center = Offset(size.width * 0.5f, size.height * 0.55f),
+                                radius = size.maxDimension * 0.55f
+                            )
                         )
-                    )
+                    }
                 }
 
                 // Kanvas Live2D Offline (WebViewAssetLoader)
@@ -213,31 +223,13 @@ fun AsistenScreen(
                     )
                 }
 
-                // Idle / Touch Thought Bubble
-                androidx.compose.animation.AnimatedVisibility(
-                    visible = uiState.idleBubbleText != null,
-                    enter = fadeIn(),
-                    exit = fadeOut(),
+                // Idle / Touch Thought Bubble (terisolasi StateFlow-nya sendiri)
+                IdleThoughtBubble(
+                    idleBubbleTextFlow = idleBubbleTextFlow,
                     modifier = Modifier
                         .align(Alignment.BottomStart)
                         .padding(start = 20.dp, bottom = 32.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .widthIn(max = 220.dp)
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(SecondarySurface.copy(alpha = 0.90f))
-                            .border(1.dp, BorderLight, RoundedCornerShape(16.dp))
-                            .padding(horizontal = 14.dp, vertical = 9.dp)
-                    ) {
-                        Text(
-                            text = uiState.idleBubbleText.orEmpty(),
-                            fontFamily = UiSans,
-                            fontSize = 12.5.sp,
-                            color = TextPrimary
-                        )
-                    }
-                }
+                )
 
                 // Floating Status Tag ("Rem · idle / berbicara…")
                 Row(
@@ -347,121 +339,23 @@ fun AsistenScreen(
                     HorizontalDivider(thickness = 1.dp, color = BorderSubtle)
                 }
 
-                // Daftar Pesan Chat (Room Persistent + Live Streaming)
-                val listState = rememberLazyListState()
-                val totalItems = uiState.messages.size + if (uiState.streamingText.isNotEmpty() || uiState.isThinking) 1 else 0
-
-                LaunchedEffect(totalItems, uiState.streamingText.length) {
-                    if (totalItems > 0) {
-                        listState.animateScrollToItem(totalItems - 1)
-                    }
-                }
-
-                LazyColumn(
-                    state = listState,
+                // Daftar Pesan Chat (Room Persistent + Live Streaming terisolasi)
+                ChatMessageList(
+                    messages = uiState.messages,
+                    isThinking = uiState.isThinking,
+                    streamingTextFlow = streamingTextFlow,
                     modifier = Modifier
                         .weight(1f)
-                        .fillMaxWidth(),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    items(uiState.messages, key = { it.id }) { msg ->
-                        ChatBubbleRow(
-                            isUser = msg.role == "user",
-                            text = msg.content
-                        )
-                    }
-
-                    if (uiState.streamingText.isNotEmpty()) {
-                        item(key = "streaming") {
-                            ChatBubbleRow(isUser = false, text = uiState.streamingText)
-                        }
-                    } else if (uiState.isThinking) {
-                        item(key = "thinking") {
-                            ChatBubbleRow(isUser = false, text = "…")
-                        }
-                    }
-                }
-
-                // Capsule Input Bar (Mic UI-only + Send aktif)
-                Row(
-                    modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                        .padding(bottom = 12.dp, top = 4.dp)
-                        .height(48.dp)
-                        .clip(RoundedCornerShape(50))
-                        .background(ElevatedSurface)
-                        .border(1.dp, BorderSubtle, RoundedCornerShape(50))
-                        .padding(start = 16.dp, end = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-                        if (uiState.inputText.isEmpty()) {
-                            Text(
-                                text = "Ketik pesan...",
-                                fontFamily = UiSans,
-                                fontSize = 13.sp,
-                                color = TextSubtle
-                            )
-                        }
-                        BasicTextField(
-                            value = uiState.inputText,
-                            onValueChange = onInputChanged,
-                            singleLine = true,
-                            textStyle = TextStyle(
-                                fontFamily = UiSans,
-                                fontSize = 13.5.sp,
-                                color = TextPrimary
-                            ),
-                            cursorBrush = SolidColor(AccentBlue),
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                            keyboardActions = KeyboardActions(onSend = { onSend() }),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
+                )
 
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    // Tombol Mikrofon (UI-only sesuai konfirmasi)
-                    IconButton(
-                        onClick = {},
-                        modifier = Modifier
-                            .size(36.dp)
-                            .shadow(8.dp, CircleShape, ambientColor = AccentBlue, spotColor = AccentBlue)
-                            .clip(CircleShape)
-                            .background(AccentBlue)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.Mic,
-                            contentDescription = "Input Suara (UI Preview)",
-                            tint = DominantBg,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.width(6.dp))
-
-                    // Tombol Kirim (Aktif -> /api/chat SSE + /api/tts)
-                    IconButton(
-                        onClick = onSend,
-                        enabled = !uiState.isThinking && uiState.inputText.isNotBlank(),
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(
-                                if (uiState.inputText.isNotBlank() && !uiState.isThinking) AccentBlue
-                                else AccentBlue.copy(alpha = 0.45f)
-                            )
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.Send,
-                            contentDescription = "Kirim Pesan",
-                            tint = DominantBg,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                }
+                // Capsule Input Bar (terisolasi dari AsistenUiState agar ketikan tidak me-recompose parent)
+                ChatInputCapsule(
+                    inputTextFlow = inputTextFlow,
+                    isThinking = uiState.isThinking,
+                    onInputChanged = onInputChanged,
+                    onSend = onSend
+                )
             }
             }
         }
@@ -576,3 +470,171 @@ private fun ChatBubbleRow(
         }
     }
 }
+
+@Composable
+private fun IdleThoughtBubble(
+    idleBubbleTextFlow: StateFlow<String?>,
+    modifier: Modifier = Modifier
+) {
+    val bubbleText by idleBubbleTextFlow.collectAsStateWithLifecycle()
+    androidx.compose.animation.AnimatedVisibility(
+        visible = bubbleText != null,
+        enter = fadeIn(),
+        exit = fadeOut(),
+        modifier = modifier
+    ) {
+        Box(
+            modifier = Modifier
+                .widthIn(max = 220.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(SecondarySurface.copy(alpha = 0.90f))
+                .border(1.dp, BorderLight, RoundedCornerShape(16.dp))
+                .padding(horizontal = 14.dp, vertical = 9.dp)
+        ) {
+            Text(
+                text = bubbleText.orEmpty(),
+                fontFamily = UiSans,
+                fontSize = 12.5.sp,
+                color = TextPrimary
+            )
+        }
+    }
+}
+
+@Composable
+private fun ChatMessageList(
+    messages: List<ChatMessageEntity>,
+    isThinking: Boolean,
+    streamingTextFlow: StateFlow<String>,
+    modifier: Modifier = Modifier
+) {
+    val streamingText by streamingTextFlow.collectAsStateWithLifecycle()
+    val listState = rememberLazyListState()
+    val totalItems = messages.size + if (streamingText.isNotEmpty() || isThinking) 1 else 0
+
+    // Animasi scroll hanya saat jumlah item bertambah (bukan per-token saat streaming)
+    LaunchedEffect(totalItems) {
+        if (totalItems > 0) {
+            listState.animateScrollToItem(totalItems - 1)
+        }
+    }
+
+    // Throttle scroll saat streaming berlangsung agar tidak membatalkan animasi per-karakter
+    LaunchedEffect(streamingText) {
+        if (streamingText.isNotEmpty() && totalItems > 0) {
+            delay(100L)
+            listState.scrollToItem(totalItems - 1)
+        }
+    }
+
+    LazyColumn(
+        state = listState,
+        modifier = modifier,
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        items(messages, key = { it.id }) { msg ->
+            ChatBubbleRow(
+                isUser = msg.role == "user",
+                text = msg.content
+            )
+        }
+
+        if (streamingText.isNotEmpty()) {
+            item(key = "streaming") {
+                ChatBubbleRow(isUser = false, text = streamingText)
+            }
+        } else if (isThinking) {
+            item(key = "thinking") {
+                ChatBubbleRow(isUser = false, text = "…")
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChatInputCapsule(
+    inputTextFlow: StateFlow<String>,
+    isThinking: Boolean,
+    onInputChanged: (String) -> Unit,
+    onSend: () -> Unit
+) {
+    val inputText by inputTextFlow.collectAsStateWithLifecycle()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .padding(bottom = 12.dp, top = 4.dp)
+            .height(48.dp)
+            .clip(RoundedCornerShape(50))
+            .background(ElevatedSurface)
+            .border(1.dp, BorderSubtle, RoundedCornerShape(50))
+            .padding(start = 16.dp, end = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+            if (inputText.isEmpty()) {
+                Text(
+                    text = "Ketik pesan...",
+                    fontFamily = UiSans,
+                    fontSize = 13.sp,
+                    color = TextSubtle
+                )
+            }
+            BasicTextField(
+                value = inputText,
+                onValueChange = onInputChanged,
+                singleLine = true,
+                textStyle = TextStyle(
+                    fontFamily = UiSans,
+                    fontSize = 13.5.sp,
+                    color = TextPrimary
+                ),
+                cursorBrush = SolidColor(AccentBlue),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(onSend = { onSend() }),
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        Spacer(modifier = Modifier.width(8.dp))
+
+        // Tombol Mikrofon (UI-only sesuai konfirmasi)
+        IconButton(
+            onClick = {},
+            modifier = Modifier
+                .size(36.dp)
+                .shadow(8.dp, CircleShape, ambientColor = AccentBlue, spotColor = AccentBlue)
+                .clip(CircleShape)
+                .background(AccentBlue)
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Mic,
+                contentDescription = "Input Suara (UI Preview)",
+                tint = DominantBg,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+
+        Spacer(modifier = Modifier.width(6.dp))
+
+        // Tombol Kirim (Aktif -> /api/chat SSE + /api/tts)
+        val canSend = inputText.isNotBlank() && !isThinking
+        IconButton(
+            onClick = onSend,
+            enabled = canSend,
+            modifier = Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(if (canSend) AccentBlue else AccentBlue.copy(alpha = 0.45f))
+        ) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.Send,
+                contentDescription = "Kirim Pesan",
+                tint = DominantBg,
+                modifier = Modifier.size(16.dp)
+            )
+        }
+    }
+}
+

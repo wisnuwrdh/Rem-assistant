@@ -72,20 +72,18 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 data class AsistenUiState(
     val messages: List<ChatMessageEntity> = emptyList(),
-    val streamingText: String = "",
-    val inputText: String = "",
     val isThinking: Boolean = false,
     val isSpeaking: Boolean = false,
     val isModelReady: Boolean = false,
     val modelError: String? = null,
     val stageGeneration: Int = 0,
     val currentExpression: String = "none",
-    val idleBubbleText: String? = null,
     val stageFraction: Float = 0.56f,
     val isChatOpen: Boolean = true,
     val memories: List<UserMemoryEntity> = emptyList(),
@@ -129,6 +127,15 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
 
     private val _uiState = MutableStateFlow(AsistenUiState())
     val uiState: StateFlow<AsistenUiState> = _uiState.asStateFlow()
+
+    private val _inputText = MutableStateFlow("")
+    val inputText: StateFlow<String> = _inputText.asStateFlow()
+
+    private val _streamingText = MutableStateFlow("")
+    val streamingText: StateFlow<String> = _streamingText.asStateFlow()
+
+    private val _idleBubbleText = MutableStateFlow<String?>(null)
+    val idleBubbleText: StateFlow<String?> = _idleBubbleText.asStateFlow()
 
     private var streamJob: Job? = null
     private var kronikSaveJob: Job? = null
@@ -236,7 +243,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
 
     private fun startObservers() {
         viewModelScope.launch {
-            chatDao.observeAll().collect { list ->
+            chatDao.observeRecent(150).collect { list ->
                 if (list.isEmpty()) {
                     chatDao.insert(
                         ChatMessageEntity(
@@ -250,13 +257,32 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
             }
         }
 
-        // Hubungkan RMS audio player ke Live2D mouth opening
+        // Pisahkan isSpeaking agar _uiState hanya update saat status bicara berubah
         viewModelScope.launch {
+            audioManager.isSpeaking
+                .distinctUntilChanged()
+                .collect { speaking ->
+                    _uiState.update { it.copy(isSpeaking = speaking) }
+                }
+        }
+
+        // Throttle RMS lip-sync ke WebView (~30Hz) dan hindari panggilan redundant saat diam
+        viewModelScope.launch {
+            var lastSentAt = 0L
+            var lastSentLevel = -1f
+            var lastSentSpeaking = false
             combine(audioManager.mouthLevel, audioManager.isSpeaking) { level, speaking ->
                 level to speaking
             }.collect { (level, speaking) ->
-                _uiState.update { it.copy(isSpeaking = speaking) }
-                stageController.setMouthOpen(level, speaking)
+                val now = android.os.SystemClock.uptimeMillis()
+                val stateChanged = speaking != lastSentSpeaking
+                val stopSpeakingZero = !speaking && lastSentLevel != 0f
+                if (stateChanged || stopSpeakingZero || (speaking && now - lastSentAt >= 33L && kotlin.math.abs(level - lastSentLevel) >= 0.02f)) {
+                    lastSentAt = now
+                    lastSentLevel = level
+                    lastSentSpeaking = speaking
+                    stageController.setMouthOpen(level, speaking)
+                }
             }
         }
 
@@ -386,7 +412,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun onInputChanged(value: String) {
-        _uiState.update { it.copy(inputText = value) }
+        _inputText.value = value
     }
 
     fun onStageDragDelta(deltaFraction: Float) {
@@ -1921,18 +1947,18 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun sendMessage() {
-        val text = _uiState.value.inputText.trim()
+        val text = _inputText.value.trim()
         if (text.isEmpty() || _uiState.value.isThinking) return
 
         resetIdleTimer()
         hideIdleBubble()
         audioManager.stop()
 
+        _inputText.value = ""
+        _streamingText.value = ""
         _uiState.update {
             it.copy(
-                inputText = "",
                 isThinking = true,
-                streamingText = "",
                 errorMessage = null
             )
         }
@@ -1962,7 +1988,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                     is ChatStreamEvent.Delta -> {
                         rawAcc.append(event.text)
                         val visible = SseTagParser.visibleTextDuringStream(rawAcc.toString())
-                        _uiState.update { it.copy(streamingText = visible) }
+                        _streamingText.value = visible
                     }
                     is ChatStreamEvent.Done -> {
                         finalDoneText = event.text
@@ -1978,10 +2004,10 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 if (_uiState.value.currentExpression == "puzzle") {
                     applyExpression("none", autoRevert = false)
                 }
+                _streamingText.value = ""
                 _uiState.update {
                     it.copy(
                         isThinking = false,
-                        streamingText = "",
                         errorMessage = "Gagal menghubungi server: $streamErr"
                     )
                 }
@@ -2271,7 +2297,8 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 applyExpression("none", autoRevert = false)
             }
 
-            _uiState.update { it.copy(isThinking = false, streamingText = "") }
+            _streamingText.value = ""
+            _uiState.update { it.copy(isThinking = false) }
 
             val ttsTarget = finalDoneTts.ifBlank { replyText }
             if (ttsTarget.isNotBlank()) {
@@ -2446,16 +2473,16 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         if (_uiState.value.isThinking || _uiState.value.isSpeaking) return
         audioManager.playBundledAssetClip(line.audio)
         idleBubbleJob?.cancel()
-        _uiState.update { it.copy(idleBubbleText = line.text) }
+        _idleBubbleText.value = line.text
         idleBubbleJob = viewModelScope.launch {
             delay(durationMs)
-            _uiState.update { it.copy(idleBubbleText = null) }
+            _idleBubbleText.value = null
         }
     }
 
     private fun hideIdleBubble() {
         idleBubbleJob?.cancel()
-        _uiState.update { it.copy(idleBubbleText = null) }
+        _idleBubbleText.value = null
     }
 
     private fun resetIdleTimer() {

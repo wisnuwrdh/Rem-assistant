@@ -449,7 +449,7 @@ internal fun WishlistDetailSheet(
                 Text("Belum ada riwayat setoran", color = CuciMoneyColors.TextLight, fontSize = 12.sp, modifier = Modifier.padding(vertical = 12.dp))
             } else {
                 LazyColumn(modifier = Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(history) { h ->
+                    items(history, key = { h -> "${h.ts}_${h.type}_${h.amount}_${h.accountName}" }) { h ->
                         val isIn = h.type == "in"
                         Row(
                             modifier = Modifier

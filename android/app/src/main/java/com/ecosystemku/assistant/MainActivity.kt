@@ -150,6 +150,9 @@ fun EcosystemKuShell(
                 AsistenScreen(
                     uiState = asistenState,
                     stageController = asistenViewModel.stageController,
+                    inputTextFlow = asistenViewModel.inputText,
+                    streamingTextFlow = asistenViewModel.streamingText,
+                    idleBubbleTextFlow = asistenViewModel.idleBubbleText,
                     onInputChanged = asistenViewModel::onInputChanged,
                     onSend = asistenViewModel::sendMessage,
                     onStageDragDelta = asistenViewModel::onStageDragDelta,

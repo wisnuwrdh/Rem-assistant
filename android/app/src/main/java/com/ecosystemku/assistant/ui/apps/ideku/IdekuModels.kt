@@ -44,8 +44,9 @@ import com.ecosystemku.assistant.data.network.IdekuAiResult
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.text.NumberFormat
-import java.text.SimpleDateFormat
-import java.util.Date
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.abs
 
@@ -195,14 +196,16 @@ object IdekuHelpers {
         else -> Color(0xFF10B981)
     }
 
-    fun formatRp(amount: Long): String {
-        val nf = NumberFormat.getNumberInstance(Locale("in", "ID"))
-        return "Rp ${nf.format(abs(amount))}"
-    }
+    private val idLocale = Locale("in", "ID")
+    private val fmtDate = DateTimeFormatter.ofPattern("dd MMM yyyy", idLocale)
+    private val nfRp = ThreadLocal.withInitial { NumberFormat.getNumberInstance(idLocale) }
+
+    fun formatRp(amount: Long): String =
+        "Rp ${nfRp.get()!!.format(abs(amount))}"
 
     fun formatDate(ts: Long): String {
         return runCatching {
-            SimpleDateFormat("dd MMM yyyy", Locale("in", "ID")).format(Date(ts))
+            Instant.ofEpochMilli(ts).atZone(ZoneId.systemDefault()).format(fmtDate)
         }.getOrDefault("")
     }
 

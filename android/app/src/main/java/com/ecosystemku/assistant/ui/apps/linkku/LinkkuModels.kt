@@ -2,6 +2,7 @@ package com.ecosystemku.assistant.ui.apps.linkku
 
 import android.graphics.Bitmap
 import android.util.Base64
+import android.util.LruCache
 import com.ecosystemku.assistant.data.local.LinkkuBackupCatDto
 import com.ecosystemku.assistant.data.local.LinkkuBackupLinkDto
 import com.ecosystemku.assistant.data.local.LinkkuBackupWrapperDto
@@ -14,8 +15,9 @@ import kotlinx.serialization.json.Json
 import java.net.URI
 import java.security.MessageDigest
 import java.security.SecureRandom
-import java.text.SimpleDateFormat
-import java.util.Date
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 import javax.crypto.Cipher
 import javax.crypto.SecretKeyFactory
@@ -150,6 +152,9 @@ object LinkkuHelpers {
         return hue.toFloat().coerceIn(0f, 359f)
     }
 
+    private val fmtDayMonth = DateTimeFormatter.ofPattern("d MMM", Locale("in", "ID"))
+    private val tagsCache = LruCache<String, List<String>>(128)
+
     fun formatRelativeTime(ts: Long): String {
         val diff = (System.currentTimeMillis() - ts).coerceAtLeast(0L)
         return when {
@@ -157,17 +162,20 @@ object LinkkuHelpers {
             diff < 3_600_000L -> "${diff / 60_000L} mnt"
             diff < 86_400_000L -> "${diff / 3_600_000L} jam"
             diff < 604_800_000L -> "${diff / 86_400_000L} hari"
-            else -> SimpleDateFormat("d MMM", Locale("in", "ID")).format(Date(ts))
+            else -> Instant.ofEpochMilli(ts).atZone(ZoneId.systemDefault()).format(fmtDayMonth)
         }
     }
 
     fun parseTags(tagsJson: String): List<String> {
         if (tagsJson.isBlank() || tagsJson == "[]") return emptyList()
-        return runCatching {
+        tagsCache.get(tagsJson)?.let { return it }
+        val parsed = runCatching {
             json.decodeFromString<List<String>>(tagsJson)
                 .map { it.trim() }
                 .filter { it.isNotEmpty() }
         }.getOrDefault(emptyList())
+        tagsCache.put(tagsJson, parsed)
+        return parsed
     }
 
     fun encodeTags(tags: List<String>): String {

@@ -11,16 +11,17 @@ Project Android Studio siap-buka hasil migrasi dari `assistant/` + `api/` sesuai
 ## Struktur Fitur Saat Ini
 - **Tab 1 — `Asisten` (Logika Penuh Aktif)**:
   - Panggung Live2D Rem (`assets/live2d/characters/rem/`) berjalan offline via `WebViewAssetLoader` + `Live2DStageController` interface.
-    - `WebView` memakai latar solid `#0F0E0C` + aura CSS di `stage.html` serta `preserveDrawingBuffer: true` dan `antialias: false` agar rendering WebGL konsisten di Compose `AndroidView` (tanpa `.alpha()` layer).
-    - `StageJsBridge` men-dispatch callback ke `MainLooper`, `playRemMotion` memakai `MotionPriority.FORCE` (`3`) agar motion loop bisa berganti, dan override wajah/tangan/lip-sync diterapkan di event `beforeModelUpdate`.
+    - `WebView` memakai latar solid `#0F0E0C` + aura CSS di `stage.html` serta `preserveDrawingBuffer: true`, `antialias: false`, dan resolusi WebGL dibatasi maks `1.5x` DPR agar rendering konsisten di Compose `AndroidView` (tanpa `.alpha()` layer).
+    - `StageJsBridge` men-dispatch callback ke `MainLooper`, `playRemMotion` memakai `MotionPriority.FORCE` (`3`) agar motion loop bisa berganti, override wajah/tangan/lip-sync diterapkan di `beforeModelUpdate`, memakai satu ticker terpadu (`autoUpdate: false` + `model.update`), `paramIndexCache`, serta `ResizeObserver` ter-coalesce rAF.
     - Render dijeda (`StageAPI.pause/resume`) saat tab Apps/Setelan atau sub-app menutupi panggung, dan saat aplikasi di background.
     - Jika konteks WebGL hilang (`webgl_context_lost`) atau renderer WebView dimatikan sistem (`renderer_gone`), panggung dipulihkan otomatis; jika gagal, muncul pesan error + tombol **Muat Ulang** (membuat ulang WebView via `stageGeneration`).
-  - Chat streaming SSE (`POST /api/chat` lewat `OkHttp` + `okhttp-sse`), parsing tag `[EXPR:...]` dan `[JA]...[/JA]`.
-  - Suara TTS Jepang (`POST /api/tts`) & klip suara lokal (`audio/*.mp3`) lewat `Media3 ExoPlayer` (thread-safe di `Dispatchers.Main.immediate`, dengan fallback `MediaPlayer` untuk aset lokal) dan `TeeAudioProcessor` RMS lip-sync real-time.
-  - Penyimpanan riwayat chat lokal persisten di perangkat memakai **Room** (`rem_assistant.db`).
+  - Chat streaming SSE (`POST /api/chat` lewat `OkHttp` + `okhttp-sse`), parsing tag `[EXPR:...]` dan `[JA]...[/JA]`, dengan `inputText`, `streamingText`, dan `idleBubbleText` terisolasi ke `StateFlow` terpisah agar tidak memicu rekomposisi global.
+  - Suara TTS Jepang (`POST /api/tts`) & klip suara lokal (`audio/*.mp3`) lewat `Media3 ExoPlayer` (thread-safe di `Dispatchers.Main.immediate`, fallback `MediaPlayer`, serta throttle lip-sync ~30 Hz) dan `TeeAudioProcessor` RMS lip-sync real-time.
+  - Penyimpanan riwayat chat lokal persisten di perangkat memakai **Room** (`rem_assistant.db`, observasi dibatasi `observeRecent(150)`).
   - Tombol Mikrofon & 2 tombol kaca kanan atas masih **UI-only** sesuai rencana tahap 1.
 - **Tab 2 — `Apps` & Tab 3 — `Setelan` & Sub-App Overlay**:
   - Overlay sub-app (`Kronik`, `LinkKu`, `CuciMoney+`, `IdeKu`, `Daily OS`) dibungkus `Box` solid dengan pointer blocker di `MainActivity.kt` agar sentuhan di area atas/kosong tidak tembus ke dashboard `AppsHubScreen`.
+  - Helper model memakai `DateTimeFormatter` statis, `ThreadLocal<NumberFormat>`, `LruCache` untuk parsing JSON berulang, dan `LazyColumn` ber-`key` stabil.
 - **Diagnostik crash**: `EcosystemKuApp` memasang `UncaughtExceptionHandler` yang membuka `CrashActivity` (proses `:crash`) berisi stacktrace + tombol **Salin Error**.
 
 ## Catatan Aset Font (Opsional)
