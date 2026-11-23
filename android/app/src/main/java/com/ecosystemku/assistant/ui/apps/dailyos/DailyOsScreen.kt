@@ -31,7 +31,6 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.FormatListBulleted
-import androidx.compose.material.icons.automirrored.outlined.SubdirectoryArrowRight
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.BarChart
@@ -1977,7 +1976,7 @@ private fun AiTabContent(
                                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                                         ) {
                                             Icon(
-                                                imageVector = Icons.AutoMirrored.Outlined.SubdirectoryArrowRight,
+                                                imageVector = Icons.Outlined.KeyboardArrowRight,
                                                 contentDescription = null,
                                                 tint = pal.text2,
                                                 modifier = Modifier.size(13.dp)
