@@ -2,6 +2,9 @@ package com.ecosystemku.assistant.ui.asisten
 
 import android.app.Application
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ecosystemku.assistant.data.audio.TtsAudioManager
@@ -66,6 +69,8 @@ import com.ecosystemku.assistant.ui.apps.linkku.LinkkuImportResult
 import com.ecosystemku.assistant.ui.apps.linkku.LinkkuUiState
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.time.Instant
 import java.time.LocalDate
@@ -151,6 +156,8 @@ data class AsistenUiState(
     val isModelReady: Boolean = false,
     val modelError: String? = null,
     val stageGeneration: Int = 0,
+    val stageWallpaperFile: String? = null,
+    val stageWallpaperDim: Float = 0.35f,
     val currentExpression: String = "none",
     val stageFraction: Float = 0.56f,
     val isChatOpen: Boolean = true,
@@ -335,8 +342,12 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         val todoNotifOn = asistenPrefs.getBoolean("asisten_notif_todo_on", true)
         val autoLearn = asistenPrefs.getBoolean("asisten_auto_learn", true)
         val frac = asistenPrefs.getFloat("asisten_stage_fraction", 0.56f).coerceIn(0.35f, 0.70f)
+        val rawWallpaper = asistenPrefs.getString("asisten_wallpaper_file", null)?.trim()?.takeIf { it.isNotEmpty() }
+        val validWallpaper = rawWallpaper?.takeIf { File(File(app.filesDir, "stage_wallpaper"), it).exists() }
+        val wallpaperDim = asistenPrefs.getFloat("asisten_wallpaper_dim", 0.35f).coerceIn(0f, 0.8f)
         val aiSnap = ApiKeyStore.snapshot(app)
         audioManager.setMuted(muted)
+        applyStageWallpaperToController(validWallpaper, wallpaperDim)
         _uiState.update {
             it.copy(
                 profileName = profileName,
@@ -353,7 +364,9 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 notifHabitEnabled = habitNotifOn,
                 notifTodoEnabled = todoNotifOn,
                 autoLearnMemory = autoLearn,
-                stageFraction = frac
+                stageFraction = frac,
+                stageWallpaperFile = validWallpaper,
+                stageWallpaperDim = wallpaperDim
             )
         }
         val habitTime = dailyOsPrefs.getString("do_notif_habit", "07:00") ?: "07:00"
@@ -598,6 +611,98 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         val isDark = valid != "light"
         dailyOsPrefs.edit().putBoolean("do_dark_theme", isDark).apply()
         refreshDailyOsPrefsIntoState()
+    }
+
+    private fun applyStageWallpaperToController(fileName: String?, dimAlpha: Float) {
+        val url = fileName
+            ?.takeIf { it.isNotBlank() }
+            ?.let { "https://appassets.androidplatform.net/wallpaper/$it" }
+        stageController.setBackground(url, dimAlpha)
+    }
+
+    fun setStageWallpaper(uri: Uri) {
+        viewModelScope.launch {
+            val app = getApplication<Application>()
+            val savedName = withContext(Dispatchers.IO) {
+                decodeAndSaveWallpaperFile(app, uri)
+            }
+            if (savedName == null) {
+                showBannerMessage("Gagal memuat gambar wallpaper")
+                return@launch
+            }
+            asistenPrefs.edit().putString("asisten_wallpaper_file", savedName).apply()
+            refreshAsistenPrefsIntoState()
+            showBannerMessage("Wallpaper Rem diperbarui")
+        }
+    }
+
+    fun setStageWallpaperDim(dim: Float) {
+        val clamped = dim.coerceIn(0f, 0.8f)
+        asistenPrefs.edit().putFloat("asisten_wallpaper_dim", clamped).apply()
+        val currentFile = _uiState.value.stageWallpaperFile
+        _uiState.update { it.copy(stageWallpaperDim = clamped) }
+        applyStageWallpaperToController(currentFile, clamped)
+    }
+
+    fun clearStageWallpaper() {
+        viewModelScope.launch {
+            val app = getApplication<Application>()
+            withContext(Dispatchers.IO) {
+                File(app.filesDir, "stage_wallpaper").listFiles()?.forEach { it.delete() }
+            }
+            asistenPrefs.edit().remove("asisten_wallpaper_file").apply()
+            refreshAsistenPrefsIntoState()
+            showBannerMessage("Wallpaper Rem dikembalikan ke default")
+        }
+    }
+
+    private fun decodeAndSaveWallpaperFile(app: Application, uri: Uri): String? {
+        return runCatching {
+            val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            app.contentResolver.openInputStream(uri)?.use { stream ->
+                BitmapFactory.decodeStream(stream, null, boundsOpts)
+            } ?: return null
+
+            val srcW = boundsOpts.outWidth
+            val srcH = boundsOpts.outHeight
+            if (srcW <= 0 || srcH <= 0) return null
+
+            val maxDim = 1600
+            var sampleSize = 1
+            while (maxOf(srcW / sampleSize, srcH / sampleSize) > maxDim) {
+                sampleSize *= 2
+            }
+
+            val decodeOpts = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+            val decoded = app.contentResolver.openInputStream(uri)?.use { stream ->
+                BitmapFactory.decodeStream(stream, null, decodeOpts)
+            } ?: return null
+
+            val longest = maxOf(decoded.width, decoded.height)
+            val finalBitmap = if (longest > maxDim) {
+                val scale = maxDim.toFloat() / longest.toFloat()
+                val targetW = (decoded.width * scale).toInt().coerceAtLeast(1)
+                val targetH = (decoded.height * scale).toInt().coerceAtLeast(1)
+                Bitmap.createScaledBitmap(decoded, targetW, targetH, true).also {
+                    if (it !== decoded) decoded.recycle()
+                }
+            } else {
+                decoded
+            }
+
+            val dir = File(app.filesDir, "stage_wallpaper").apply { mkdirs() }
+            val newName = "wallpaper_${System.currentTimeMillis()}.jpg"
+            val outFile = File(dir, newName)
+            FileOutputStream(outFile).use { out ->
+                finalBitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
+            }
+            finalBitmap.recycle()
+
+            dir.listFiles()?.forEach { existing ->
+                if (existing.name != newName) existing.delete()
+            }
+            newName
+        }.getOrNull()
     }
 
     fun getAiConfigValue(field: AiConfigField): String =

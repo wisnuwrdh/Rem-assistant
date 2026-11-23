@@ -17,7 +17,28 @@
       user-select: none;
       -webkit-user-select: none;
     }
+    #stage-bg, #stage-bg-dim {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+    }
+    #stage-bg {
+      z-index: 0;
+      background-position: center;
+      background-size: cover;
+      background-repeat: no-repeat;
+      opacity: 0;
+      transition: opacity 0.25s ease;
+    }
+    #stage-bg-dim {
+      z-index: 1;
+      background: #0F0E0C;
+      opacity: 0;
+      transition: opacity 0.2s ease;
+    }
     #live2d-canvas {
+      position: relative;
+      z-index: 2;
       display: block;
       width: 100%;
       height: 100%;
@@ -25,6 +46,8 @@
   </style>
 </head>
 <body>
+  <div id="stage-bg"></div>
+  <div id="stage-bg-dim"></div>
   <canvas id="live2d-canvas"></canvas>
 
   <script src="./vendor/live2dcubismcore.min.js"></script>

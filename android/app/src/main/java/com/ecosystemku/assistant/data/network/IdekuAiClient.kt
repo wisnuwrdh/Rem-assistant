@@ -1,30 +1,7 @@
 package com.ecosystemku.assistant.data.network
 
 import com.ecosystemku.assistant.BuildConfig
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-
-@Serializable
-private data class IdekuAiRequestDto(
-    val title: String,
-    val notes: String,
-    val category: String,
-    val priority: String,
-    val mode: String
-)
-
-@Serializable
-private data class IdekuAiResponseDto(
-    val result: String? = null,
-    val error: String? = null
-)
 
 sealed interface IdekuAiResult {
     data class Success(val text: String) : IdekuAiResult
@@ -33,55 +10,93 @@ sealed interface IdekuAiResult {
 
 class IdekuAiClient(
     private val httpClient: OkHttpClient,
-    private val baseUrl: String = BuildConfig.API_BASE_URL
+    @Suppress("unused") private val baseUrl: String = BuildConfig.API_BASE_URL
 ) {
-    private val json = Json { ignoreUnknownKeys = true }
-
     suspend fun generate(
         title: String,
         notes: String,
         category: String,
         priority: String,
         mode: String
-    ): IdekuAiResult = withContext(Dispatchers.IO) {
-        val cleanTitle = title.trim()
+    ): IdekuAiResult {
+        val cleanTitle = title.trim().take(200)
         if (cleanTitle.isEmpty()) {
-            return@withContext IdekuAiResult.Failure("Judul ide kosong")
+            return IdekuAiResult.Failure("Judul ide kosong")
         }
-        runCatching {
-            val bodyJson = json.encodeToString(
-                IdekuAiRequestDto(
-                    title = cleanTitle.take(200),
-                    notes = notes.take(1500),
-                    category = category.ifBlank { "Personal" },
-                    priority = priority.ifBlank { "Nanti" },
-                    mode = if (mode == "breakdown") "breakdown" else "perkaya"
-                )
-            )
-            val request = Request.Builder()
-                .url("${baseUrl.trimEnd('/')}/api/ideku")
-                .post(bodyJson.toRequestBody("application/json; charset=utf-8".toMediaType()))
-                .build()
 
-            httpClient.newCall(request).execute().use { resp ->
-                val raw = resp.body?.string()
-                val parsed = raw?.let { runCatching { json.decodeFromString<IdekuAiResponseDto>(it) }.getOrNull() }
-                if (!resp.isSuccessful) {
-                    val errText = when (parsed?.error) {
-                        "quota" -> "Kuota AI habis, coba beberapa saat lagi."
-                        else -> parsed?.error ?: "Gagal menghubungi server AI (${resp.code})."
-                    }
-                    return@use IdekuAiResult.Failure(errText)
-                }
-                val result = parsed?.result?.trim()
-                if (!result.isNullOrEmpty()) {
-                    IdekuAiResult.Success(result)
-                } else {
-                    IdekuAiResult.Failure("Respons AI kosong.")
-                }
-            }
-        }.getOrElse {
-            IdekuAiResult.Failure("Gagal menghubungi AI. Periksa koneksi internet.")
+        val cleanNotes = notes.trim().take(1500)
+        val cleanCategory = category.ifBlank { "Personal" }
+        val cleanPriority = priority.ifBlank { "Nanti" }
+        val isBreakdown = mode == "breakdown"
+
+        val priorityCtx = when (cleanPriority) {
+            "Penting" -> "tinggi — eksekusi dalam 1–2 minggu"
+            "Nanti" -> "sedang — bisa dimulai bulan ini"
+            "Kapan-kapan" -> "rendah — tanpa deadline ketat"
+            else -> "fleksibel"
         }
+
+        val systemPrompt = if (isBreakdown) {
+            "Kamu adalah asisten yang membantu merapikan dan menyusun ide menjadi prompt breakdown yang siap dipakai di AI lain (ChatGPT, Gemini, dll). Tugasmu bukan mengeksekusi breakdown, tapi menghasilkan prompt yang terstruktur, jelas, dan kaya konteks — supaya AI yang menerima prompt ini bisa langsung menghasilkan rencana eksekusi yang konkret dan actionable. Gunakan bahasa Indonesia yang santai."
+        } else {
+            "Kamu adalah asisten kreatif dan strategis yang membantu memperkaya ide singkat menjadi catatan yang tajam, konkret, dan siap dieksekusi dalam bahasa Indonesia yang ringkas dan natural."
+        }
+
+        val userPrompt = if (isBreakdown) {
+            val notesLine = if (cleanNotes.isNotEmpty()) "\nCatatan: $cleanNotes" else ""
+            """
+Rapikan ide berikut menjadi prompt breakdown yang siap di-paste ke AI lain:
+
+Judul: $cleanTitle
+Kategori: $cleanCategory
+Prioritas: $cleanPriority ($priorityCtx)$notesLine
+
+Hasilkan prompt yang:
+1. Punya konteks ide yang jelas dan lengkap
+2. Meminta rencana eksekusi 5–8 langkah konkret dengan estimasi waktu
+3. Menyebutkan kategori "$cleanCategory" supaya AI bisa menyesuaikan saran tools/platform yang relevan
+4. Mencerminkan urgensi berdasarkan prioritas "$cleanPriority"
+5. Meminta langkah pertama yang bisa dilakukan hari ini atau minggu ini
+
+Keluarkan hanya teks prompt-nya saja, tanpa pembuka atau penutup tambahan.
+            """.trimIndent()
+        } else {
+            val notesLine = if (cleanNotes.isNotEmpty()) "\nCatatan awal: $cleanNotes" else ""
+            """
+Perkaya ide berikut menjadi catatan ringkas namun kaya wawasan:
+
+Judul: $cleanTitle
+Kategori: $cleanCategory
+Prioritas: $cleanPriority$notesLine
+
+Berikan:
+- Inti konsep & nilai utamanya (2 kalimat)
+- 3 langkah awal paling konkret untuk memulai
+- Potensi tantangan atau tools/referensi yang relevan
+
+Tulis rapi, padat, langsung ke poin dalam bahasa Indonesia.
+            """.trimIndent()
+        }
+
+        val result = DirectLlmClient.complete(
+            httpClient = httpClient,
+            messages = listOf(
+                ChatTurnDto("system", systemPrompt),
+                ChatTurnDto("user", userPrompt)
+            ),
+            temperature = 0.65,
+            maxTokens = 700
+        )
+
+        return result.fold(
+            onSuccess = { text -> IdekuAiResult.Success(text) },
+            onFailure = { err ->
+                val errText = when (err.message) {
+                    "quota" -> "Kuota AI habis, coba beberapa saat lagi."
+                    else -> err.message ?: "Gagal menghubungi AI. Periksa koneksi internet."
+                }
+                IdekuAiResult.Failure(errText)
+            }
+        )
     }
 }

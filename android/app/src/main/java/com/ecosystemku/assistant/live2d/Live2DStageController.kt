@@ -18,12 +18,14 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.webkit.WebViewAssetLoader
 import org.json.JSONObject
+import java.io.File
 
 interface Live2DStageController {
     fun setExpression(name: String)
     fun playMotion(name: String)
     fun setMouthOpen(level: Float, isSpeaking: Boolean)
     fun triggerNudge()
+    fun setBackground(imageUrl: String?, dimAlpha: Float)
 }
 
 interface Live2DStageCallbacks {
@@ -39,6 +41,8 @@ class WebViewLive2DStageController(
 
     private var webView: WebView? = null
     private var isActive = true
+    private var pendingBgUrl: String? = null
+    private var pendingBgDim: Float = 0.35f
 
     @SuppressLint("SetJavaScriptEnabled")
     fun createWebView(context: Context): WebView {
@@ -52,8 +56,10 @@ class WebViewLive2DStageController(
         }
         webView = null
 
+        val wallpaperDir = File(context.filesDir, "stage_wallpaper").apply { mkdirs() }
         val assetLoader = WebViewAssetLoader.Builder()
             .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(context))
+            .addPathHandler("/wallpaper/", WebViewAssetLoader.InternalStoragePathHandler(context, wallpaperDir))
             .build()
 
         return WebView(context).apply {
@@ -101,7 +107,9 @@ class WebViewLive2DStageController(
                 }
 
                 override fun onPageFinished(view: WebView, url: String?) {
-                    if (!isActive) evalJs("window.StageAPI?.pause?.();")
+                    val bgExpr = buildSetBackgroundScript(pendingBgUrl, pendingBgDim)
+                    view.evaluateJavascript(bgExpr, null)
+                    if (!isActive) view.evaluateJavascript("window.StageAPI?.pause?.();", null)
                 }
 
                 override fun onReceivedError(
@@ -161,6 +169,18 @@ class WebViewLive2DStageController(
 
     override fun triggerNudge() {
         evalJs("window.StageAPI?.triggerNudge?.();")
+    }
+
+    override fun setBackground(imageUrl: String?, dimAlpha: Float) {
+        val clampedDim = dimAlpha.coerceIn(0f, 0.85f)
+        pendingBgUrl = imageUrl
+        pendingBgDim = clampedDim
+        evalJs(buildSetBackgroundScript(imageUrl, clampedDim))
+    }
+
+    private fun buildSetBackgroundScript(imageUrl: String?, dimAlpha: Float): String {
+        val urlArg = if (imageUrl.isNullOrBlank()) "null" else JSONObject.quote(imageUrl)
+        return "window.StageAPI?.setBackground?.($urlArg, $dimAlpha);"
     }
 
     private fun evalJs(script: String) {

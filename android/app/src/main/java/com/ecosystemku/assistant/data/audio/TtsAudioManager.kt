@@ -17,6 +17,10 @@ import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.TeeAudioProcessor
 import com.ecosystemku.assistant.BuildConfig
+import com.ecosystemku.assistant.data.local.AiConfigField
+import com.ecosystemku.assistant.data.local.ApiKeyStore
+import com.ecosystemku.assistant.data.network.ChatTurnDto
+import com.ecosystemku.assistant.data.network.DirectLlmClient
 import com.ecosystemku.assistant.data.network.SseTagParser
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -46,16 +50,17 @@ import kotlin.math.log10
 import kotlin.math.sqrt
 
 @Serializable
-private data class TtsRequestDto(
+private data class FishAudioTtsRequestDto(
     val text: String,
-    val translated: Boolean
+    val reference_id: String,
+    val format: String = "mp3"
 )
 
 @OptIn(UnstableApi::class)
 class TtsAudioManager(
     context: Context,
     private val httpClient: OkHttpClient,
-    private val baseUrl: String = BuildConfig.API_BASE_URL
+    @Suppress("unused") private val baseUrl: String = BuildConfig.API_BASE_URL
 ) {
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -310,26 +315,108 @@ class TtsAudioManager(
         }
     }
 
-    private fun fetchTtsChunkToFile(
+    private suspend fun fetchTtsChunkToFile(
         text: String,
         isJapanese: Boolean,
         gen: Int,
         index: Int
     ): File? {
+        val apiKey = ApiKeyStore.getValue(AiConfigField.TTS_API_KEY, appContext)
+        if (apiKey.isBlank()) return null
+
+        val ttsBase = ApiKeyStore.getValue(AiConfigField.TTS_BASE_URL, appContext)
+            .ifBlank { DEFAULT_FISH_AUDIO_BASE }
+        if (!ttsBase.startsWith("http://", ignoreCase = true) &&
+            !ttsBase.startsWith("https://", ignoreCase = true)
+        ) {
+            return null
+        }
+        val ttsModel = ApiKeyStore.getValue(AiConfigField.TTS_MODEL, appContext)
+            .ifBlank { DEFAULT_TTS_MODEL }
+        val ttsVoice = ApiKeyStore.getValue(AiConfigField.TTS_VOICE_ID, appContext)
+            .ifBlank { DEFAULT_VOICE_ID }
+
+        val cleaned = cleanTtsText(text)
+        if (cleaned.isEmpty()) return null
+
+        val japanese = if (isJapanese) cleaned else translateToJapanese(cleaned)
+        val finalText = truncateTtsText(japanese, MAX_TTS_CHARS)
+        if (finalText.isEmpty()) return null
+
         return runCatching {
-            val bodyJson = json.encodeToString(TtsRequestDto(text = text, translated = isJapanese))
+            val bodyJson = json.encodeToString(
+                FishAudioTtsRequestDto(
+                    text = finalText,
+                    reference_id = ttsVoice,
+                    format = "mp3"
+                )
+            )
             val request = Request.Builder()
-                .url("${baseUrl.trimEnd('/')}/api/tts")
+                .url(ttsBase)
+                .header("Authorization", "Bearer $apiKey")
+                .header("model", ttsModel)
+                .header("Accept", "audio/mpeg")
                 .post(bodyJson.toRequestBody("application/json; charset=utf-8".toMediaType()))
                 .build()
 
             httpClient.newCall(request).execute().use { resp ->
-                if (!resp.isSuccessful) return null
-                val bytes = resp.body?.bytes() ?: return null
+                if (!resp.isSuccessful) return@use null
+                val bytes = resp.body?.bytes() ?: return@use null
                 val outFile = File(appContext.cacheDir, "tts_${gen}_${index}.mp3")
                 outFile.writeBytes(bytes)
                 outFile
             }
         }.getOrNull()
+    }
+
+    private suspend fun translateToJapanese(text: String): String {
+        val res = DirectLlmClient.complete(
+            httpClient = httpClient,
+            messages = listOf(
+                ChatTurnDto(
+                    role = "system",
+                    content = "Terjemahkan teks Indonesia ke bahasa Jepang natural gaya sopan, " +
+                        "memanggil lawan bicara \"ご主人様\". Output HANYA terjemahan Jepang, " +
+                        "tanpa romaji, tanpa penjelasan."
+                ),
+                ChatTurnDto(role = "user", content = text)
+            ),
+            temperature = 0.3,
+            maxTokens = 800
+        )
+        return res.getOrNull()?.takeIf { it.isNotBlank() } ?: text
+    }
+
+    private fun cleanTtsText(raw: String): String = raw
+        .replace(Regex("""\*\*(.*?)\*\*"""), "$1")
+        .replace(Regex("""\*(.*?)\*"""), "$1")
+        .replace(Regex("""`([^`]+)`"""), "$1")
+        .replace(Regex("""#{1,6}\s+"""), "")
+        .replace(Regex("""\n[-*•]\s+"""), ". ")
+        .replace(Regex("""\n+"""), " ")
+        .replace(Regex("""\s{2,}"""), " ")
+        .trim()
+
+    private fun truncateTtsText(text: String, max: Int): String {
+        if (text.length <= max) return text
+        val cut = text.take(max)
+        val lastPunct = maxOf(
+            cut.lastIndexOf('.'),
+            cut.lastIndexOf('?'),
+            cut.lastIndexOf('!'),
+            cut.lastIndexOf(','),
+            cut.lastIndexOf('。'),
+            cut.lastIndexOf('？'),
+            cut.lastIndexOf('！'),
+            cut.lastIndexOf('、')
+        )
+        return if (lastPunct > max * 0.5) cut.substring(0, lastPunct + 1) else "$cut…"
+    }
+
+    companion object {
+        private const val DEFAULT_FISH_AUDIO_BASE = "https://api.fish.audio/v1/tts"
+        private const val DEFAULT_TTS_MODEL = "s2.1-pro-free"
+        private const val DEFAULT_VOICE_ID = "eb79df9571014449b42bcd869f86fe0a"
+        private const val MAX_TTS_CHARS = 500
     }
 }

@@ -530,6 +530,23 @@
     }
   };
 
+  window.StageAPI.setBackground = function (url, dimAlpha) {
+    const bgEl = document.getElementById('stage-bg');
+    const dimEl = document.getElementById('stage-bg-dim');
+    if (!bgEl || !dimEl) return;
+    if (url && typeof url === 'string' && url.trim()) {
+      const safeUrl = url.trim().replace(/"/g, '\\"');
+      bgEl.style.backgroundImage = 'url("' + safeUrl + '")';
+      bgEl.style.opacity = '1';
+      const dim = Math.max(0, Math.min(0.85, Number(dimAlpha) || 0));
+      dimEl.style.opacity = String(dim);
+    } else {
+      bgEl.style.opacity = '0';
+      bgEl.style.backgroundImage = 'none';
+      dimEl.style.opacity = '0';
+    }
+  };
+
   if (typeof ResizeObserver !== 'undefined') {
     new ResizeObserver(() => scheduleResize()).observe(document.documentElement);
   }

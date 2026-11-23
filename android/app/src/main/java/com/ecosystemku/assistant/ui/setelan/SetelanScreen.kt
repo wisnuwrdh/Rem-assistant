@@ -69,18 +69,25 @@ import com.ecosystemku.assistant.ui.theme.UiSans
 
 import android.Manifest
 import android.app.TimePickerDialog
+import android.graphics.BitmapFactory
+import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Psychology
+import androidx.compose.material.icons.outlined.RestartAlt
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -88,6 +95,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.TextStyle
@@ -99,8 +108,10 @@ import com.ecosystemku.assistant.data.local.ConversationSummaryEntity
 import com.ecosystemku.assistant.data.local.UserMemoryEntity
 import com.ecosystemku.assistant.notifications.DailyOsNotificationHelper
 import com.ecosystemku.assistant.ui.asisten.EcosystemZipImportResult
+import java.io.File
 import java.time.LocalDate
 import java.util.Locale
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -114,6 +125,8 @@ fun SetelanScreen(
     profileName: String = "Mahfud",
     lastBackupLabel: String = "Belum pernah",
     themeMode: String = "dark",
+    stageWallpaperFile: String? = null,
+    stageWallpaperDim: Float = 0.35f,
     aiConfig: AiConfigSnapshot = AiConfigSnapshot(),
     apiConnectionOk: Boolean = false,
     apiConnectionLabel: String = "LLM belum diatur",
@@ -128,6 +141,9 @@ fun SetelanScreen(
     isLearningMemory: Boolean = false,
     onUpdateProfileName: (String) -> Unit = {},
     onSetThemeMode: (String) -> Unit = {},
+    onPickStageWallpaper: (Uri) -> Unit = {},
+    onChangeStageWallpaperDim: (Float) -> Unit = {},
+    onResetStageWallpaper: () -> Unit = {},
     onGetAiConfigValue: (AiConfigField) -> String = { "" },
     onSaveAiConfigValue: (AiConfigField, String) -> Unit = { _, _ -> },
     onTestApiConnection: () -> Unit = {},
@@ -157,6 +173,12 @@ fun SetelanScreen(
     val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
     val scope = rememberCoroutineScope()
+
+    val wallpaperPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) onPickStageWallpaper(uri)
+    }
 
     var showProfileDialog by remember { mutableStateOf(false) }
     var profileInput by remember(profileName) { mutableStateOf(profileName) }
@@ -1366,6 +1388,155 @@ fun SetelanScreen(
                                     fontSize = 12.sp,
                                     fontWeight = if (isDark) FontWeight.SemiBold else FontWeight.Normal,
                                     color = if (isDark) DominantBg else TextMuted
+                                )
+                            }
+                        }
+
+                        HorizontalDivider(thickness = 1.dp, color = BorderSubtle)
+
+                        val previewBmp = remember(stageWallpaperFile) {
+                            stageWallpaperFile?.let { name ->
+                                val file = File(File(context.filesDir, "stage_wallpaper"), name)
+                                if (file.exists()) {
+                                    val opts = BitmapFactory.Options().apply { inSampleSize = 4 }
+                                    BitmapFactory.decodeFile(file.absolutePath, opts)?.asImageBitmap()
+                                } else null
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(40.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(ElevatedSurface)
+                                        .border(1.dp, BorderSubtle, RoundedCornerShape(10.dp)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (previewBmp != null) {
+                                        Image(
+                                            bitmap = previewBmp,
+                                            contentDescription = "Preview Wallpaper Rem",
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                    } else {
+                                        Icon(
+                                            imageVector = Icons.Outlined.Image,
+                                            contentDescription = null,
+                                            tint = AccentBlue,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                                Column {
+                                    Text(
+                                        text = "Wallpaper Asisten Rem",
+                                        fontFamily = UiSans,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = TextPrimary
+                                    )
+                                    Text(
+                                        text = if (stageWallpaperFile != null) "Gambar kustom aktif" else "Default (Aura Biru)",
+                                        fontFamily = UiSans,
+                                        fontSize = 11.sp,
+                                        color = TextMuted
+                                    )
+                                }
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable { wallpaperPickerLauncher.launch("image/*") }
+                            ) {
+                                NestedPill {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Image,
+                                        contentDescription = null,
+                                        tint = AccentBlue,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Text(
+                                        text = if (stageWallpaperFile != null) "Ganti Gambar" else "Pilih Gambar",
+                                        fontFamily = UiSans,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = TextPrimary
+                                    )
+                                }
+                            }
+
+                            if (stageWallpaperFile != null) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .clickable { onResetStageWallpaper() }
+                                ) {
+                                    NestedPill {
+                                        Icon(
+                                            imageVector = Icons.Outlined.RestartAlt,
+                                            contentDescription = null,
+                                            tint = SemanticDanger,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Text(
+                                            text = "Reset",
+                                            fontFamily = UiSans,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = SemanticDanger
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        if (stageWallpaperFile != null) {
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = "Redupkan Background",
+                                        fontFamily = UiSans,
+                                        fontSize = 12.sp,
+                                        color = TextMuted
+                                    )
+                                    Text(
+                                        text = "${(stageWallpaperDim * 100).roundToInt()}%",
+                                        fontFamily = UiSans,
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = AccentBlue
+                                    )
+                                }
+                                Slider(
+                                    value = stageWallpaperDim.coerceIn(0f, 0.8f),
+                                    onValueChange = { onChangeStageWallpaperDim(it) },
+                                    valueRange = 0f..0.8f,
+                                    colors = SliderDefaults.colors(
+                                        thumbColor = AccentBlue,
+                                        activeTrackColor = AccentBlue,
+                                        inactiveTrackColor = ElevatedSurface
+                                    )
                                 )
                             }
                         }

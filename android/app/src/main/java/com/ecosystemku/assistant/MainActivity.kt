@@ -164,6 +164,8 @@ fun EcosystemKuShell(
                         onRetryModel = asistenViewModel::retryModel,
                         onToggleMute = asistenViewModel::toggleMute,
                         onClearChat = asistenViewModel::clearChatHistoryOnly,
+                        onPickWallpaper = asistenViewModel::setStageWallpaper,
+                        onResetWallpaper = asistenViewModel::clearStageWallpaper,
                         modifier = Modifier
                             .fillMaxSize()
                             .zIndex(if (selectedTab == AppTab.ASISTEN) 1f else 0f)
@@ -205,6 +207,8 @@ fun EcosystemKuShell(
                                 profileName = asistenState.profileName,
                                 lastBackupLabel = asistenState.lastBackupLabel,
                                 themeMode = asistenState.themeMode,
+                                stageWallpaperFile = asistenState.stageWallpaperFile,
+                                stageWallpaperDim = asistenState.stageWallpaperDim,
                                 aiConfig = asistenState.aiConfig,
                                 apiConnectionOk = asistenState.apiConnectionOk,
                                 apiConnectionLabel = asistenState.apiConnectionLabel,
@@ -219,6 +223,9 @@ fun EcosystemKuShell(
                                 isLearningMemory = asistenState.isLearningMemory,
                                 onUpdateProfileName = asistenViewModel::setProfileName,
                                 onSetThemeMode = asistenViewModel::setThemeMode,
+                                onPickStageWallpaper = asistenViewModel::setStageWallpaper,
+                                onChangeStageWallpaperDim = asistenViewModel::setStageWallpaperDim,
+                                onResetStageWallpaper = asistenViewModel::clearStageWallpaper,
                                 onGetAiConfigValue = asistenViewModel::getAiConfigValue,
                                 onSaveAiConfigValue = asistenViewModel::saveAiConfigValue,
                                 onTestApiConnection = asistenViewModel::testApiConnection,

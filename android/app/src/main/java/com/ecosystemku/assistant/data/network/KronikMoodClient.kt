@@ -1,24 +1,7 @@
 package com.ecosystemku.assistant.data.network
 
 import com.ecosystemku.assistant.BuildConfig
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-
-@Serializable
-private data class KronikMoodRequestDto(val text: String)
-
-@Serializable
-private data class KronikMoodResponseDto(
-    val mood: String? = null,
-    val error: String? = null
-)
 
 sealed interface KronikMoodDetectResult {
     data class Success(val mood: String) : KronikMoodDetectResult
@@ -27,39 +10,56 @@ sealed interface KronikMoodDetectResult {
 
 class KronikMoodClient(
     private val httpClient: OkHttpClient,
-    private val baseUrl: String = BuildConfig.API_BASE_URL
+    @Suppress("unused") private val baseUrl: String = BuildConfig.API_BASE_URL
 ) {
-    private val json = Json { ignoreUnknownKeys = true }
-
-    suspend fun detectMood(text: String): KronikMoodDetectResult = withContext(Dispatchers.IO) {
+    suspend fun detectMood(text: String): KronikMoodDetectResult {
         val clean = text.trim()
         if (clean.length < 10) {
-            return@withContext KronikMoodDetectResult.Failure("Tulis dulu isi jurnalnya ya...")
+            return KronikMoodDetectResult.Failure("Tulis dulu isi jurnalnya ya...")
         }
-        runCatching {
-            val bodyJson = json.encodeToString(KronikMoodRequestDto(clean.take(900)))
-            val request = Request.Builder()
-                .url("${baseUrl.trimEnd('/')}/api/kronik/mood")
-                .post(bodyJson.toRequestBody("application/json; charset=utf-8".toMediaType()))
-                .build()
 
-            httpClient.newCall(request).execute().use { resp ->
-                val raw = resp.body?.string()
-                val parsed = raw?.let { runCatching { json.decodeFromString<KronikMoodResponseDto>(it) }.getOrNull() }
-                if (!resp.isSuccessful) {
-                    return@use KronikMoodDetectResult.Failure(
-                        parsed?.error ?: "Gagal terhubung ke AI (${resp.code})."
-                    )
-                }
-                val mood = parsed?.mood?.trim()
-                if (!mood.isNullOrEmpty()) {
-                    KronikMoodDetectResult.Success(mood)
+        val prompt =
+            "Analisis teks jurnal berikut dan tentukan satu mood yang paling sesuai dari pilihan ini: " +
+                "${VALID_MOODS.joinToString(", ")}. Balas hanya dengan satu kata dari pilihan tersebut " +
+                "tanpa tanda baca atau penjelasan.\n\nTeks:\n${clean.take(900)}"
+
+        val result = DirectLlmClient.complete(
+            httpClient = httpClient,
+            messages = listOf(ChatTurnDto("user", prompt)),
+            temperature = 0.1,
+            maxTokens = 40
+        )
+
+        return result.fold(
+            onSuccess = { raw ->
+                val lower = raw.trim().lowercase()
+                val found = VALID_MOODS.firstOrNull { lower == it.lowercase() }
+                    ?: VALID_MOODS.firstOrNull { lower.contains(it.lowercase()) }
+                if (found != null) {
+                    KronikMoodDetectResult.Success(found)
                 } else {
                     KronikMoodDetectResult.Failure("Mood tidak terdeteksi, pilih manual ya")
                 }
+            },
+            onFailure = { err ->
+                val msg = when (err.message) {
+                    "quota" -> "Kuota AI habis, coba beberapa saat lagi."
+                    else -> err.message ?: "Gagal terhubung ke AI. Coba lagi."
+                }
+                KronikMoodDetectResult.Failure(msg)
             }
-        }.getOrElse {
-            KronikMoodDetectResult.Failure("Gagal terhubung ke AI. Coba lagi.")
-        }
+        )
+    }
+
+    companion object {
+        private val VALID_MOODS = listOf(
+            "Fokus",
+            "Lelah",
+            "Terinspirasi",
+            "Berat",
+            "Stabil",
+            "Semangat",
+            "Kabur"
+        )
     }
 }

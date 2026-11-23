@@ -2,6 +2,7 @@ package com.ecosystemku.assistant.ui.asisten
 
 import android.app.Activity
 import android.content.Intent
+import android.net.Uri
 import android.speech.RecognizerIntent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -46,8 +47,10 @@ import androidx.compose.material.icons.automirrored.outlined.VolumeOff
 import androidx.compose.material.icons.automirrored.outlined.VolumeUp
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.MoreHoriz
+import androidx.compose.material.icons.outlined.RestartAlt
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -119,8 +122,16 @@ fun AsistenScreen(
     onRetryModel: () -> Unit = {},
     onToggleMute: () -> Unit = {},
     onClearChat: () -> Unit = {},
+    onPickWallpaper: (Uri) -> Unit = {},
+    onResetWallpaper: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val wallpaperLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) onPickWallpaper(uri)
+    }
+
     BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
@@ -398,6 +409,52 @@ fun AsistenScreen(
                                             onToggleMute()
                                         }
                                     )
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = "Ganti Wallpaper Rem",
+                                                fontFamily = UiSans,
+                                                fontSize = 13.sp,
+                                                color = TextPrimary
+                                            )
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = Icons.Outlined.Image,
+                                                contentDescription = null,
+                                                tint = AccentBlue,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        },
+                                        onClick = {
+                                            menuExpanded = false
+                                            wallpaperLauncher.launch("image/*")
+                                        }
+                                    )
+                                    if (uiState.stageWallpaperFile != null) {
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(
+                                                    text = "Reset Wallpaper Rem",
+                                                    fontFamily = UiSans,
+                                                    fontSize = 13.sp,
+                                                    color = TextPrimary
+                                                )
+                                            },
+                                            leadingIcon = {
+                                                Icon(
+                                                    imageVector = Icons.Outlined.RestartAlt,
+                                                    contentDescription = null,
+                                                    tint = TextMuted,
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                            },
+                                            onClick = {
+                                                menuExpanded = false
+                                                onResetWallpaper()
+                                            }
+                                        )
+                                    }
                                     DropdownMenuItem(
                                         text = {
                                             Text(

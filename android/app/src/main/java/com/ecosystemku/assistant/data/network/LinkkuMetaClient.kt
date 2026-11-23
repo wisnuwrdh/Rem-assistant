@@ -9,11 +9,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONObject
 import java.net.URL
 import java.net.URLEncoder
 
@@ -24,10 +21,9 @@ data class LinkkuMetaResult(
 
 class LinkkuMetaClient(
     private val httpClient: OkHttpClient,
-    private val baseUrl: String = BuildConfig.API_BASE_URL
+    @Suppress("unused") private val baseUrl: String = BuildConfig.API_BASE_URL
 ) {
     private val json = Json { ignoreUnknownKeys = true }
-    private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
     private val bitmapCache = object : LruCache<String, Bitmap>(48) {}
 
     suspend fun fetchMetadata(rawUrl: String): LinkkuMetaResult = withContext(Dispatchers.IO) {
@@ -53,26 +49,6 @@ class LinkkuMetaClient(
             }.getOrDefault("")
             return@withContext LinkkuMetaResult(title = ytTitle, thumb = ytThumb)
         }
-
-        // Try backend proxy first if configured, fallback to direct fetch
-        val backendResult = runCatching {
-            val payload = JSONObject().put("url", cleanUrl).toString()
-            val req = Request.Builder()
-                .url("${baseUrl.trimEnd('/')}/api/linkku/meta")
-                .post(payload.toRequestBody(jsonMediaType))
-                .build()
-            httpClient.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) null
-                else {
-                    val obj = json.parseToJsonElement(resp.body?.string().orEmpty()).jsonObject
-                    val t = obj["title"]?.jsonPrimitive?.content.orEmpty()
-                    val th = obj["thumb"]?.jsonPrimitive?.content.orEmpty()
-                    if (t.isNotBlank() || th.isNotBlank()) LinkkuMetaResult(t, th) else null
-                }
-            }
-        }.getOrNull()
-
-        if (backendResult != null) return@withContext backendResult
 
         runCatching {
             val req = Request.Builder()

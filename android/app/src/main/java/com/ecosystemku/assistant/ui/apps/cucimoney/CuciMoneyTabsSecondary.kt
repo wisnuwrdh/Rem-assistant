@@ -1549,7 +1549,7 @@ internal fun LainnyaTabContent(
                     Column(
                         modifier = Modifier
                             .weight(1f)
-                            .height(118.dp)
+                            .heightIn(min = 124.dp)
                             .clip(RoundedCornerShape(18.dp))
                             .background(if (tile.danger) CuciMoneyColors.ExpenseDim else CuciMoneyColors.Card)
                             .border(
@@ -1558,38 +1558,41 @@ internal fun LainnyaTabContent(
                                 RoundedCornerShape(18.dp)
                             )
                             .clickable { tile.onClick() }
-                            .padding(vertical = 12.dp, horizontal = 8.dp),
+                            .padding(vertical = 10.dp, horizontal = 8.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(50.dp)
-                                .clip(RoundedCornerShape(15.dp))
+                                .size(46.dp)
+                                .clip(RoundedCornerShape(14.dp))
                                 .background(tile.icon.bg),
                             contentAlignment = Alignment.Center
                         ) {
                             CuciLainnyaSvgIcon(
                                 icon = tile.icon,
-                                modifier = Modifier.size(25.dp)
+                                modifier = Modifier.size(24.dp)
                             )
                         }
-                        Spacer(modifier = Modifier.height(7.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
                         Text(
                             text = tile.label,
                             color = if (tile.danger) CuciMoneyColors.Expense else CuciMoneyColors.TextMain,
                             fontSize = 12.sp,
+                            lineHeight = 15.sp,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                         if (tile.count != null) {
-                            Spacer(modifier = Modifier.height(1.dp))
+                            Spacer(modifier = Modifier.height(2.dp))
                             Text(
                                 text = tile.count,
                                 color = CuciMoneyColors.Primary,
-                                fontSize = 10.5.sp,
-                                fontWeight = FontWeight.ExtraBold
+                                fontSize = 11.sp,
+                                lineHeight = 14.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                maxLines = 1
                             )
                         }
                     }
