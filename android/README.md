@@ -11,12 +11,15 @@ Project Android Studio siap-buka hasil migrasi dari `assistant/` + `api/` sesuai
 ## Struktur Fitur Saat Ini
 - **Tab 1 — `Asisten` (Logika Penuh Aktif)**:
   - Panggung Live2D Rem (`assets/live2d/characters/rem/`) berjalan offline via `WebViewAssetLoader` + `Live2DStageController` interface.
+    - Render dijeda (`StageAPI.pause/resume`) saat tab Apps/Setelan atau sub-app menutupi panggung, dan saat aplikasi di background.
+    - Jika konteks WebGL hilang (`webgl_context_lost`) atau renderer WebView dimatikan sistem (`renderer_gone`), panggung dipulihkan otomatis; jika gagal, muncul pesan error + tombol **Muat Ulang** (membuat ulang WebView via `stageGeneration`).
   - Chat streaming SSE (`POST /api/chat` lewat `OkHttp` + `okhttp-sse`), parsing tag `[EXPR:...]` dan `[JA]...[/JA]`.
   - Suara TTS Jepang (`POST /api/tts`) lewat `Media3 ExoPlayer` dengan `TeeAudioProcessor` RMS lip-sync real-time.
   - Penyimpanan riwayat chat lokal persisten di perangkat memakai **Room** (`rem_assistant.db`).
   - Tombol Mikrofon & 2 tombol kaca kanan atas masih **UI-only** sesuai rencana tahap 1.
 - **Tab 2 — `Apps` & Tab 3 — `Setelan` (UI-Only)**:
   - Dibuat penuh menggunakan Jetpack Compose sesuai desain 60-30-10 (`#0F0E0C`, `#1A1917`, `#232220`, `#5B9CF6`) tanpa logika sistem dulu agar siap dikembangkan bertahap menjadi Super App.
+- **Diagnostik crash**: `EcosystemKuApp` memasang `UncaughtExceptionHandler` yang membuka `CrashActivity` (proses `:crash`) berisi stacktrace + tombol **Salin Error**.
 
 ## Catatan Aset Font (Opsional)
 Saat ini tipografi memakai `FontFamily.Serif` dan `FontFamily.SansSerif` bawaan Android agar langsung kompilasi tanpa perlu file eksternal. Jika ingin memakai font asli mockup (`DM Serif Display`, `DM Sans`, `Lora`), taruh file `.ttf`-nya di `app/src/main/res/font/` lalu perbarui `ui/theme/Type.kt`.

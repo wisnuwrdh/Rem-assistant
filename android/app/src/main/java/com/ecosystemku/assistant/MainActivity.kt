@@ -156,6 +156,7 @@ fun EcosystemKuShell(
                     onStageDragDelta = asistenViewModel::onStageDragDelta,
                     onDismissError = asistenViewModel::dismissError,
                     onDismissKronikBanner = asistenViewModel::dismissKronikBanner,
+                    onRetryModel = asistenViewModel::retryModel,
                     modifier = Modifier
                         .fillMaxSize()
                         .zIndex(if (selectedTab == AppTab.ASISTEN) 1f else 0f)

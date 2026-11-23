@@ -360,6 +360,34 @@
 
   canvas.addEventListener('pointercancel', () => { petActive = false; });
 
+  // Pulihkan stage jika konteks WebGL hilang (mis. tekanan memori GPU saat sub-app terbuka).
+  // Tanpa ini, texture PNG model tidak pernah di-upload ulang dan Rem tampil kosong.
+  canvas.addEventListener('webglcontextlost', (e) => {
+    e.preventDefault();
+    try { app.ticker.stop(); } catch (_) {}
+    bridge?.onModelError?.('webgl_context_lost');
+  }, false);
+  canvas.addEventListener('webglcontextrestored', () => {
+    window.location.reload();
+  }, false);
+
+  window.StageAPI.pause = function () {
+    try { app.ticker.stop(); } catch (_) {}
+  };
+  window.StageAPI.resume = function () {
+    try {
+      const gl = app.renderer.gl;
+      if (gl && gl.isContextLost && gl.isContextLost()) {
+        window.location.reload();
+        return;
+      }
+      resizeStage();
+      app.ticker.start();
+    } catch (_) {
+      window.location.reload();
+    }
+  };
+
   async function init() {
     try {
       const { Live2DModel } = PIXI.live2d;

@@ -48,6 +48,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -89,6 +90,7 @@ fun AsistenScreen(
     onStageDragDelta: (Float) -> Unit,
     onDismissError: () -> Unit,
     onDismissKronikBanner: () -> Unit = {},
+    onRetryModel: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     BoxWithConstraints(
@@ -140,10 +142,12 @@ fun AsistenScreen(
                 }
 
                 // Kanvas Live2D Offline (WebViewAssetLoader)
-                AndroidView(
-                    factory = { ctx -> stageController.createWebView(ctx) },
-                    modifier = Modifier.fillMaxSize()
-                )
+                key(uiState.stageGeneration) {
+                    AndroidView(
+                        factory = { ctx -> stageController.createWebView(ctx) },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
 
                 // Loading indikator sebelum model siap
                 if (!uiState.isModelReady && uiState.modelError == null) {
@@ -156,6 +160,33 @@ fun AsistenScreen(
                             strokeWidth = 2.dp,
                             modifier = Modifier.size(28.dp)
                         )
+                    }
+                }
+
+                // Model gagal dimuat / konteks WebGL hilang → tampilkan alasan + tombol muat ulang
+                if (uiState.modelError != null) {
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .padding(horizontal = 32.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "Rem gagal ditampilkan",
+                            fontFamily = UiSans,
+                            fontSize = 14.sp,
+                            color = TextPrimary
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = uiState.modelError,
+                            fontFamily = UiSans,
+                            fontSize = 11.sp,
+                            color = TextMuted
+                        )
+                        TextButton(onClick = onRetryModel) {
+                            Text(text = "Muat Ulang", color = AccentBlue)
+                        }
                     }
                 }
 

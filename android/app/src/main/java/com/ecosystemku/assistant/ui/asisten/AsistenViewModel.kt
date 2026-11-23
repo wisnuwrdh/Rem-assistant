@@ -83,6 +83,7 @@ data class AsistenUiState(
     val isSpeaking: Boolean = false,
     val isModelReady: Boolean = false,
     val modelError: String? = null,
+    val stageGeneration: Int = 0,
     val currentExpression: String = "none",
     val idleBubbleText: String? = null,
     val stageFraction: Float = 0.56f,
@@ -1877,6 +1878,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
 
     fun setForegroundActive(active: Boolean) {
         isForeground = active
+        stageController.setActive(isForeground && isAsistenTabActive)
         if (!active) {
             idleTimerJob?.cancel()
             idleTimerJob = null
@@ -1889,6 +1891,10 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
 
     fun setAsistenTabActive(active: Boolean) {
         isAsistenTabActive = active
+        stageController.setActive(isForeground && isAsistenTabActive)
+        if (active && _uiState.value.modelError == "renderer_gone") {
+            retryModel()
+        }
         if (!active) {
             idleTimerJob?.cancel()
             idleTimerJob = null
@@ -1896,6 +1902,17 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
             audioManager.stop()
         } else if (isForeground) {
             resetIdleTimer()
+        }
+    }
+
+    /** Buat ulang WebView Live2D (dipakai tombol "Muat Ulang" saat model gagal tampil). */
+    fun retryModel() {
+        _uiState.update {
+            it.copy(
+                isModelReady = false,
+                modelError = null,
+                stageGeneration = it.stageGeneration + 1
+            )
         }
     }
 

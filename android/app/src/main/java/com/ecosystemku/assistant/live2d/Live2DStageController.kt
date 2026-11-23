@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
 import android.webkit.JavascriptInterface
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
@@ -30,9 +31,20 @@ class WebViewLive2DStageController(
 ) : Live2DStageController {
 
     private var webView: WebView? = null
+    private var isActive = true
 
     @SuppressLint("SetJavaScriptEnabled")
     fun createWebView(context: Context): WebView {
+        // Bersihkan instance lama (mis. saat stage dibuat ulang lewat tombol Muat Ulang)
+        webView?.let { old ->
+            runCatching {
+                old.stopLoading()
+                old.removeJavascriptInterface("AndroidStageBridge")
+                old.destroy()
+            }
+        }
+        webView = null
+
         val assetLoader = WebViewAssetLoader.Builder()
             .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(context))
             .build()
@@ -61,10 +73,40 @@ class WebViewLive2DStageController(
                 ): WebResourceResponse? {
                     return assetLoader.shouldInterceptRequest(request.url)
                 }
+
+                override fun onPageFinished(view: WebView, url: String?) {
+                    if (!isActive) evalJs("window.StageAPI?.pause?.();")
+                }
+
+                // Renderer WebView bisa dimatikan sistem saat memori menipis (sering terjadi
+                // ketika sub-app berat terbuka). Tanpa override ini, seluruh aplikasi ikut crash.
+                override fun onRenderProcessGone(
+                    view: WebView,
+                    detail: RenderProcessGoneDetail
+                ): Boolean {
+                    if (webView === view) webView = null
+                    runCatching { view.destroy() }
+                    callbacks.onModelError("renderer_gone")
+                    return true
+                }
             }
 
             loadUrl("https://appassets.androidplatform.net/assets/live2d/stage.html")
             webView = this
+        }
+    }
+
+    /** Hentikan render saat stage tertutup sub-app/tab lain, lanjutkan saat terlihat lagi. */
+    fun setActive(active: Boolean) {
+        if (isActive == active) return
+        isActive = active
+        val wv = webView ?: return
+        wv.post {
+            if (active) {
+                wv.evaluateJavascript("window.StageAPI?.resume?.();", null)
+            } else {
+                wv.evaluateJavascript("window.StageAPI?.pause?.();", null)
+            }
         }
     }
 
