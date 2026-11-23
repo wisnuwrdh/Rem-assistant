@@ -23,9 +23,9 @@
     width: window.innerWidth || 390,
     height: window.innerHeight || 480,
     backgroundAlpha: 0,
-    antialias: false,
+    antialias: true,
     preserveDrawingBuffer: true,
-    resolution: Math.min(window.devicePixelRatio || 1, 1.5),
+    resolution: Math.min(window.devicePixelRatio || 1, 3),
     autoDensity: true,
     powerPreference: 'default',
     sharedTicker: false,
@@ -296,7 +296,7 @@
   }
 
   function tickLipSync() {
-    const speed = targetMouth > smoothMouth ? 0.35 : 0.15;
+    const speed = targetMouth > smoothMouth ? 0.42 : 0.12;
     smoothMouth += (targetMouth - smoothMouth) * speed;
   }
 

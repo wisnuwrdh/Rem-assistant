@@ -11,7 +11,7 @@ Project Android Studio siap-buka hasil migrasi dari `assistant/` + `api/` sesuai
 ## Struktur Fitur Saat Ini
 - **Tab 1 — `Asisten` (Logika Penuh Aktif)**:
   - Panggung Live2D Rem (`assets/live2d/characters/rem/`) berjalan offline via `WebViewAssetLoader` + `Live2DStageController` interface.
-    - `WebView` memakai latar solid `#0F0E0C` + aura CSS di `stage.html` serta `preserveDrawingBuffer: true`, `antialias: false`, dan resolusi WebGL dibatasi maks `1.5x` DPR agar rendering konsisten di Compose `AndroidView` (tanpa `.alpha()` layer).
+    - `WebView` memakai latar solid `#0F0E0C` + aura CSS di `stage.html` serta `preserveDrawingBuffer: true`, `antialias: true`, dan resolusi WebGL hingga `3x` DPR agar rendering tetap tajam dan konsisten di Compose `AndroidView` (tanpa `.alpha()` layer).
     - `StageJsBridge` men-dispatch callback ke `MainLooper`, `playRemMotion` memakai `MotionPriority.FORCE` (`3`) agar motion loop bisa berganti, override wajah/tangan/lip-sync diterapkan di `beforeModelUpdate`, memakai satu ticker terpadu (`autoUpdate: false` + `model.update`), `paramIndexCache`, serta `ResizeObserver` ter-coalesce rAF.
     - Render dijeda (`StageAPI.pause/resume`) saat tab Apps/Setelan atau sub-app menutupi panggung, dan saat aplikasi di background.
     - Jika konteks WebGL hilang (`webgl_context_lost`) atau renderer WebView dimatikan sistem (`renderer_gone`), panggung dipulihkan otomatis; jika gagal, muncul pesan error + tombol **Muat Ulang** (membuat ulang WebView via `stageGeneration`).

@@ -42,7 +42,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.abs
-import kotlin.math.min
+import kotlin.math.log10
 import kotlin.math.sqrt
 
 @Serializable
@@ -72,27 +72,47 @@ class TtsAudioManager(
     val mouthLevel: StateFlow<Float> = _mouthLevel.asStateFlow()
 
     private val rmsSink = object : TeeAudioProcessor.AudioBufferSink {
+        @Volatile
+        private var pcmEncoding: Int = C.ENCODING_PCM_16BIT
+        private var smoothedLevel: Double = 0.0
+
         override fun flush(sampleRateHz: Int, channelCount: Int, encoding: Int) {
+            pcmEncoding = encoding
+            smoothedLevel = 0.0
             _mouthLevel.value = 0f
         }
 
         override fun handleBuffer(buffer: ByteBuffer) {
             val dup = buffer.duplicate().order(ByteOrder.LITTLE_ENDIAN)
-            val shortCount = dup.remaining() / 2
-            if (shortCount <= 0) return
+            val isFloat = pcmEncoding == C.ENCODING_PCM_FLOAT
+            val bytesPerSample = if (isFloat) 4 else 2
+            val sampleCount = dup.remaining() / bytesPerSample
+            if (sampleCount <= 0) return
 
             var sumSq = 0.0
-            val step = maxOf(1, shortCount / 128)
+            val step = maxOf(1, sampleCount / 128)
             var sampled = 0
             var i = 0
-            while (i < shortCount) {
-                val sample = dup.getShort(i * 2).toDouble() / 32768.0
+            while (i < sampleCount) {
+                val sample = if (isFloat) {
+                    dup.getFloat(i * 4).toDouble().coerceIn(-1.0, 1.0)
+                } else {
+                    dup.getShort(i * 2).toDouble() / 32768.0
+                }
                 sumSq += sample * sample
                 sampled++
                 i += step
             }
             val rms = if (sampled > 0) sqrt(sumSq / sampled) else 0.0
-            val normalized = min(1.0, rms * 3.8).toFloat()
+            // Skala dB logaritmik (-40 dB .. -14 dB) agar bukaan mulut setara Web Audio FFT di PWA
+            val db = 20.0 * log10(maxOf(rms, 1e-6))
+            val rawLevel = ((db + 40.0) / 26.0).coerceIn(0.0, 1.0)
+            smoothedLevel = if (rawLevel > smoothedLevel) {
+                smoothedLevel + (rawLevel - smoothedLevel) * 0.80
+            } else {
+                smoothedLevel + (rawLevel - smoothedLevel) * 0.35
+            }
+            val normalized = if (smoothedLevel < 0.03) 0f else smoothedLevel.toFloat()
             val prev = _mouthLevel.value
             if ((normalized == 0f && prev != 0f) || abs(normalized - prev) >= 0.02f) {
                 _mouthLevel.value = normalized
