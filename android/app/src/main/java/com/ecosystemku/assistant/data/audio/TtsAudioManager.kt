@@ -178,22 +178,53 @@ class TtsAudioManager(
     }
 
     @Volatile
-    private var isMuted: Boolean = false
+    private var isTtsMuted: Boolean = false
 
-    fun setMuted(muted: Boolean) {
-        isMuted = muted
+    @Volatile
+    private var isClipMuted: Boolean = false
+
+    fun setTtsMuted(muted: Boolean) {
+        isTtsMuted = muted
         if (muted) {
-            stop()
+            stopTts()
         }
     }
 
-    fun playTts(text: String, isJapanese: Boolean) {
-        if (isMuted || text.isBlank()) return
-        stop()
+    fun setClipMuted(muted: Boolean) {
+        isClipMuted = muted
+        if (muted) {
+            stopClip()
+        }
+    }
+
+    fun setMuted(muted: Boolean) {
+        setTtsMuted(muted)
+        setClipMuted(muted)
+    }
+
+    fun playTts(text: String, isJapanese: Boolean, fallbackClip: String? = null) {
+        if (text.isBlank()) {
+            if (!fallbackClip.isNullOrBlank()) {
+                playBundledAssetClip(fallbackClip)
+            }
+            return
+        }
+        if (isTtsMuted || ApiKeyStore.getValue(AiConfigField.TTS_API_KEY, appContext).isBlank()) {
+            if (!fallbackClip.isNullOrBlank()) {
+                playBundledAssetClip(fallbackClip)
+            }
+            return
+        }
+        stopTts()
 
         val myGen = playbackGen.incrementAndGet()
         val chunks = SseTagParser.splitForTts(text)
-        if (chunks.isEmpty()) return
+        if (chunks.isEmpty()) {
+            if (!fallbackClip.isNullOrBlank()) {
+                playBundledAssetClip(fallbackClip)
+            }
+            return
+        }
 
         activeFetchJob = scope.launch {
             val files = withContext(Dispatchers.IO) {
@@ -206,13 +237,23 @@ class TtsAudioManager(
                 }
             }.filterNotNull()
 
-            if (isMuted || myGen != playbackGen.get() || files.isEmpty()) {
-                _isSpeaking.value = false
-                _mouthLevel.value = 0f
+            if (isTtsMuted || myGen != playbackGen.get() || files.isEmpty()) {
+                if (myGen == playbackGen.get()) {
+                    activeFetchJob = null
+                }
+                if (activeBundledClip == null) {
+                    _isSpeaking.value = false
+                    _mouthLevel.value = 0f
+                }
+                if (myGen == playbackGen.get() && !fallbackClip.isNullOrBlank()) {
+                    playBundledAssetClip(fallbackClip)
+                }
                 return@launch
             }
+            activeFetchJob = null
 
             activeBundledClip = null
+            releaseFallbackPlayer()
             val mediaItems = files.map { MediaItem.fromUri(Uri.fromFile(it)) }
             exoPlayer.setMediaItems(mediaItems)
             exoPlayer.prepare()
@@ -221,12 +262,11 @@ class TtsAudioManager(
     }
 
     fun playBundledAssetClip(filename: String) {
-        if (isMuted || filename.isBlank()) return
+        if (isClipMuted || filename.isBlank()) return
         scope.launch {
-            if (_isSpeaking.value && activeBundledClip == null) return@launch
-            playbackGen.incrementAndGet()
-            activeFetchJob?.cancel()
-            activeFetchJob = null
+            val isTtsActive = (_isSpeaking.value && activeBundledClip == null) ||
+                (!isTtsMuted && activeFetchJob?.isActive == true)
+            if (isClipMuted || isTtsActive) return@launch
             releaseFallbackPlayer()
             activeBundledClip = filename
             runCatching {
@@ -242,7 +282,35 @@ class TtsAudioManager(
         }
     }
 
+    fun stopTts() {
+        scope.launch {
+            playbackGen.incrementAndGet()
+            activeFetchJob?.cancel()
+            activeFetchJob = null
+            if (activeBundledClip == null) {
+                exoPlayer.stop()
+                exoPlayer.clearMediaItems()
+                _isSpeaking.value = false
+                _mouthLevel.value = 0f
+            }
+        }
+    }
+
+    fun stopClip() {
+        scope.launch {
+            releaseFallbackPlayer()
+            if (activeBundledClip != null) {
+                activeBundledClip = null
+                exoPlayer.stop()
+                exoPlayer.clearMediaItems()
+                _isSpeaking.value = false
+                _mouthLevel.value = 0f
+            }
+        }
+    }
+
     private fun playAssetViaMediaPlayer(filename: String) {
+        if (isClipMuted) return
         runCatching {
             releaseFallbackPlayer()
             val afd = appContext.assets.openFd("live2d/characters/rem/audio/$filename")

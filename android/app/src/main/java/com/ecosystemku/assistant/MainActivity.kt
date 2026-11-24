@@ -163,6 +163,7 @@ fun EcosystemKuShell(
                         onDismissKronikBanner = asistenViewModel::dismissKronikBanner,
                         onRetryModel = asistenViewModel::retryModel,
                         onToggleMute = asistenViewModel::toggleMute,
+                        onToggleVoiceClipMute = asistenViewModel::toggleVoiceClipMute,
                         onClearChat = asistenViewModel::clearChatHistoryOnly,
                         onPickWallpaper = asistenViewModel::setStageWallpaper,
                         onResetWallpaper = asistenViewModel::clearStageWallpaper,

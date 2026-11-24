@@ -167,6 +167,7 @@ sealed interface EcosystemZipImportResult {
 data class AsistenUiState(
     val profileName: String = "Mahfud",
     val isMuted: Boolean = false,
+    val isVoiceClipMuted: Boolean = false,
     val lastBackupLabel: String = "Belum pernah",
     val themeMode: String = "dark", // "system" | "light" | "dark"
     val aiConfig: AiConfigSnapshot = AiConfigSnapshot(),
@@ -388,6 +389,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
             ?.ifBlank { "Mahfud" }
             ?: "Mahfud"
         val muted = asistenPrefs.getBoolean("asisten_muted", false)
+        val clipMuted = asistenPrefs.getBoolean("asisten_voice_clip_muted", false)
         val lastBackup = asistenPrefs.getString("asisten_last_backup", "Belum pernah") ?: "Belum pernah"
         val themeMode = asistenPrefs.getString("asisten_theme_mode", "dark") ?: "dark"
         val habitNotifOn = asistenPrefs.getBoolean("asisten_notif_habit_on", true)
@@ -405,12 +407,14 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
             MemoryProfileData()
         }
         val aiSnap = ApiKeyStore.snapshot(app)
-        audioManager.setMuted(muted)
+        audioManager.setTtsMuted(muted)
+        audioManager.setClipMuted(clipMuted)
         applyStageWallpaperToController(validWallpaper, wallpaperDim)
         _uiState.update {
             it.copy(
                 profileName = profileName,
                 isMuted = muted,
+                isVoiceClipMuted = clipMuted,
                 lastBackupLabel = lastBackup,
                 themeMode = themeMode,
                 aiConfig = aiSnap,
@@ -716,9 +720,17 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
     fun toggleMute() {
         val next = !_uiState.value.isMuted
         asistenPrefs.edit().putBoolean("asisten_muted", next).apply()
-        audioManager.setMuted(next)
+        audioManager.setTtsMuted(next)
         _uiState.update { it.copy(isMuted = next) }
-        showBannerMessage(if (next) "Suara TTS Rem dimatikan" else "Suara TTS Rem diaktifkan")
+        showBannerMessage(if (next) "Suara TTS Rem dimatikan (voice klip tetap aktif)" else "Suara TTS Rem diaktifkan")
+    }
+
+    fun toggleVoiceClipMute() {
+        val next = !_uiState.value.isVoiceClipMuted
+        asistenPrefs.edit().putBoolean("asisten_voice_clip_muted", next).apply()
+        audioManager.setClipMuted(next)
+        _uiState.update { it.copy(isVoiceClipMuted = next) }
+        showBannerMessage(if (next) "Voice klip bawaan Rem dimatikan" else "Voice klip bawaan Rem diaktifkan")
     }
 
     fun startNewChatSession() {
@@ -3199,6 +3211,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
             if (searchAct != null && round < 2) {
                 val queryLabel = if (searchAct.query.isNotBlank()) ": ${searchAct.query}" else ""
                 _streamingText.value = "Mencari arsip ${searchAct.scope}$queryLabel..."
+                audioManager.playBundledAssetClip("ack_2.mp3")
                 val searchOutput = executeLocalArchiveSearch(searchAct.scope, searchAct.query)
                 accumulatedSearch.append("### Pencarian [${searchAct.scope} | \"${searchAct.query}\"]\n")
                 accumulatedSearch.append(searchOutput).append("\n\n")
@@ -3215,6 +3228,8 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         val replyText = parsed.cleanText
         val expr = parsed.expression
         val choicesJson = ChatChoicesCodec.encode(parsed.choices)
+        var didRealizeWishlist = false
+        var didMutateModuleAction = false
 
         if (replyText.isNotEmpty()) {
             val replyTs = System.currentTimeMillis()
@@ -3256,6 +3271,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                     }
                 }
                 if (memChanged) {
+                    didMutateModuleAction = true
                     refreshMemoryProfile(force = true)
                     showBannerMessage(lastLabel.ifBlank { "Memori diperbarui" })
                 }
@@ -3285,6 +3301,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                     }
                 }
                 if (savedTitles.isNotEmpty()) {
+                    didMutateModuleAction = true
                     _uiState.update {
                         it.copy(kronikBannerMessage = "Kronik: Tersimpan \"${savedTitles.first()}\"")
                     }
@@ -3332,6 +3349,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                     }
                 }
                 if (savedTitles.isNotEmpty()) {
+                    didMutateModuleAction = true
                     _uiState.update {
                         it.copy(kronikBannerMessage = "LinkKu: Tersimpan \"${savedTitles.first()}\"")
                     }
@@ -3488,11 +3506,13 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                                 cuciMoneyDao.adjustAccountBalance(dstAccId, -act.paidAmount)
                                 saveLastAccForBook(targetBookId, dstAccId)
                             }
+                            didRealizeWishlist = true
                             savedLabels.add("Wishlist Selesai: $wishTitle")
                         }
                     }
                 }
                 if (savedLabels.isNotEmpty()) {
+                    didMutateModuleAction = true
                     _uiState.update {
                         it.copy(kronikBannerMessage = "CuciMoney+: ${savedLabels.first()}")
                     }
@@ -3533,6 +3553,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                     }
                 }
                 if (savedTitles.isNotEmpty()) {
+                    didMutateModuleAction = true
                     _uiState.update {
                         it.copy(kronikBannerMessage = "IdeKu: Tersimpan \"${savedTitles.first()}\"")
                     }
@@ -3611,6 +3632,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                     }
                 }
                 if (savedMsgs.isNotEmpty()) {
+                    didMutateModuleAction = true
                     _uiState.update {
                         it.copy(kronikBannerMessage = "Daily OS: ${savedMsgs.first()}")
                     }
@@ -3621,7 +3643,8 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 }
             }
 
-            if (parsed.openApp in setOf("kronik", "linkku", "cucimoney", "ideku", "dailyos")) {
+            val didOpenApp = parsed.openApp in setOf("kronik", "linkku", "cucimoney", "ideku", "dailyos")
+            if (didOpenApp) {
                 _uiState.update { it.copy(pendingOpenApp = parsed.openApp) }
             }
 
@@ -3634,9 +3657,23 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
             _streamingText.value = ""
             _uiState.update { it.copy(isThinking = false) }
 
+            val lastUserMsg = recent.lastOrNull { it.role == "user" }?.content.orEmpty()
+            val isFirstTurnInSession = recent.count { it.role == "user" } <= 1
+            val fallbackClip = selectChatVoiceClip(
+                userMessage = lastUserMsg,
+                expression = expr,
+                didRealizeWishlist = didRealizeWishlist,
+                didMutateAction = didMutateModuleAction,
+                didOpenApp = didOpenApp,
+                isFirstTurn = isFirstTurnInSession
+            )
             val ttsTarget = finalDoneTts.ifBlank { replyText }
-            if (ttsTarget.isNotBlank()) {
-                audioManager.playTts(ttsTarget, isJapanese = finalDoneTts.isNotBlank())
+            if (ttsTarget.isNotBlank() || fallbackClip.isNotBlank()) {
+                audioManager.playTts(
+                    text = ttsTarget,
+                    isJapanese = finalDoneTts.isNotBlank(),
+                    fallbackClip = fallbackClip
+                )
             }
 
             if (_uiState.value.autoLearnMemory && replyText.isNotEmpty()) {
@@ -4201,6 +4238,59 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                     applyExpression("none", autoRevert = false)
                 }
             }
+        }
+    }
+
+    private fun selectChatVoiceClip(
+        userMessage: String,
+        expression: String?,
+        didRealizeWishlist: Boolean,
+        didMutateAction: Boolean,
+        didOpenApp: Boolean,
+        isFirstTurn: Boolean
+    ): String {
+        if (didRealizeWishlist) return "action_wishlist_1.mp3"
+        if (didMutateAction) {
+            return if ((System.currentTimeMillis() and 1L) == 0L) "action_done_1.mp3" else "action_done_2.mp3"
+        }
+
+        val lower = userMessage.trim().lowercase(Locale.ROOT)
+        if (Regex("""\b(selamat tidur|tidur dulu|mau tidur|good\s?night|oyasumi|oyasuminasai)\b""").containsMatchIn(lower)) {
+            return "goodnight_1.mp3"
+        }
+        if (Regex("""\b(terima\s?kasih|makasih|thanks|thank\s?you|thx|arigatou|nuhun|suwun)\b""").containsMatchIn(lower)) {
+            return "thanks_1.mp3"
+        }
+        if (Regex("""\b(selamat pagi|ohayou?|good morning)\b|^pagi[!?. ]*$""").containsMatchIn(lower)) {
+            return "greet_morning.mp3"
+        }
+        if (Regex("""\b(selamat siang|selamat sore|konnichiwa|good afternoon)\b|^(siang|sore)[!?. ]*$""").containsMatchIn(lower)) {
+            return "greet_afternoon.mp3"
+        }
+        if (Regex("""\b(selamat malam|konbanwa|good evening)\b|^malam[!?. ]*$""").containsMatchIn(lower)) {
+            return "greet_night.mp3"
+        }
+        if (isFirstTurn && Regex("""^(hai|halo|hello|hi|rem|p|permisi)[!?. ]*$""").containsMatchIn(lower)) {
+            val hour = LocalDateTime.now().hour
+            return when {
+                hour in 4..10 -> "greet_morning.mp3"
+                hour in 11..17 -> "greet_afternoon.mp3"
+                else -> "greet_night.mp3"
+            }
+        }
+        if (didOpenApp || Regex("""^(oke|ok|siap|baik|lanjut|ya|iya|gas|sip)[!?. ]*$""").containsMatchIn(lower)) {
+            return "ack_1.mp3"
+        }
+
+        return when (expression?.lowercase(Locale.ROOT)) {
+            "happy" -> "chat_happy_1.mp3"
+            "proud" -> "chat_proud_1.mp3"
+            "serious", "angry" -> "chat_serious_1.mp3"
+            "sad", "cry", "upset" -> "chat_sad_1.mp3"
+            "surprise" -> "chat_surprise_1.mp3"
+            "puzzle", "doubt" -> "chat_puzzle_1.mp3"
+            "shame" -> "chat_shame_1.mp3"
+            else -> if ((System.currentTimeMillis() and 1L) == 0L) "chat_smile_1.mp3" else "chat_smile_2.mp3"
         }
     }
 

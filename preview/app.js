@@ -396,8 +396,8 @@
   window.addEventListener('beforeunload', pauseStageAudioAndIdle);
   document.addEventListener('freeze', pauseStageAudioAndIdle);
 
-  async function playClip(filename) {
-    if (!filename || isSpeaking || isThinking || !isStageActiveAndVisible()) return;
+  async function playClip(filename, allowDuringThinking = false) {
+    if (!filename || isSpeaking || (!allowDuringThinking && isThinking) || !isStageActiveAndVisible()) return;
     ensureAudio();
     if (audioCtx.state === 'suspended') {
       try { await audioCtx.resume(); } catch (_) { return; }
@@ -1138,8 +1138,39 @@
     analyser.connect(audioCtx.destination);
   }
 
-  async function playTTS(text, isJapanese) {
-    if (!text || !isStageActiveAndVisible()) return;
+  function selectChatVoiceClip({ userMessage = '', expression = 'none', didRealizeWishlist = false, didMutateAction = false, didOpenApp = false, isFirstTurn = false }) {
+    if (didRealizeWishlist) return 'action_wishlist_1.mp3';
+    if (didMutateAction) return (Date.now() % 2 === 0) ? 'action_done_1.mp3' : 'action_done_2.mp3';
+    const lower = String(userMessage || '').trim().toLowerCase();
+    if (/\b(selamat tidur|tidur dulu|mau tidur|good\s?night|oyasumi|oyasuminasai)\b/.test(lower)) return 'goodnight_1.mp3';
+    if (/\b(terima\s?kasih|makasih|thanks|thank\s?you|thx|arigatou|nuhun|suwun)\b/.test(lower)) return 'thanks_1.mp3';
+    if (/\b(selamat pagi|ohayou?|good morning)\b|^pagi[!?. ]*$/.test(lower)) return 'greet_morning.mp3';
+    if (/\b(selamat siang|selamat sore|konnichiwa|good afternoon)\b|^(siang|sore)[!?. ]*$/.test(lower)) return 'greet_afternoon.mp3';
+    if (/\b(selamat malam|konbanwa|good evening)\b|^malam[!?. ]*$/.test(lower)) return 'greet_night.mp3';
+    if (isFirstTurn && /^(hai|halo|hello|hi|rem|p|permisi)[!?. ]*$/.test(lower)) {
+      const hour = new Date().getHours();
+      if (hour >= 4 && hour <= 10) return 'greet_morning.mp3';
+      if (hour >= 11 && hour <= 17) return 'greet_afternoon.mp3';
+      return 'greet_night.mp3';
+    }
+    if (didOpenApp || /^(oke|ok|siap|baik|lanjut|ya|iya|gas|sip)[!?. ]*$/.test(lower)) return 'ack_1.mp3';
+    const expr = String(expression || 'none').toLowerCase();
+    if (expr === 'happy') return 'chat_happy_1.mp3';
+    if (expr === 'proud') return 'chat_proud_1.mp3';
+    if (expr === 'serious' || expr === 'angry') return 'chat_serious_1.mp3';
+    if (expr === 'sad' || expr === 'cry' || expr === 'upset') return 'chat_sad_1.mp3';
+    if (expr === 'surprise') return 'chat_surprise_1.mp3';
+    if (expr === 'puzzle' || expr === 'doubt') return 'chat_puzzle_1.mp3';
+    if (expr === 'shame') return 'chat_shame_1.mp3';
+    return (Date.now() % 2 === 0) ? 'chat_smile_1.mp3' : 'chat_smile_2.mp3';
+  }
+
+  async function playTTS(text, isJapanese, fallbackClip = null) {
+    if (!isStageActiveAndVisible()) return;
+    if (!text) {
+      if (fallbackClip) playClip(fallbackClip, true);
+      return;
+    }
     ensureAudio();
     if (audioCtx.state === 'suspended') await audioCtx.resume().catch(() => {});
     if (audioCtx.state !== 'running' || !isStageActiveAndVisible()) return;
@@ -1175,6 +1206,9 @@
       isSpeaking = false;
       modelTag.classList.remove('speaking');
       statusEl.textContent = '· idle';
+      if (gen === ttsGen && fallbackClip) {
+        playClip(fallbackClip, true);
+      }
     }
   }
 
@@ -4386,6 +4420,7 @@
           const qLbl = searchAct.query ? `: ${searchAct.query}` : '';
           replyNodes.bubble.textContent = `Mencari arsip ${searchAct.scope}${qLbl}...`;
           statusEl.textContent = `· mencari ${searchAct.scope}…`;
+          playClip('ack_2.mp3', true);
           const searchResult = executeLocalArchiveSearch(searchAct.scope, searchAct.query);
           accumulatedSearch += `### Pencarian [${searchAct.scope} | "${searchAct.query}"]\n${searchResult}\n\n`;
           continue;
@@ -4399,6 +4434,7 @@
       const fullRaw = finalFullRaw;
       const finalDone = finalDoneObj;
       const exprMatch = fullRaw.match(/\[EXPR:([a-z]+)\]/i);
+      const exprName = exprMatch ? exprMatch[1].toLowerCase() : 'none';
       const parsedChoices = parseChoicesFromReply(fullRaw);
       const cleanReply = cleanChatFormatting(
         fullRaw
@@ -4441,11 +4477,24 @@
       applyIdekuTagsFromReply(fullRaw);
       applyDailyOsTagsFromReply(fullRaw);
 
-      if (exprMatch) setExpression(exprMatch[1].toLowerCase());
-      else setExpression('none');
+      setExpression(exprName);
+
+      const userTurns = sess.messages.filter((m) => m.role === 'user');
+      const lastUserMsg = userTurns[userTurns.length - 1]?.content || '';
+      const didRealizeWishlist = /\[CUCI:(?:REALIZE|BELI|DONE|SELESAI|CAIRKAN)\|/i.test(fullRaw);
+      const didMutateAction = /\[(?:MEMORY:(?:SET|DEL)|KRONIK:ADD|LINKKU:ADD|CUCI:(?:ADD|SAVE|NABUNG|DEPOSIT|TABUNG)|IDEKU:ADD|DAILYOS:(?:HABIT|TODO|CHECK))\|/i.test(fullRaw);
+      const didOpenApp = /\[OPEN:(?:kronik|linkku|cucimoney|ideku|dailyos)\]/i.test(fullRaw);
+      const fallbackClip = selectChatVoiceClip({
+        userMessage: lastUserMsg,
+        expression: exprName,
+        didRealizeWishlist,
+        didMutateAction,
+        didOpenApp,
+        isFirstTurn: userTurns.length <= 1,
+      });
 
       const ttsText = (finalDone?.tts || '').trim() || cleanReply;
-      playTTS(ttsText, Boolean(finalDone?.tts));
+      playTTS(ttsText, Boolean(finalDone?.tts), fallbackClip);
       if (cleanReply) {
         extractMemoriesInBackground();
         compactSessionIfNeeded(sess.id);

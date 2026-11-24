@@ -146,6 +146,7 @@ fun AsistenScreen(
     onDismissKronikBanner: () -> Unit = {},
     onRetryModel: () -> Unit = {},
     onToggleMute: () -> Unit = {},
+    onToggleVoiceClipMute: () -> Unit = {},
     onClearChat: () -> Unit = {},
     onPickWallpaper: (Uri) -> Unit = {},
     onResetWallpaper: () -> Unit = {},
@@ -529,6 +530,28 @@ fun AsistenScreen(
                                         onClick = {
                                             menuExpanded = false
                                             onToggleMute()
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = if (uiState.isVoiceClipMuted) "Nyalakan Voice Klip" else "Matikan Voice Klip",
+                                                fontFamily = UiSans,
+                                                fontSize = 13.sp,
+                                                color = TextPrimary
+                                            )
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = if (uiState.isVoiceClipMuted) Icons.AutoMirrored.Outlined.VolumeUp else Icons.AutoMirrored.Outlined.VolumeOff,
+                                                contentDescription = null,
+                                                tint = AccentBlue,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        },
+                                        onClick = {
+                                            menuExpanded = false
+                                            onToggleVoiceClipMute()
                                         }
                                     )
                                     DropdownMenuItem(
