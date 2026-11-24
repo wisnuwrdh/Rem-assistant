@@ -192,6 +192,27 @@ object ApiKeyStore {
         return headers
     }
 
+    fun getCloudPassphrase(context: Context? = appContext): String {
+        val p = prefs(context) ?: return ""
+        val raw = p.getString("enc_cloud_passphrase", null)
+        return if (raw.isNullOrEmpty()) "" else decrypt(raw)
+    }
+
+    fun setCloudPassphrase(passphrase: String, context: Context? = appContext) {
+        val p = prefs(context) ?: return
+        val clean = passphrase.trim()
+        val editor = p.edit()
+        if (clean.isEmpty()) {
+            editor.remove("enc_cloud_passphrase")
+        } else {
+            editor.putString("enc_cloud_passphrase", encrypt(clean))
+        }
+        editor.apply()
+    }
+
+    fun hasCloudPassphrase(context: Context? = appContext): Boolean =
+        getCloudPassphrase(context).isNotEmpty()
+
     private fun getOrCreateSecretKey(): SecretKey {
         val ks = KeyStore.getInstance(KEYSTORE_PROVIDER).apply { load(null) }
         val existing = ks.getEntry(KEY_ALIAS, null) as? KeyStore.SecretKeyEntry

@@ -2,6 +2,7 @@ package com.ecosystemku.assistant.ui.asisten
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
@@ -10,6 +11,16 @@ import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ecosystemku.assistant.data.audio.TtsAudioManager
+import com.ecosystemku.assistant.data.backup.EcosystemBackupRepository
+import com.ecosystemku.assistant.data.backup.EcosystemZipImportResult
+import com.ecosystemku.assistant.data.cloud.CloudAuthResult
+import com.ecosystemku.assistant.data.cloud.CloudBackupCrypto
+import com.ecosystemku.assistant.data.cloud.CloudBackupPrefsKeys
+import com.ecosystemku.assistant.data.cloud.CloudBackupScheduler
+import com.ecosystemku.assistant.data.cloud.CloudBackupUiState
+import com.ecosystemku.assistant.data.cloud.CloudRestoreFetchResult
+import com.ecosystemku.assistant.data.cloud.CloudSyncResult
+import com.ecosystemku.assistant.data.cloud.GoogleDriveBackupClient
 import com.ecosystemku.assistant.data.local.AiConfigField
 import com.ecosystemku.assistant.data.local.AiConfigSnapshot
 import com.ecosystemku.assistant.data.local.ApiKeyStore
@@ -75,8 +86,6 @@ import com.ecosystemku.assistant.ui.apps.linkku.LinkkuHelpers
 import com.ecosystemku.assistant.ui.apps.linkku.LinkkuHelpers.toEntity
 import com.ecosystemku.assistant.ui.apps.linkku.LinkkuImportResult
 import com.ecosystemku.assistant.ui.apps.linkku.LinkkuUiState
-import java.io.ByteArrayInputStream
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -89,9 +98,6 @@ import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import java.util.Date
 import java.util.Locale
-import java.util.zip.ZipEntry
-import java.util.zip.ZipInputStream
-import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -111,71 +117,12 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 
-@Serializable
-private data class EcosystemManifestDto(
-    val version: Int = 3,
-    val app: String = "asisten-rem",
-    val exportedAt: String = "",
-    val profileName: String = "Mahfud"
-)
-
-@Serializable
-private data class AsistenBackupChatDto(
-    val role: String,
-    val content: String,
-    val expressionTag: String? = null,
-    val createdAt: Long = 0L,
-    val choicesJson: String? = null,
-    val sessionId: Long = 1L
-)
-
-@Serializable
-private data class AsistenBackupSessionDto(
-    val id: Long = 0L,
-    val title: String = "Obrolan Baru",
-    val createdAt: Long = 0L,
-    val updatedAt: Long = 0L,
-    val rollingSummary: String? = null,
-    val summarizedCount: Int = 0
-)
-
-@Serializable
-private data class AsistenBackupMemoryDto(
-    val category: String,
-    val factKey: String,
-    val factValue: String,
-    val confidence: Float = 0.8f
-)
-
-@Serializable
-private data class AsistenBackupSummaryDto(
-    val summaryText: String,
-    val turnCount: Int = 0,
-    val createdAt: Long = 0L
-)
-
-@Serializable
-private data class AsistenBackupWrapperDto(
-    val profileName: String = "Mahfud",
-    val autoLearnMemory: Boolean = true,
-    val messages: List<AsistenBackupChatDto> = emptyList(),
-    val sessions: List<AsistenBackupSessionDto> = emptyList(),
-    val memories: List<AsistenBackupMemoryDto> = emptyList(),
-    val summaries: List<AsistenBackupSummaryDto> = emptyList(),
-    val memoryProfileJson: String? = null
-)
-
-sealed interface EcosystemZipImportResult {
-    data class Success(val summary: String) : EcosystemZipImportResult
-    data class NeedsPin(val zipBytes: ByteArray, val replaceAll: Boolean) : EcosystemZipImportResult
-    data class Error(val message: String) : EcosystemZipImportResult
-}
-
 data class AsistenUiState(
     val profileName: String = "Mahfud",
     val isMuted: Boolean = false,
     val isVoiceClipMuted: Boolean = false,
     val lastBackupLabel: String = "Belum pernah",
+    val cloudState: CloudBackupUiState = CloudBackupUiState(),
     val themeMode: String = "dark", // "system" | "light" | "dark"
     val aiConfig: AiConfigSnapshot = AiConfigSnapshot(),
     val apiConnectionOk: Boolean = false,
@@ -237,6 +184,8 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
     private val idekuAiClient = IdekuAiClient(sseClient.httpClient)
     private val dailyOsAiClient = DailyOsAiClient(sseClient.httpClient)
     private val audioManager = TtsAudioManager(application, sseClient.httpClient)
+    private val backupRepository = EcosystemBackupRepository(application)
+    private val googleDriveClient = GoogleDriveBackupClient(application, sseClient.httpClient)
 
     val stageController = WebViewLive2DStageController(this)
 
@@ -448,6 +397,15 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
             MemoryProfileData()
         }
         val aiSnap = ApiKeyStore.snapshot(app)
+        val cloudConnected = asistenPrefs.getBoolean(CloudBackupPrefsKeys.PREF_CONNECTED, false)
+        val cloudLastBackup = asistenPrefs.getString(CloudBackupPrefsKeys.PREF_LAST_BACKUP, "Belum pernah") ?: "Belum pernah"
+        val cloudLastStatus = asistenPrefs.getString(
+            CloudBackupPrefsKeys.PREF_LAST_STATUS,
+            if (cloudConnected) "Terhubung ke Google Drive" else "Belum terhubung"
+        ) ?: "Belum terhubung"
+        val cloudSchedule = asistenPrefs.getString(CloudBackupPrefsKeys.PREF_AUTO_SCHEDULE, "off") ?: "off"
+        val cloudWifiOnly = asistenPrefs.getBoolean(CloudBackupPrefsKeys.PREF_WIFI_ONLY, true)
+        val cloudEnc = ApiKeyStore.hasCloudPassphrase(app)
         audioManager.setTtsMuted(muted)
         audioManager.setClipMuted(clipMuted)
         applyStageWallpaperToController(validWallpaper, wallpaperDim)
@@ -457,6 +415,14 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 isMuted = muted,
                 isVoiceClipMuted = clipMuted,
                 lastBackupLabel = lastBackup,
+                cloudState = it.cloudState.copy(
+                    connected = cloudConnected,
+                    lastBackupLabel = cloudLastBackup,
+                    lastStatusLabel = cloudLastStatus,
+                    autoSchedule = cloudSchedule,
+                    wifiOnly = cloudWifiOnly,
+                    encryptionEnabled = cloudEnc
+                ),
                 themeMode = themeMode,
                 aiConfig = aiSnap,
                 apiConnectionOk = aiSnap.isLlmConfigured,
@@ -483,6 +449,11 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
             habitTime = habitTime,
             todoEnabled = todoNotifOn,
             todoTime = todoTime
+        )
+        CloudBackupScheduler.syncSchedule(
+            context = app,
+            schedule = if (cloudConnected) cloudSchedule else "off",
+            wifiOnly = cloudWifiOnly
         )
     }
 
@@ -1392,365 +1363,211 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    suspend fun buildEcosystemZipBytes(): ByteArray = withContext(Dispatchers.IO) {
-        val nowIso = Instant.now().toString()
-        val manifestJson = DailyOsHelpers.json.encodeToString(
-            EcosystemManifestDto(
-                version = 3,
-                app = "asisten-rem",
-                exportedAt = nowIso,
-                profileName = _uiState.value.profileName
-            )
-        )
-        val dailyJson = DailyOsHelpers.buildBackupJson(
-            habits = dailyOsDao.getAllHabits(),
-            todos = dailyOsDao.getAllTodos(),
-            coachMemory = _uiState.value.dailyOsState.coachMemory
-        )
-        val idekuJson = IdekuHelpers.buildExportJson(idekuDao.getAll())
-        val kronikJson = KronikHelpers.buildExportJson(kronikDao.getAllEntries())
-        val cuciJson = CuciMoneyHelpers.buildBackupJson(_uiState.value.cuciMoneyState)
-        val linkkuJson = LinkkuHelpers.buildExportJson(
-            links = linkkuDao.getAllLinks(),
-            categories = linkkuDao.getAllCategories(),
-            pinHash = linkkuPrefs.getString("lk_pin", null)
-        )
-        val asistenWrapper = AsistenBackupWrapperDto(
-            profileName = _uiState.value.profileName,
-            autoLearnMemory = _uiState.value.autoLearnMemory,
-            sessions = chatDao.getAllSessions().map {
-                AsistenBackupSessionDto(it.id, it.title, it.createdAt, it.updatedAt, it.rollingSummary, it.summarizedCount)
-            },
-            messages = chatDao.getAll().map {
-                AsistenBackupChatDto(it.role, it.content, it.expressionTag, it.createdAt, it.choicesJson, it.sessionId)
-            },
-            memories = userMemoryDao.getAllMemories().map {
-                AsistenBackupMemoryDto(it.category, it.factKey, it.factValue, it.confidence)
-            },
-            summaries = userMemoryDao.getAllSummaries().map {
-                AsistenBackupSummaryDto(it.summaryText, it.turnCount, it.createdAt)
-            },
-            memoryProfileJson = asistenPrefs.getString("asisten_memory_profile_json", null)
-        )
-        val asistenJson = DailyOsHelpers.json.encodeToString(asistenWrapper)
-
-        val entries = mapOf(
-            "manifest.json" to manifestJson,
-            "dailyos.json" to dailyJson,
-            "ideku.json" to idekuJson,
-            "kronik.json" to kronikJson,
-            "cucimoney.json" to cuciJson,
-            "linkku.json" to linkkuJson,
-            "asisten.json" to asistenJson
-        )
-
-        val baos = ByteArrayOutputStream()
-        ZipOutputStream(baos).use { zos ->
-            entries.forEach { (filename, content) ->
-                zos.putNextEntry(ZipEntry(filename))
-                zos.write(content.toByteArray(Charsets.UTF_8))
-                zos.closeEntry()
-            }
-        }
-
-        val stamp = SimpleDateFormat("dd MMM yyyy, HH:mm", Locale("in", "ID")).format(Date())
-        asistenPrefs.edit().putString("asisten_last_backup", stamp).apply()
-        _uiState.update { it.copy(lastBackupLabel = stamp) }
-        baos.toByteArray()
+    suspend fun buildEcosystemZipBytes(): ByteArray {
+        val bytes = backupRepository.buildEcosystemZipBytes(updateLocalStamp = true)
+        refreshAsistenPrefsIntoState()
+        return bytes
     }
 
     suspend fun importEcosystemZipBytes(
         zipBytes: ByteArray,
         replaceAll: Boolean,
         linkkuPin: String? = null
-    ): EcosystemZipImportResult = withContext(Dispatchers.IO) {
-        runCatching {
-            val files = mutableMapOf<String, String>()
-            ZipInputStream(ByteArrayInputStream(zipBytes)).use { zis ->
-                var entry = zis.nextEntry
-                while (entry != null) {
-                    if (!entry.isDirectory) {
-                        val name = entry.name.substringAfterLast('/')
-                        files[name] = zis.readBytes().toString(Charsets.UTF_8)
-                    }
-                    zis.closeEntry()
-                    entry = zis.nextEntry
-                }
-            }
-            if (files.isEmpty()) {
-                return@withContext EcosystemZipImportResult.Error("File ZIP kosong atau tidak valid")
-            }
+    ): EcosystemZipImportResult {
+        val res = backupRepository.importEcosystemZipBytes(zipBytes, replaceAll, linkkuPin)
+        if (res is EcosystemZipImportResult.Success) {
+            refreshAsistenPrefsIntoState()
+            refreshDailyOsPrefsIntoState()
+            refreshCuciPrefsIntoState()
+            refreshLinkkuPrefsIntoState()
+            _activeSessionId.value = res.latestSessionId ?: createSessionWithGreeting()
+        }
+        return res
+    }
 
-            // Cek apakah LinkKu memiliki tautan privat terenkripsi dan PIN belum diberikan
-            val linkkuRaw = files["linkku.json"]
-            if (!linkkuRaw.isNullOrBlank() && linkkuPin == null) {
-                val lkWrapper = runCatching {
-                    LinkkuHelpers.json.decodeFromString<LinkkuBackupWrapperDto>(linkkuRaw)
-                }.getOrNull()
-                if (lkWrapper != null && !lkWrapper.ep.isNullOrBlank()) {
-                    return@withContext EcosystemZipImportResult.NeedsPin(zipBytes, replaceAll)
-                }
-            }
+    suspend fun connectGoogleDrive(): CloudAuthResult {
+        val res = googleDriveClient.authorizeInteractive()
+        if (res is CloudAuthResult.Authorized) {
+            asistenPrefs.edit()
+                .putBoolean(CloudBackupPrefsKeys.PREF_CONNECTED, true)
+                .putString(CloudBackupPrefsKeys.PREF_LAST_STATUS, "Terhubung ke Google Drive")
+                .apply()
+            refreshAsistenPrefsIntoState()
+            refreshCloudRemoteInfo()
+        }
+        return res
+    }
 
-            var restoredModules = 0
+    suspend fun handleGoogleDriveAuthIntent(data: Intent?): CloudAuthResult {
+        val res = googleDriveClient.extractTokenFromIntent(data)
+        if (res is CloudAuthResult.Authorized) {
+            asistenPrefs.edit()
+                .putBoolean(CloudBackupPrefsKeys.PREF_CONNECTED, true)
+                .putString(CloudBackupPrefsKeys.PREF_LAST_STATUS, "Terhubung ke Google Drive")
+                .apply()
+            refreshAsistenPrefsIntoState()
+            refreshCloudRemoteInfo()
+        } else if (res is CloudAuthResult.Failure) {
+            asistenPrefs.edit()
+                .putString(CloudBackupPrefsKeys.PREF_LAST_STATUS, res.message)
+                .apply()
+            refreshAsistenPrefsIntoState()
+        }
+        return res
+    }
 
-            files["dailyos.json"]?.let { raw ->
-                runCatching {
-                    val (habits, todos, mem) = DailyOsHelpers.parseBackupJson(raw)
-                    if (replaceAll) {
-                        dailyOsDao.replaceAllData(habits, todos)
-                    } else {
-                        val existingHabits = dailyOsDao.getAllHabits().map { it.id }.toSet()
-                        val newHabits = habits.filter { it.id !in existingHabits }
-                        if (newHabits.isNotEmpty()) dailyOsDao.upsertHabits(newHabits)
-                        val existingTodos = dailyOsDao.getAllTodos().map { it.id }.toSet()
-                        val newTodos = todos.filter { it.id !in existingTodos }
-                        if (newTodos.isNotEmpty()) dailyOsDao.upsertTodos(newTodos)
-                    }
-                    if (mem != null && (replaceAll || _uiState.value.dailyOsState.coachMemory == null)) {
-                        dailyOsPrefs.edit()
-                            .putString("do_coach_memory", DailyOsHelpers.json.encodeToString(mem))
-                            .putString("do_memory_date", DailyOsHelpers.todayStr())
-                            .apply()
-                        refreshDailyOsPrefsIntoState()
-                    }
-                    restoredModules++
-                }
-            }
+    fun disconnectGoogleDrive() {
+        asistenPrefs.edit()
+            .putBoolean(CloudBackupPrefsKeys.PREF_CONNECTED, false)
+            .putString(CloudBackupPrefsKeys.PREF_LAST_STATUS, "Terputus dari Google Drive")
+            .apply()
+        _uiState.update { it.copy(cloudState = it.cloudState.copy(remoteBackupInfo = null)) }
+        refreshAsistenPrefsIntoState()
+    }
 
-            files["ideku.json"]?.let { raw ->
-                runCatching {
-                    val imported = IdekuHelpers.parseImportJson(raw)
-                    if (replaceAll) idekuDao.clearAll()
-                    val existingIds = if (replaceAll) emptySet() else idekuDao.getAll().map { it.id }.toSet()
-                    val fresh = imported.filter { it.id !in existingIds }
-                    if (fresh.isNotEmpty()) {
-                        idekuDao.upsertAll(fresh)
-                        fresh.filter { it.type == "Wishlist" }.forEach { syncIdekuWishlistToCuciMoney(it) }
-                    }
-                    restoredModules++
-                }
-            }
-
-            files["kronik.json"]?.let { raw ->
-                runCatching {
-                    val imported = KronikHelpers.parseImportEntries(raw)
-                    if (replaceAll) kronikDao.clearAll()
-                    val existingIds = if (replaceAll) emptySet() else kronikDao.getAllEntries().map { it.id }.toSet()
-                    val fresh = imported.filter { it.id !in existingIds }
-                    if (fresh.isNotEmpty()) kronikDao.upsertAll(fresh)
-                    restoredModules++
-                }
-            }
-
-            files["cucimoney.json"]?.let { raw ->
-                runCatching {
-                    val wrapper = CuciMoneyHelpers.parseBackupJson(raw)
-                    val books = wrapper.db.books.map {
-                        CuciBookEntity(it.id, it.name, CuciMoneyHelpers.encodeAccountIds(it.accountIds))
-                    }.ifEmpty { CuciMoneyHelpers.DEFAULT_BOOKS }
-                    val accounts = wrapper.db.accounts.map {
-                        CuciAccountEntity(it.id, it.name, it.type, it.icon, it.balance, it.notes, it.useInBook, it.includeAsset, it.isSavings)
-                    }.ifEmpty { CuciMoneyHelpers.DEFAULT_ACCOUNTS }
-                    val categories = wrapper.db.categories.mapIndexed { idx, c ->
-                        CuciCategoryEntity(c.id, c.name, c.type, c.emoji, idx)
-                    }.ifEmpty { CuciMoneyHelpers.DEFAULT_CATEGORIES }
-                    val members = wrapper.db.members.mapIndexed { idx, m ->
-                        CuciMemberEntity(m.id, m.name, m.emoji, idx)
-                    }.ifEmpty { CuciMoneyHelpers.DEFAULT_MEMBERS }
-                    val transactions = wrapper.db.transactions.map {
-                        CuciTransactionEntity(it.id, it.bookId, it.title, it.amount, it.direction, it.categoryId, it.accountId, it.date, it.memberId, it.transferPair, it.savingsPot, it.createdAt)
-                    }
-                    val budgets = wrapper.masterBudgets.map {
-                        CuciMasterBudgetEntity(it.id, it.bookId, it.month, it.year, it.limit, it.startDate, it.endDate, it.note)
-                    }
-                    val wishlists = wrapper.savings.pots.values.map { p ->
-                        CuciWishlistEntity(
-                            id = p.wishId.ifBlank { "wish_${CuciMoneyHelpers.generateId()}" },
-                            title = p.snap?.title ?: "Wishlist",
-                            price = p.snap?.price ?: 0L,
-                            priority = "Nanti",
-                            image = p.snap?.image ?: "bag",
-                            status = if (p.realizedAt != null) "Selesai" else "Belum",
-                            saved = p.saved,
-                            realizedAt = p.realizedAt,
-                            realizedAmount = p.realizedAmount,
-                            historyJson = CuciMoneyHelpers.encodeWishlistHistory(p.history)
+    suspend fun refreshCloudRemoteInfo() {
+        _uiState.update { it.copy(cloudState = it.cloudState.copy(isSyncing = true)) }
+        when (val res = googleDriveClient.getRemoteBackupInfo()) {
+            is CloudSyncResult.Success -> {
+                _uiState.update {
+                    it.copy(
+                        cloudState = it.cloudState.copy(
+                            connected = true,
+                            remoteBackupInfo = res.data,
+                            isSyncing = false
                         )
-                    }
-                    if (replaceAll) {
-                        cuciMoneyDao.replaceAllData(books, accounts, categories, members, transactions, budgets, wishlists)
-                        cuciPrefs.edit().putLong("cm_book_id", books.first().id).apply()
-                    } else {
-                        val existingBookIds = cuciMoneyDao.getAllBooks().map { it.id }.toSet()
-                        books.filter { it.id !in existingBookIds }.forEach { cuciMoneyDao.upsertBook(it) }
-                        val existingAccIds = cuciMoneyDao.getAllAccounts().map { it.id }.toSet()
-                        accounts.filter { it.id !in existingAccIds }.forEach { cuciMoneyDao.upsertAccount(it) }
-                        val existingCatIds = cuciMoneyDao.getAllCategories().map { it.id }.toSet()
-                        val newCats = categories.filter { it.id !in existingCatIds }
-                        if (newCats.isNotEmpty()) cuciMoneyDao.upsertCategories(newCats)
-                        val existingTrxIds = cuciMoneyDao.getAllTransactions().map { it.id }.toSet()
-                        val newTrxs = transactions.filter { it.id !in existingTrxIds }
-                        if (newTrxs.isNotEmpty()) cuciMoneyDao.upsertTransactions(newTrxs)
-                        val existingWishIds = cuciMoneyDao.getAllWishlists().map { it.id }.toSet()
-                        wishlists.filter { it.id !in existingWishIds }.forEach { cuciMoneyDao.upsertWishlist(it) }
-                    }
-                    refreshCuciPrefsIntoState()
-                    restoredModules++
+                    )
                 }
             }
+            CloudSyncResult.NeedsReauth -> {
+                asistenPrefs.edit()
+                    .putBoolean(CloudBackupPrefsKeys.PREF_CONNECTED, false)
+                    .putString(CloudBackupPrefsKeys.PREF_LAST_STATUS, "Perlu hubungkan ulang Google Drive")
+                    .apply()
+                _uiState.update { it.copy(cloudState = it.cloudState.copy(isSyncing = false)) }
+                refreshAsistenPrefsIntoState()
+            }
+            is CloudSyncResult.Failure -> {
+                asistenPrefs.edit()
+                    .putString(CloudBackupPrefsKeys.PREF_LAST_STATUS, res.message)
+                    .apply()
+                _uiState.update { it.copy(cloudState = it.cloudState.copy(isSyncing = false)) }
+                refreshAsistenPrefsIntoState()
+            }
+        }
+    }
 
-            if (!linkkuRaw.isNullOrBlank()) {
-                val wrapper = runCatching {
-                    LinkkuHelpers.json.decodeFromString<LinkkuBackupWrapperDto>(linkkuRaw)
-                }.getOrNull()
-                if (wrapper != null) {
-                    if (replaceAll) {
-                        linkkuDao.clearAllLinks()
-                        linkkuDao.clearAllCategories()
-                    }
-                    val pubDtos = wrapper.L.ifEmpty { wrapper.links }
-                    var incomingLinks = pubDtos.map { it.toEntity() }
-                    var incomingPrivCats = wrapper.PC.map {
-                        LinkkuCategoryEntity(id = it.id, name = it.n, isPrivate = true)
-                    }
-                    if (!wrapper.ep.isNullOrBlank() && !linkkuPin.isNullOrBlank()) {
-                        val pinHash = LinkkuCrypto.hashPin(linkkuPin)
-                        val decJson = runCatching {
-                            LinkkuCrypto.decryptPrivatePayload(wrapper.ep, pinHash)
-                        }.getOrElse {
-                            return@withContext EcosystemZipImportResult.Error("PIN LinkKu salah atau gagal membuka tautan privat")
-                        }
-                        val privPayload = LinkkuHelpers.json.decodeFromString<LinkkuEncryptedPrivatePayloadDto>(decJson)
-                        incomingLinks = incomingLinks + privPayload.links.map { it.toEntity() }
-                        incomingPrivCats = privPayload.cats.map {
-                            LinkkuCategoryEntity(id = it.id, name = it.n, isPrivate = true)
-                        }
-                        linkkuPrefs.edit().putString("lk_pin", pinHash).apply()
-                        refreshLinkkuPrefsIntoState()
-                    }
-                    val existingLinkIds = linkkuDao.getAllLinks().map { it.id }.toSet()
-                    val newLinks = incomingLinks.filter { it.id !in existingLinkIds }
-                    if (newLinks.isNotEmpty()) linkkuDao.upsertLinks(newLinks)
-                    val existingCatIds = linkkuDao.getAllCategories().map { it.id }.toSet()
-                    val pubCats = wrapper.C.ifEmpty { wrapper.cats }
-                        .map { LinkkuCategoryEntity(id = it.id, name = it.n, isPrivate = false) }
-                    val newCats = (pubCats + incomingPrivCats).filter { it.id.isNotBlank() && it.id !in existingCatIds }
-                    if (newCats.isNotEmpty()) linkkuDao.upsertCategories(newCats)
-                    restoredModules++
-                }
+    suspend fun backupToCloudNow(): String {
+        _uiState.update { it.copy(cloudState = it.cloudState.copy(isSyncing = true)) }
+        return try {
+            val zipBytes = backupRepository.buildEcosystemZipBytes(updateLocalStamp = false)
+            val passphrase = ApiKeyStore.getCloudPassphrase(getApplication())
+            val (payload, encrypted) = if (passphrase.isNotEmpty()) {
+                CloudBackupCrypto.encrypt(zipBytes, passphrase) to true
+            } else {
+                zipBytes to false
             }
 
-            files["asisten.json"]?.let { raw ->
-                runCatching {
-                    val wrapper = DailyOsHelpers.json.decodeFromString<AsistenBackupWrapperDto>(raw)
-                    if (wrapper.profileName.isNotBlank()) {
-                        asistenPrefs.edit().putString("asisten_profile_name", wrapper.profileName.trim()).apply()
-                    }
-                    asistenPrefs.edit().putBoolean("asisten_auto_learn", wrapper.autoLearnMemory).apply()
-                    if (!wrapper.memoryProfileJson.isNullOrBlank()) {
-                        asistenPrefs.edit().putString("asisten_memory_profile_json", wrapper.memoryProfileJson).apply()
-                    } else if (replaceAll) {
-                        asistenPrefs.edit().remove("asisten_memory_profile_json").apply()
+            when (val res = googleDriveClient.uploadBackup(payload, encrypted)) {
+                is CloudSyncResult.Success -> {
+                    val stamp = SimpleDateFormat("dd MMM yyyy, HH:mm", Locale("in", "ID")).format(Date())
+                    asistenPrefs.edit()
+                        .putBoolean(CloudBackupPrefsKeys.PREF_CONNECTED, true)
+                        .putString(CloudBackupPrefsKeys.PREF_LAST_BACKUP, stamp)
+                        .putString(CloudBackupPrefsKeys.PREF_LAST_STATUS, "Cadangan terakhir berhasil ($stamp)")
+                        .apply()
+                    _uiState.update {
+                        it.copy(cloudState = it.cloudState.copy(remoteBackupInfo = res.data, isSyncing = false))
                     }
                     refreshAsistenPrefsIntoState()
-
-                    if (replaceAll) {
-                        chatDao.clearAll()
-                        chatDao.clearAllSessions()
-                        userMemoryDao.clearAll()
-                        userMemoryDao.clearSummaries()
-                    }
-                    wrapper.memories.forEach { m ->
-                        if (m.factKey.isNotBlank() && m.factValue.isNotBlank()) {
-                            userMemoryDao.upsertByFactKey(m.category, m.factKey, m.factValue, m.confidence, null)
-                        }
-                    }
-                    val existingSummaries = userMemoryDao.getAllSummaries().map { it.summaryText }.toSet()
-                    wrapper.summaries.filter { it.summaryText !in existingSummaries }.forEach { s ->
-                        userMemoryDao.insertSummary(
-                            ConversationSummaryEntity(
-                                summaryText = s.summaryText,
-                                turnCount = s.turnCount,
-                                createdAt = if (s.createdAt > 0L) s.createdAt else System.currentTimeMillis()
-                            )
-                        )
-                    }
-                    val existingSessions = chatDao.getAllSessions().associateBy { it.id }
-                    val sessionIdMap = mutableMapOf<Long, Long>()
-                    val nowTs = System.currentTimeMillis()
-                    wrapper.sessions.forEach { s ->
-                        val title = s.title.ifBlank { "Obrolan" }
-                        val created = if (s.createdAt > 0L) s.createdAt else nowTs
-                        val updated = if (s.updatedAt > 0L) s.updatedAt else created
-                        val existing = existingSessions[s.id]
-                        if (s.id > 0L && existing == null) {
-                            chatDao.insertSession(
-                                ChatSessionEntity(
-                                    id = s.id,
-                                    title = title,
-                                    createdAt = created,
-                                    updatedAt = updated,
-                                    rollingSummary = s.rollingSummary,
-                                    summarizedCount = s.summarizedCount
-                                )
-                            )
-                            sessionIdMap[s.id] = s.id
-                        } else if (existing != null && existing.title == title) {
-                            sessionIdMap[s.id] = existing.id
-                        } else {
-                            val newId = chatDao.insertSession(
-                                ChatSessionEntity(
-                                    title = title,
-                                    createdAt = created,
-                                    updatedAt = updated,
-                                    rollingSummary = s.rollingSummary,
-                                    summarizedCount = s.summarizedCount
-                                )
-                            )
-                            sessionIdMap[s.id] = newId
-                        }
-                    }
-                    var fallbackSessionId = sessionIdMap.values.firstOrNull() ?: chatDao.getAllSessions().firstOrNull()?.id
-                    if (fallbackSessionId == null && wrapper.messages.isNotEmpty()) {
-                        val minTs = wrapper.messages.minOfOrNull { it.createdAt }?.takeIf { it > 0L } ?: nowTs
-                        val maxTs = wrapper.messages.maxOfOrNull { it.createdAt }?.takeIf { it > 0L } ?: minTs
-                        fallbackSessionId = chatDao.insertSession(
-                            ChatSessionEntity(title = "Obrolan Sebelumnya", createdAt = minTs, updatedAt = maxTs)
-                        )
-                    }
-                    val existingMsgKeys = chatDao.getAll().map { "${it.createdAt}_${it.role}" }.toSet()
-                    val freshMsgs = wrapper.messages
-                        .filter { "${it.createdAt}_${it.role}" !in existingMsgKeys }
-                        .map {
-                            val resolvedSid = sessionIdMap[it.sessionId] ?: fallbackSessionId ?: 1L
-                            ChatMessageEntity(
-                                sessionId = resolvedSid,
-                                role = it.role,
-                                content = it.content,
-                                expressionTag = it.expressionTag,
-                                createdAt = if (it.createdAt > 0L) it.createdAt else nowTs,
-                                choicesJson = it.choicesJson
-                            )
-                        }
-                    if (freshMsgs.isNotEmpty()) {
-                        chatDao.insertAll(freshMsgs)
-                    }
-                    val latestSid = chatDao.getAllSessions().firstOrNull()?.id ?: createSessionWithGreeting()
-                    _activeSessionId.value = latestSid
-                    restoredModules++
+                    "Cadangan berhasil diunggah ke Google Drive"
+                }
+                CloudSyncResult.NeedsReauth -> {
+                    asistenPrefs.edit()
+                        .putBoolean(CloudBackupPrefsKeys.PREF_CONNECTED, false)
+                        .putString(CloudBackupPrefsKeys.PREF_LAST_STATUS, "Izin Google Drive habis. Hubungkan ulang.")
+                        .apply()
+                    _uiState.update { it.copy(cloudState = it.cloudState.copy(isSyncing = false)) }
+                    refreshAsistenPrefsIntoState()
+                    "Izin Google Drive habis, silakan hubungkan ulang akun"
+                }
+                is CloudSyncResult.Failure -> {
+                    asistenPrefs.edit()
+                        .putString(CloudBackupPrefsKeys.PREF_LAST_STATUS, res.message)
+                        .apply()
+                    _uiState.update { it.copy(cloudState = it.cloudState.copy(isSyncing = false)) }
+                    refreshAsistenPrefsIntoState()
+                    res.message
                 }
             }
-
-            if (restoredModules == 0) {
-                EcosystemZipImportResult.Error("Tidak ada modul Asisten Rem yang dikenali di dalam ZIP")
-            } else {
-                val modeLabel = if (replaceAll) "Replace" else "Merge"
-                EcosystemZipImportResult.Success("Restore ZIP ($modeLabel) berhasil untuk $restoredModules modul")
-            }
-        }.getOrElse { err ->
-            EcosystemZipImportResult.Error("Gagal membaca ZIP: ${err.message}")
+        } catch (t: Throwable) {
+            val msg = "Gagal membuat cadangan cloud: ${t.message}"
+            asistenPrefs.edit().putString(CloudBackupPrefsKeys.PREF_LAST_STATUS, msg).apply()
+            _uiState.update { it.copy(cloudState = it.cloudState.copy(isSyncing = false)) }
+            refreshAsistenPrefsIntoState()
+            msg
         }
+    }
+
+    suspend fun prepareCloudRestore(): CloudRestoreFetchResult {
+        _uiState.update { it.copy(cloudState = it.cloudState.copy(isSyncing = true)) }
+        return try {
+            val remoteInfo = when (val infoRes = googleDriveClient.getRemoteBackupInfo()) {
+                is CloudSyncResult.Success -> infoRes.data
+                CloudSyncResult.NeedsReauth -> {
+                    asistenPrefs.edit()
+                        .putBoolean(CloudBackupPrefsKeys.PREF_CONNECTED, false)
+                        .putString(CloudBackupPrefsKeys.PREF_LAST_STATUS, "Izin Google Drive habis. Hubungkan ulang.")
+                        .apply()
+                    refreshAsistenPrefsIntoState()
+                    return CloudRestoreFetchResult.NeedsReauth
+                }
+                is CloudSyncResult.Failure -> return CloudRestoreFetchResult.Error(infoRes.message)
+            } ?: return CloudRestoreFetchResult.Error("Belum ada file cadangan tersimpan di Google Drive")
+
+            _uiState.update { it.copy(cloudState = it.cloudState.copy(remoteBackupInfo = remoteInfo)) }
+
+            when (val dl = googleDriveClient.downloadBackup(remoteInfo.fileId)) {
+                is CloudSyncResult.Success -> {
+                    val rawBytes = dl.data
+                    if (CloudBackupCrypto.isEncrypted(rawBytes)) {
+                        val savedPass = ApiKeyStore.getCloudPassphrase(getApplication())
+                        if (savedPass.isNotEmpty()) {
+                            val dec = runCatching { CloudBackupCrypto.decrypt(rawBytes, savedPass) }.getOrNull()
+                            if (dec != null) {
+                                CloudRestoreFetchResult.Ready(dec)
+                            } else {
+                                CloudRestoreFetchResult.NeedsPassphrase(rawBytes, wrongSavedPassphrase = true)
+                            }
+                        } else {
+                            CloudRestoreFetchResult.NeedsPassphrase(rawBytes, wrongSavedPassphrase = false)
+                        }
+                    } else {
+                        CloudRestoreFetchResult.Ready(rawBytes)
+                    }
+                }
+                CloudSyncResult.NeedsReauth -> CloudRestoreFetchResult.NeedsReauth
+                is CloudSyncResult.Failure -> CloudRestoreFetchResult.Error(dl.message)
+            }
+        } finally {
+            _uiState.update { it.copy(cloudState = it.cloudState.copy(isSyncing = false)) }
+        }
+    }
+
+    fun decryptCloudBytesWithPassphrase(encryptedBytes: ByteArray, passphrase: String): Result<ByteArray> =
+        runCatching { CloudBackupCrypto.decrypt(encryptedBytes, passphrase) }
+
+    fun setCloudAutoSchedule(schedule: String, wifiOnly: Boolean) {
+        asistenPrefs.edit()
+            .putString(CloudBackupPrefsKeys.PREF_AUTO_SCHEDULE, schedule)
+            .putBoolean(CloudBackupPrefsKeys.PREF_WIFI_ONLY, wifiOnly)
+            .apply()
+        refreshAsistenPrefsIntoState()
+    }
+
+    fun setCloudPassphrase(passphrase: String) {
+        ApiKeyStore.setCloudPassphrase(passphrase, getApplication())
+        refreshAsistenPrefsIntoState()
     }
 
     private fun checkAndRefreshCoachMemoryInBackground() {

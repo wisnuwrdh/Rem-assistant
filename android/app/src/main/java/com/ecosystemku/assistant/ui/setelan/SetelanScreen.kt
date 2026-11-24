@@ -15,11 +15,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.CloudDone
+import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.CloudOff
+import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Download
@@ -30,6 +35,7 @@ import androidx.compose.material.icons.outlined.NorthEast
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Upload
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.HorizontalDivider
@@ -68,11 +74,14 @@ import com.ecosystemku.assistant.ui.theme.TextSubtle
 import com.ecosystemku.assistant.ui.theme.UiSans
 
 import android.Manifest
+import android.app.Activity
 import android.app.TimePickerDialog
+import android.content.Intent
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
@@ -92,11 +101,13 @@ import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.RestartAlt
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -112,6 +123,11 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.ecosystemku.assistant.BuildConfig
+import com.ecosystemku.assistant.data.backup.EcosystemZipImportResult
+import com.ecosystemku.assistant.data.cloud.CloudAuthResult
+import com.ecosystemku.assistant.data.cloud.CloudBackupUiState
+import com.ecosystemku.assistant.data.cloud.CloudRestoreFetchResult
 import com.ecosystemku.assistant.data.local.AiConfigField
 import com.ecosystemku.assistant.data.local.AiConfigSnapshot
 import com.ecosystemku.assistant.data.local.ConversationSummaryEntity
@@ -119,7 +135,6 @@ import com.ecosystemku.assistant.data.local.UserMemoryEntity
 import com.ecosystemku.assistant.data.network.MemoryProfileData
 import com.ecosystemku.assistant.device.AndroidDeviceBridge
 import com.ecosystemku.assistant.notifications.DailyOsNotificationHelper
-import com.ecosystemku.assistant.ui.asisten.EcosystemZipImportResult
 import java.io.File
 import java.text.SimpleDateFormat
 import java.time.LocalDate
@@ -180,6 +195,16 @@ fun SetelanScreen(
     onImportZip: suspend (ByteArray, Boolean, String?) -> EcosystemZipImportResult = { _, _, _ ->
         EcosystemZipImportResult.Error("Belum terhubung")
     },
+    cloudState: CloudBackupUiState = CloudBackupUiState(),
+    onConnectCloud: suspend () -> CloudAuthResult = { CloudAuthResult.Failure("Belum terhubung") },
+    onHandleCloudAuthIntent: suspend (Intent?) -> CloudAuthResult = { CloudAuthResult.Failure("Belum terhubung") },
+    onDisconnectCloud: () -> Unit = {},
+    onRefreshCloudInfo: suspend () -> Unit = {},
+    onCloudBackupNow: suspend () -> String = { "Belum terhubung" },
+    onPrepareCloudRestore: suspend () -> CloudRestoreFetchResult = { CloudRestoreFetchResult.Error("Belum terhubung") },
+    onDecryptCloudBytes: (ByteArray, String) -> Result<ByteArray> = { _, _ -> Result.failure(IllegalStateException("Belum terhubung")) },
+    onSetCloudAutoSchedule: (String, Boolean) -> Unit = { _, _ -> },
+    onSetCloudPassphrase: (String) -> Unit = {},
     onShowBanner: (String) -> Unit = {},
     onResetKronik: () -> Unit = {},
     onResetLinkku: () -> Unit = {},
@@ -200,9 +225,27 @@ fun SetelanScreen(
         if (uri != null) onPickStageWallpaper(uri)
     }
 
+    val cloudAuthLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult()
+    ) { res ->
+        if (res.resultCode == Activity.RESULT_OK) {
+            scope.launch {
+                when (val authRes = onHandleCloudAuthIntent(res.data)) {
+                    is CloudAuthResult.Authorized -> onShowBanner("Google Drive berhasil dihubungkan")
+                    is CloudAuthResult.Failure -> onShowBanner(authRes.message)
+                    is CloudAuthResult.NeedsResolution -> onShowBanner("Izin Google Drive belum selesai")
+                }
+            }
+        } else {
+            onShowBanner("Otorisasi Google Drive dibatalkan")
+        }
+    }
+
     var showProfileDialog by remember { mutableStateOf(false) }
     var profileInput by remember(profileName) { mutableStateOf(profileName) }
     var showMemoryProfileDialog by remember { mutableStateOf(false) }
+    var showMemoryManagerDialog by remember { mutableStateOf(false) }
+    var showCloudBackupDialog by remember { mutableStateOf(false) }
 
     var editingAiField by remember { mutableStateOf<AiConfigField?>(null) }
     var aiFieldInput by remember { mutableStateOf("") }
@@ -664,6 +707,63 @@ fun SetelanScreen(
         )
     }
 
+    if (showMemoryManagerDialog) {
+        MemoryManagerDialog(
+            memories = memories,
+            summaries = summaries,
+            onDeleteMemory = onDeleteMemory,
+            onDeleteSummary = onDeleteSummary,
+            onClearAll = onClearMemories,
+            onDismiss = { showMemoryManagerDialog = false }
+        )
+    }
+
+    if (showCloudBackupDialog) {
+        CloudBackupDialog(
+            cloudState = cloudState,
+            onConnect = {
+                scope.launch {
+                    when (val authRes = onConnectCloud()) {
+                        is CloudAuthResult.Authorized -> onShowBanner("Google Drive berhasil dihubungkan")
+                        is CloudAuthResult.NeedsResolution -> cloudAuthLauncher.launch(
+                            IntentSenderRequest.Builder(authRes.intentSender).build()
+                        )
+                        is CloudAuthResult.Failure -> onShowBanner(authRes.message)
+                    }
+                }
+            },
+            onDisconnect = onDisconnectCloud,
+            onRefreshInfo = { scope.launch { onRefreshCloudInfo() } },
+            onBackupNow = {
+                scope.launch {
+                    val msg = onCloudBackupNow()
+                    onShowBanner(msg)
+                }
+            },
+            onPrepareRestore = onPrepareCloudRestore,
+            onDecryptBytes = onDecryptCloudBytes,
+            onImportPlainZip = { zipBytes, replaceAll ->
+                val res = onImportZip(zipBytes, replaceAll, null)
+                when (res) {
+                    is EcosystemZipImportResult.Success -> {
+                        showCloudBackupDialog = false
+                        onShowBanner(res.summary)
+                    }
+                    is EcosystemZipImportResult.NeedsPin -> {
+                        pinInput = ""
+                        pendingPinPayload = res
+                        showCloudBackupDialog = false
+                    }
+                    is EcosystemZipImportResult.Error -> onShowBanner(res.message)
+                }
+            },
+            onSetAutoSchedule = onSetCloudAutoSchedule,
+            onSetPassphrase = onSetCloudPassphrase,
+            onShowBanner = onShowBanner,
+            onDismiss = { showCloudBackupDialog = false }
+        )
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -996,134 +1096,45 @@ fun SetelanScreen(
 
                         HorizontalDivider(thickness = 1.dp, color = BorderSubtle)
 
-                        // Daftar fakta tersimpan
-                        if (memories.isEmpty()) {
-                            Text(
-                                text = "Belum ada fakta personal tersimpan. Ngobrol dengan Rem atau tambahkan manual di atas.",
-                                fontFamily = UiSans,
-                                fontSize = 11.5.sp,
-                                lineHeight = 17.sp,
-                                color = TextSubtle
-                            )
+                        val memoryManagerSub = if (memories.isEmpty() && summaries.isEmpty()) {
+                            "Belum ada fakta personal atau rangkuman sesi"
                         } else {
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                memories.forEach { item ->
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(11.dp))
-                                            .background(ElevatedSurface)
-                                            .border(1.dp, BorderSubtle, RoundedCornerShape(11.dp))
-                                            .padding(horizontal = 10.dp, vertical = 8.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Row(
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Text(
-                                                    text = item.category.uppercase(),
-                                                    fontFamily = UiSans,
-                                                    fontSize = 9.5.sp,
-                                                    fontWeight = FontWeight.SemiBold,
-                                                    color = AccentBlue
-                                                )
-                                                Text(
-                                                    text = "• ${item.factKey}",
-                                                    fontFamily = UiSans,
-                                                    fontSize = 10.5.sp,
-                                                    color = TextSubtle,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
-                                            }
-                                            Spacer(modifier = Modifier.height(2.dp))
-                                            Text(
-                                                text = item.factValue,
-                                                fontFamily = UiSans,
-                                                fontSize = 12.5.sp,
-                                                color = TextPrimary
-                                            )
-                                        }
-                                        Icon(
-                                            imageVector = Icons.Outlined.Close,
-                                            contentDescription = "Hapus Memori",
-                                            tint = TextMuted,
-                                            modifier = Modifier
-                                                .padding(start = 8.dp)
-                                                .size(16.dp)
-                                                .clickable { onDeleteMemory(item.id) }
-                                        )
-                                    }
-                                }
-                            }
+                            "${memories.size} fakta personal • ${summaries.size} rangkuman sesi"
                         }
-
-                        // Daftar rangkuman sesi
-                        if (summaries.isNotEmpty()) {
-                            HorizontalDivider(thickness = 1.dp, color = BorderSubtle)
-                            Text(
-                                text = "Rangkuman Sesi Percakapan",
-                                fontFamily = UiSans,
-                                fontSize = 11.5.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = TextMuted
-                            )
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                summaries.forEach { s ->
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(11.dp))
-                                            .background(ElevatedSurface)
-                                            .border(1.dp, BorderSubtle, RoundedCornerShape(11.dp))
-                                            .padding(horizontal = 10.dp, vertical = 8.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            text = s.summaryText,
-                                            fontFamily = UiSans,
-                                            fontSize = 12.sp,
-                                            lineHeight = 17.sp,
-                                            color = TextPrimary,
-                                            modifier = Modifier.weight(1f)
-                                        )
-                                        Icon(
-                                            imageVector = Icons.Outlined.Close,
-                                            contentDescription = "Hapus Rangkuman",
-                                            tint = TextMuted,
-                                            modifier = Modifier
-                                                .padding(start = 8.dp)
-                                                .size(16.dp)
-                                                .clickable { onDeleteSummary(s.id) }
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        if (memories.isNotEmpty() || summaries.isNotEmpty()) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(SemanticDanger.copy(alpha = 0.08f))
-                                    .border(1.dp, SemanticDanger.copy(alpha = 0.3f), RoundedCornerShape(10.dp))
-                                    .clickable { onClearMemories() }
-                                    .padding(vertical = 8.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(ElevatedSurface)
+                                .border(1.dp, BorderSubtle, RoundedCornerShape(12.dp))
+                                .clickable { showMemoryManagerDialog = true }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Bersihkan Semua Memori & Rangkuman",
+                                    text = "Kelola Fakta & Rangkuman",
                                     fontFamily = UiSans,
-                                    fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = SemanticDanger
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = TextPrimary
+                                )
+                                Text(
+                                    text = memoryManagerSub,
+                                    fontFamily = UiSans,
+                                    fontSize = 11.sp,
+                                    color = TextMuted,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
+                            Icon(
+                                imageVector = Icons.Outlined.ChevronRight,
+                                contentDescription = "Buka Kelola Fakta & Rangkuman",
+                                tint = TextMuted,
+                                modifier = Modifier.size(18.dp)
+                            )
                         }
                     }
                 }
@@ -1329,18 +1340,73 @@ fun SetelanScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable {
-                                    onShowBanner("Cloud Backup Google Drive dijadwalkan pada v1.1. Gunakan Export ZIP v3 untuk backup lokal.")
-                                },
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(ElevatedSurface)
+                                .border(1.dp, BorderSubtle, RoundedCornerShape(12.dp))
+                                .clickable { showCloudBackupDialog = true }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Icon(Icons.Outlined.CloudOff, contentDescription = null, tint = TextSubtle, modifier = Modifier.size(16.dp))
-                                Text("Cloud Backup (Google Drive)", fontFamily = UiSans, fontSize = 12.sp, color = TextMuted)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    imageVector = if (cloudState.connected) Icons.Outlined.CloudDone else Icons.Outlined.CloudOff,
+                                    contentDescription = null,
+                                    tint = if (cloudState.connected) SemanticSuccess else TextMuted,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Column {
+                                    Text(
+                                        text = "Cloud Backup (Google Drive)",
+                                        fontFamily = UiSans,
+                                        fontSize = 12.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = TextPrimary
+                                    )
+                                    val cloudSub = when {
+                                        cloudState.isSyncing -> "Menyinkronkan…"
+                                        cloudState.connected -> {
+                                            val autoTag = when (cloudState.autoSchedule) {
+                                                "daily" -> "Auto Harian"
+                                                "weekly" -> "Auto Mingguan"
+                                                else -> "Manual"
+                                            }
+                                            "$autoTag • ${cloudState.lastBackupLabel}"
+                                        }
+                                        else -> "Ketuk untuk hubungkan Google Drive"
+                                    }
+                                    Text(
+                                        text = cloudSub,
+                                        fontFamily = UiSans,
+                                        fontSize = 11.sp,
+                                        color = TextMuted,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                             }
-                            NestedPill {
-                                Text("Segera Hadir (v1.1)", fontFamily = UiSans, fontSize = 10.5.sp, color = TextMuted)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                NestedPill {
+                                    Text(
+                                        text = if (cloudState.connected) "Terhubung" else "Atur",
+                                        fontFamily = UiSans,
+                                        fontSize = 10.5.sp,
+                                        color = if (cloudState.connected) SemanticSuccess else AccentBlue
+                                    )
+                                }
+                                Icon(
+                                    imageVector = Icons.Outlined.ChevronRight,
+                                    contentDescription = "Buka Cloud Backup",
+                                    tint = TextMuted,
+                                    modifier = Modifier.size(18.dp)
+                                )
                             }
                         }
                     }
@@ -1823,11 +1889,17 @@ fun SetelanScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column {
-                                Text("Asisten Rem v1.0.0 (Build 1)", fontFamily = UiSans, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                                Text(
+                                    text = "Asisten Rem v${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE})",
+                                    fontFamily = UiSans,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = TextPrimary
+                                )
                                 Text("Android Native Super App • Kotlin Compose", fontFamily = UiSans, fontSize = 11.sp, color = TextMuted)
                             }
                             NestedPill {
-                                Text("Android v1", fontFamily = UiSans, fontSize = 10.5.sp, color = TextMuted)
+                                Text("v${BuildConfig.VERSION_NAME}", fontFamily = UiSans, fontSize = 10.5.sp, color = TextMuted)
                             }
                         }
 
@@ -2248,3 +2320,1149 @@ private fun MemoryProfileSummaryDialog(
         }
     }
 }
+
+@Composable
+private fun MemoryManagerDialog(
+    memories: List<UserMemoryEntity>,
+    summaries: List<ConversationSummaryEntity>,
+    onDeleteMemory: (Long) -> Unit,
+    onDeleteSummary: (Long) -> Unit,
+    onClearAll: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    var selectedTab by remember { mutableStateOf(0) }
+    var searchQuery by remember { mutableStateOf("") }
+    var selectedCategory by remember { mutableStateOf("semua") }
+    var menuOpen by remember { mutableStateOf(false) }
+    var confirmClearAll by remember { mutableStateOf(false) }
+
+    val dateFormatter = remember { SimpleDateFormat("dd MMM, HH:mm", Locale("in", "ID")) }
+    val categories = remember { listOf("semua", "identitas", "preferensi", "kebiasaan", "tujuan", "catatan") }
+
+    val query = searchQuery.trim()
+    val filteredMemories = remember(memories, selectedCategory, query) {
+        memories.filter { item ->
+            val catOk = selectedCategory == "semua" || item.category.equals(selectedCategory, ignoreCase = true)
+            val queryOk = query.isEmpty() ||
+                item.factKey.contains(query, ignoreCase = true) ||
+                item.factValue.contains(query, ignoreCase = true) ||
+                item.category.contains(query, ignoreCase = true)
+            catOk && queryOk
+        }
+    }
+    val filteredSummaries = remember(summaries, query) {
+        summaries.filter { item ->
+            query.isEmpty() || item.summaryText.contains(query, ignoreCase = true)
+        }
+    }
+
+    if (confirmClearAll) {
+        AlertDialog(
+            onDismissRequest = { confirmClearAll = false },
+            containerColor = SecondarySurface,
+            title = {
+                Text("Hapus Semua Memori?", fontFamily = UiSans, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+            },
+            text = {
+                Text(
+                    text = "Seluruh fakta personal (${memories.size}) dan rangkuman sesi (${summaries.size}) akan dihapus permanen dari SQLite.",
+                    fontFamily = UiSans,
+                    fontSize = 13.sp,
+                    color = TextMuted
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmClearAll = false
+                    onClearAll()
+                }) {
+                    Text("Hapus Semua", color = SemanticDanger, fontFamily = UiSans, fontWeight = FontWeight.SemiBold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmClearAll = false }) {
+                    Text("Batal", color = TextMuted, fontFamily = UiSans)
+                }
+            }
+        )
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(DominantBg)
+                .statusBarsPadding()
+        ) {
+            // Top bar
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(DominantBg.copy(alpha = 0.96f))
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(ElevatedSurface)
+                        .border(1.dp, BorderLight, CircleShape)
+                        .clickable(onClick = onDismiss),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
+                        contentDescription = "Kembali",
+                        tint = TextPrimary,
+                        modifier = Modifier.size(19.dp)
+                    )
+                }
+
+                Column(
+                    modifier = Modifier.weight(1f).padding(horizontal = 12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "Fakta & Rangkuman",
+                        fontFamily = UiSans,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = TextPrimary
+                    )
+                    Text(
+                        text = "${memories.size} fakta • ${summaries.size} rangkuman",
+                        fontFamily = UiSans,
+                        fontSize = 11.5.sp,
+                        color = TextMuted
+                    )
+                }
+
+                Box {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(ElevatedSurface)
+                            .border(1.dp, BorderLight, CircleShape)
+                            .clickable { menuOpen = true },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.MoreVert,
+                            contentDescription = "Opsi Memori",
+                            tint = TextPrimary,
+                            modifier = Modifier.size(19.dp)
+                        )
+                    }
+
+                    DropdownMenu(
+                        expanded = menuOpen,
+                        onDismissRequest = { menuOpen = false },
+                        modifier = Modifier.background(SecondarySurface)
+                    ) {
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = "Bersihkan Semua",
+                                    fontFamily = UiSans,
+                                    fontSize = 13.sp,
+                                    color = if (memories.isNotEmpty() || summaries.isNotEmpty()) SemanticDanger else TextSubtle
+                                )
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Outlined.DeleteOutline,
+                                    contentDescription = null,
+                                    tint = if (memories.isNotEmpty() || summaries.isNotEmpty()) SemanticDanger else TextSubtle,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            },
+                            enabled = memories.isNotEmpty() || summaries.isNotEmpty(),
+                            onClick = {
+                                menuOpen = false
+                                confirmClearAll = true
+                            }
+                        )
+                    }
+                }
+            }
+
+            HorizontalDivider(thickness = 1.dp, color = BorderSubtle)
+
+            // Tab & Search Controls
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(SecondarySurface)
+                        .border(1.dp, BorderSubtle, RoundedCornerShape(12.dp))
+                        .padding(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    listOf(
+                        "Fakta (${memories.size})",
+                        "Rangkuman (${summaries.size})"
+                    ).forEachIndexed { idx, label ->
+                        val active = selectedTab == idx
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(9.dp))
+                                .background(if (active) AccentBlue.copy(alpha = 0.2f) else Color.Transparent)
+                                .border(
+                                    width = 1.dp,
+                                    color = if (active) AccentBlue.copy(alpha = 0.55f) else Color.Transparent,
+                                    shape = RoundedCornerShape(9.dp)
+                                )
+                                .clickable { selectedTab = idx }
+                                .padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = label,
+                                fontFamily = UiSans,
+                                fontSize = 12.sp,
+                                fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
+                                color = if (active) AccentBlue else TextMuted,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
+
+                // Search bar
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(ElevatedSurface)
+                        .border(1.dp, BorderSubtle, RoundedCornerShape(12.dp))
+                        .padding(horizontal = 12.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Search,
+                        contentDescription = null,
+                        tint = TextMuted,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Box(modifier = Modifier.weight(1f)) {
+                        if (searchQuery.isEmpty()) {
+                            Text(
+                                text = if (selectedTab == 0) "Cari label, nilai, atau kategori…" else "Cari isi rangkuman sesi…",
+                                fontFamily = UiSans,
+                                fontSize = 12.sp,
+                                color = TextSubtle,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        BasicTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            singleLine = true,
+                            textStyle = TextStyle(fontFamily = UiSans, fontSize = 12.5.sp, color = TextPrimary),
+                            cursorBrush = SolidColor(AccentBlue),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    if (searchQuery.isNotEmpty()) {
+                        Icon(
+                            imageVector = Icons.Outlined.Close,
+                            contentDescription = "Hapus Pencarian",
+                            tint = TextMuted,
+                            modifier = Modifier
+                                .size(16.dp)
+                                .clickable { searchQuery = "" }
+                        )
+                    }
+                }
+
+                if (selectedTab == 0) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        categories.forEach { cat ->
+                            val active = cat == selectedCategory
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(if (active) AccentBlue.copy(alpha = 0.2f) else ElevatedSurface)
+                                    .border(
+                                        1.dp,
+                                        if (active) AccentBlue.copy(alpha = 0.55f) else BorderSubtle,
+                                        RoundedCornerShape(10.dp)
+                                    )
+                                    .clickable { selectedCategory = cat }
+                                    .padding(horizontal = 10.dp, vertical = 5.dp)
+                            ) {
+                                Text(
+                                    text = cat.replaceFirstChar { it.uppercase() },
+                                    fontFamily = UiSans,
+                                    fontSize = 11.sp,
+                                    fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                                    color = if (active) AccentBlue else TextMuted
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            HorizontalDivider(thickness = 1.dp, color = BorderSubtle)
+
+            LazyColumn(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (selectedTab == 0) {
+                    if (filteredMemories.isEmpty()) {
+                        item {
+                            Text(
+                                text = if (memories.isEmpty()) {
+                                    "Belum ada fakta personal tersimpan. Ngobrol dengan Rem atau tambahkan fakta manual di Setelan."
+                                } else {
+                                    "Tidak ada fakta yang cocok dengan pencarian/filter saat ini."
+                                },
+                                fontFamily = UiSans,
+                                fontSize = 12.5.sp,
+                                lineHeight = 19.sp,
+                                color = TextSubtle,
+                                modifier = Modifier.padding(top = 8.dp)
+                            )
+                        }
+                    } else {
+                        items(filteredMemories, key = { "mem_${it.id}" }) { item ->
+                            MemoryFactCard(
+                                item = item,
+                                dateFormatter = dateFormatter,
+                                onDelete = { onDeleteMemory(item.id) }
+                            )
+                        }
+                    }
+                } else {
+                    if (filteredSummaries.isEmpty()) {
+                        item {
+                            Text(
+                                text = if (summaries.isEmpty()) {
+                                    "Belum ada rangkuman sesi percakapan tersimpan."
+                                } else {
+                                    "Tidak ada rangkuman sesi yang cocok dengan pencarian."
+                                },
+                                fontFamily = UiSans,
+                                fontSize = 12.5.sp,
+                                lineHeight = 19.sp,
+                                color = TextSubtle,
+                                modifier = Modifier.padding(top = 8.dp)
+                            )
+                        }
+                    } else {
+                        items(filteredSummaries, key = { "sum_${it.id}" }) { summary ->
+                            MemorySummaryCard(
+                                summary = summary,
+                                dateFormatter = dateFormatter,
+                                onDelete = { onDeleteSummary(summary.id) }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MemoryFactCard(
+    item: UserMemoryEntity,
+    dateFormatter: SimpleDateFormat,
+    onDelete: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(SecondarySurface)
+            .border(1.dp, BorderSubtle, RoundedCornerShape(12.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = item.category.uppercase(),
+                    fontFamily = UiSans,
+                    fontSize = 9.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = AccentBlue
+                )
+                Text(
+                    text = "• ${item.factKey}",
+                    fontFamily = UiSans,
+                    fontSize = 10.5.sp,
+                    color = TextSubtle,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+                if (item.updatedAt > 0L) {
+                    Text(
+                        text = "• ${dateFormatter.format(Date(item.updatedAt))}",
+                        fontFamily = UiSans,
+                        fontSize = 10.sp,
+                        color = TextSubtle,
+                        maxLines = 1
+                    )
+                }
+            }
+            Text(
+                text = item.factValue,
+                fontFamily = UiSans,
+                fontSize = 13.sp,
+                lineHeight = 18.sp,
+                color = TextPrimary
+            )
+        }
+        Icon(
+            imageVector = Icons.Outlined.Close,
+            contentDescription = "Hapus Memori",
+            tint = TextMuted,
+            modifier = Modifier
+                .padding(start = 10.dp)
+                .size(17.dp)
+                .clickable(onClick = onDelete)
+        )
+    }
+}
+
+@Composable
+private fun MemorySummaryCard(
+    summary: ConversationSummaryEntity,
+    dateFormatter: SimpleDateFormat,
+    onDelete: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(SecondarySurface)
+            .border(1.dp, BorderSubtle, RoundedCornerShape(12.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            if (summary.createdAt > 0L) {
+                Text(
+                    text = "${dateFormatter.format(Date(summary.createdAt))} • ${summary.turnCount} pesan",
+                    fontFamily = UiSans,
+                    fontSize = 10.sp,
+                    color = TextSubtle
+                )
+            }
+            Text(
+                text = summary.summaryText,
+                fontFamily = UiSans,
+                fontSize = 12.5.sp,
+                lineHeight = 18.sp,
+                color = TextPrimary
+            )
+        }
+        Icon(
+            imageVector = Icons.Outlined.Close,
+            contentDescription = "Hapus Rangkuman",
+            tint = TextMuted,
+            modifier = Modifier
+                .padding(start = 10.dp)
+                .size(17.dp)
+                .clickable(onClick = onDelete)
+        )
+    }
+}
+
+@Composable
+private fun CloudBackupDialog(
+    cloudState: CloudBackupUiState,
+    onConnect: () -> Unit,
+    onDisconnect: () -> Unit,
+    onRefreshInfo: () -> Unit,
+    onBackupNow: () -> Unit,
+    onPrepareRestore: suspend () -> CloudRestoreFetchResult,
+    onDecryptBytes: (ByteArray, String) -> Result<ByteArray>,
+    onImportPlainZip: suspend (ByteArray, Boolean) -> Unit,
+    onSetAutoSchedule: (String, Boolean) -> Unit,
+    onSetPassphrase: (String) -> Unit,
+    onShowBanner: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    val dateFmt = remember { SimpleDateFormat("dd MMM yyyy, HH:mm", Locale("in", "ID")) }
+
+    var showRestoreModeDialog by remember { mutableStateOf(false) }
+    var pendingRestoreReplace by remember { mutableStateOf(false) }
+    var pendingEncryptedPayload by remember { mutableStateOf<ByteArray?>(null) }
+    var restorePassInput by remember { mutableStateOf("") }
+    var restorePassError by remember { mutableStateOf<String?>(null) }
+
+    var showPassphraseDialog by remember { mutableStateOf(false) }
+    var passphraseInput by remember { mutableStateOf("") }
+    var passphraseConfirm by remember { mutableStateOf("") }
+    var passphraseReveal by remember { mutableStateOf(false) }
+    var passphraseError by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(cloudState.connected) {
+        if (cloudState.connected) {
+            onRefreshInfo()
+        }
+    }
+
+    if (showRestoreModeDialog) {
+        AlertDialog(
+            onDismissRequest = { showRestoreModeDialog = false },
+            containerColor = SecondarySurface,
+            title = {
+                Text("Mode Restore Cloud", fontFamily = EditorialSerif, fontSize = 20.sp, color = TextPrimary)
+            },
+            text = {
+                Text(
+                    "Pilih cara menggabungkan data dari Google Drive dengan database lokal:\n\n• Merge: Tambahkan data dari cloud yang belum ada di HP.\n• Replace: Kosongkan data modul saat ini lalu ganti total dengan backup cloud.",
+                    fontFamily = UiSans,
+                    fontSize = 12.5.sp,
+                    lineHeight = 18.sp,
+                    color = TextMuted
+                )
+            },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(
+                        onClick = {
+                            showRestoreModeDialog = false
+                            pendingRestoreReplace = false
+                            scope.launch {
+                                when (val res = onPrepareRestore()) {
+                                    is CloudRestoreFetchResult.Ready -> onImportPlainZip(res.zipBytes, false)
+                                    is CloudRestoreFetchResult.NeedsPassphrase -> {
+                                        restorePassInput = ""
+                                        restorePassError = if (res.wrongSavedPassphrase) "Passphrase tersimpan tidak cocok." else null
+                                        pendingEncryptedPayload = res.encryptedBytes
+                                    }
+                                    CloudRestoreFetchResult.NeedsReauth -> onShowBanner("Sesi Google Drive berakhir, silakan hubungkan ulang.")
+                                    is CloudRestoreFetchResult.Error -> onShowBanner(res.message)
+                                }
+                            }
+                        }
+                    ) {
+                        Text("Merge", color = AccentBlue, fontFamily = UiSans, fontWeight = FontWeight.SemiBold)
+                    }
+                    TextButton(
+                        onClick = {
+                            showRestoreModeDialog = false
+                            pendingRestoreReplace = true
+                            scope.launch {
+                                when (val res = onPrepareRestore()) {
+                                    is CloudRestoreFetchResult.Ready -> onImportPlainZip(res.zipBytes, true)
+                                    is CloudRestoreFetchResult.NeedsPassphrase -> {
+                                        restorePassInput = ""
+                                        restorePassError = if (res.wrongSavedPassphrase) "Passphrase tersimpan tidak cocok." else null
+                                        pendingEncryptedPayload = res.encryptedBytes
+                                    }
+                                    CloudRestoreFetchResult.NeedsReauth -> onShowBanner("Sesi Google Drive berakhir, silakan hubungkan ulang.")
+                                    is CloudRestoreFetchResult.Error -> onShowBanner(res.message)
+                                }
+                            }
+                        }
+                    ) {
+                        Text("Replace", color = SemanticWarning, fontFamily = UiSans, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRestoreModeDialog = false }) {
+                    Text("Batal", color = TextMuted, fontFamily = UiSans)
+                }
+            }
+        )
+    }
+
+    pendingEncryptedPayload?.let { encBytes ->
+        AlertDialog(
+            onDismissRequest = { pendingEncryptedPayload = null },
+            containerColor = SecondarySurface,
+            title = {
+                Text("Passphrase Cadangan Cloud", fontFamily = EditorialSerif, fontSize = 20.sp, color = TextPrimary)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "File backup di Google Drive terenkripsi AES-256-GCM. Masukkan passphrase untuk mendekripsi.",
+                        fontFamily = UiSans,
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp,
+                        color = TextMuted
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(ElevatedSurface)
+                            .border(1.dp, BorderLight, RoundedCornerShape(10.dp))
+                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                    ) {
+                        if (restorePassInput.isEmpty()) {
+                            Text("Passphrase…", fontFamily = UiSans, fontSize = 13.sp, color = TextSubtle)
+                        }
+                        BasicTextField(
+                            value = restorePassInput,
+                            onValueChange = {
+                                restorePassInput = it
+                                restorePassError = null
+                            },
+                            singleLine = true,
+                            visualTransformation = PasswordVisualTransformation(),
+                            textStyle = TextStyle(fontFamily = UiSans, fontSize = 13.sp, color = TextPrimary),
+                            cursorBrush = SolidColor(AccentBlue),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    if (!restorePassError.isNullOrBlank()) {
+                        Text(restorePassError!!, fontFamily = UiSans, fontSize = 11.sp, color = SemanticDanger)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = restorePassInput.isNotBlank(),
+                    onClick = {
+                        val decRes = onDecryptBytes(encBytes, restorePassInput)
+                        decRes.onSuccess { plainZip ->
+                            pendingEncryptedPayload = null
+                            scope.launch {
+                                onImportPlainZip(plainZip, pendingRestoreReplace)
+                            }
+                        }.onFailure {
+                            restorePassError = "Passphrase salah atau file rusak."
+                        }
+                    }
+                ) {
+                    Text("Buka & Restore", color = AccentBlue, fontFamily = UiSans, fontWeight = FontWeight.SemiBold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingEncryptedPayload = null }) {
+                    Text("Batal", color = TextMuted, fontFamily = UiSans)
+                }
+            }
+        )
+    }
+
+    if (showPassphraseDialog) {
+        AlertDialog(
+            onDismissRequest = { showPassphraseDialog = false },
+            containerColor = SecondarySurface,
+            title = {
+                Text("Enkripsi Passphrase Cloud", fontFamily = EditorialSerif, fontSize = 20.sp, color = TextPrimary)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "Mengunci seluruh arsip ZIP v3 dengan AES-256-GCM sebelum diunggah ke Google Drive. Penting: jika lupa passphrase, cadangan cloud tidak bisa didekripsi.",
+                        fontFamily = UiSans,
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp,
+                        color = SemanticWarning.copy(alpha = 0.95f)
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(ElevatedSurface)
+                            .border(1.dp, BorderLight, RoundedCornerShape(10.dp))
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(modifier = Modifier.weight(1f)) {
+                            if (passphraseInput.isEmpty()) {
+                                Text("Passphrase baru (min. 4 karakter)", fontFamily = UiSans, fontSize = 12.5.sp, color = TextSubtle)
+                            }
+                            BasicTextField(
+                                value = passphraseInput,
+                                onValueChange = {
+                                    passphraseInput = it
+                                    passphraseError = null
+                                },
+                                singleLine = true,
+                                visualTransformation = if (passphraseReveal) VisualTransformation.None else PasswordVisualTransformation(),
+                                textStyle = TextStyle(fontFamily = UiSans, fontSize = 13.sp, color = TextPrimary),
+                                cursorBrush = SolidColor(AccentBlue),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                        Icon(
+                            imageVector = if (passphraseReveal) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                            contentDescription = "Tampilkan",
+                            tint = TextMuted,
+                            modifier = Modifier
+                                .size(18.dp)
+                                .clickable { passphraseReveal = !passphraseReveal }
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(ElevatedSurface)
+                            .border(1.dp, BorderLight, RoundedCornerShape(10.dp))
+                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                    ) {
+                        if (passphraseConfirm.isEmpty()) {
+                            Text("Ulangi passphrase", fontFamily = UiSans, fontSize = 12.5.sp, color = TextSubtle)
+                        }
+                        BasicTextField(
+                            value = passphraseConfirm,
+                            onValueChange = {
+                                passphraseConfirm = it
+                                passphraseError = null
+                            },
+                            singleLine = true,
+                            visualTransformation = if (passphraseReveal) VisualTransformation.None else PasswordVisualTransformation(),
+                            textStyle = TextStyle(fontFamily = UiSans, fontSize = 13.sp, color = TextPrimary),
+                            cursorBrush = SolidColor(AccentBlue),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    if (!passphraseError.isNullOrBlank()) {
+                        Text(passphraseError!!, fontFamily = UiSans, fontSize = 11.sp, color = SemanticDanger)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val p = passphraseInput.trim()
+                        when {
+                            p.length < 4 -> passphraseError = "Passphrase minimal 4 karakter."
+                            p != passphraseConfirm.trim() -> passphraseError = "Konfirmasi passphrase tidak cocok."
+                            else -> {
+                                onSetPassphrase(p)
+                                showPassphraseDialog = false
+                                onShowBanner("Enkripsi passphrase cloud diaktifkan")
+                            }
+                        }
+                    }
+                ) {
+                    Text("Simpan", color = AccentBlue, fontFamily = UiSans, fontWeight = FontWeight.SemiBold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPassphraseDialog = false }) {
+                    Text("Batal", color = TextMuted, fontFamily = UiSans)
+                }
+            }
+        )
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(DominantBg)
+                .statusBarsPadding()
+        ) {
+            // Top Bar
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(DominantBg.copy(alpha = 0.96f))
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(ElevatedSurface)
+                        .border(1.dp, BorderLight, CircleShape)
+                        .clickable(onClick = onDismiss),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
+                        contentDescription = "Kembali",
+                        tint = TextPrimary,
+                        modifier = Modifier.size(19.dp)
+                    )
+                }
+
+                Column(
+                    modifier = Modifier.weight(1f).padding(horizontal = 12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "Cloud Backup",
+                        fontFamily = UiSans,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = TextPrimary
+                    )
+                    Text(
+                        text = "Google Drive • appDataFolder",
+                        fontFamily = UiSans,
+                        fontSize = 11.5.sp,
+                        color = TextMuted
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(ElevatedSurface)
+                        .border(1.dp, BorderLight, CircleShape)
+                        .clickable(enabled = cloudState.connected && !cloudState.isSyncing) { onRefreshInfo() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (cloudState.isSyncing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = AccentBlue
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Outlined.Refresh,
+                            contentDescription = "Segarkan Info Cloud",
+                            tint = if (cloudState.connected) TextPrimary else TextSubtle,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
+
+            HorizontalDivider(thickness = 1.dp, color = BorderSubtle)
+
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // Status Koneksi & Remote Info
+                SettingsSection(
+                    title = "KONEKSI GOOGLE DRIVE",
+                    badgeText = if (cloudState.connected) "Terhubung" else null
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            text = cloudState.lastStatusLabel,
+                            fontFamily = UiSans,
+                            fontSize = 12.sp,
+                            color = TextPrimary
+                        )
+                        Text(
+                            text = "Backup cloud terakhir: ${cloudState.lastBackupLabel}",
+                            fontFamily = UiSans,
+                            fontSize = 11.5.sp,
+                            color = TextMuted
+                        )
+
+                        cloudState.remoteBackupInfo?.let { info ->
+                            val remoteStamp = if (info.modifiedAtMs > 0L) dateFmt.format(Date(info.modifiedAtMs)) else "-"
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(ElevatedSurface)
+                                    .border(1.dp, BorderSubtle, RoundedCornerShape(10.dp))
+                                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "${info.fileName} (${formatCloudSize(info.sizeBytes)})",
+                                        fontFamily = UiSans,
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = TextPrimary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = "Di Drive: $remoteStamp",
+                                        fontFamily = UiSans,
+                                        fontSize = 10.5.sp,
+                                        color = TextMuted
+                                    )
+                                }
+                                if (info.encrypted) {
+                                    NestedPill {
+                                        Text("REMC1", fontFamily = UiSans, fontSize = 10.sp, color = AccentBlue)
+                                    }
+                                }
+                            }
+                        }
+
+                        if (!cloudState.connected) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(AccentBlue)
+                                    .clickable(enabled = !cloudState.isSyncing, onClick = onConnect)
+                                    .padding(vertical = 11.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "Hubungkan Google Drive",
+                                    fontFamily = UiSans,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = DominantBg
+                                )
+                            }
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(SemanticDanger.copy(alpha = 0.08f))
+                                    .border(1.dp, SemanticDanger.copy(alpha = 0.3f), RoundedCornerShape(10.dp))
+                                    .clickable(enabled = !cloudState.isSyncing, onClick = onDisconnect)
+                                    .padding(vertical = 8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "Putuskan Koneksi Drive",
+                                    fontFamily = UiSans,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = SemanticDanger
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Aksi Manual
+                SettingsSection(title = "SINKRONISASI MANUAL") {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (cloudState.connected) ElevatedSurface else ElevatedSurface.copy(alpha = 0.5f))
+                                    .border(1.dp, BorderLight, RoundedCornerShape(12.dp))
+                                    .clickable(enabled = cloudState.connected && !cloudState.isSyncing, onClick = onBackupNow)
+                                    .padding(vertical = 11.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Icon(Icons.Outlined.CloudUpload, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(16.dp))
+                                    Text("Cadangkan", fontFamily = UiSans, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, color = if (cloudState.connected) TextPrimary else TextSubtle)
+                                }
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (cloudState.connected) ElevatedSurface else ElevatedSurface.copy(alpha = 0.5f))
+                                    .border(1.dp, BorderLight, RoundedCornerShape(12.dp))
+                                    .clickable(enabled = cloudState.connected && !cloudState.isSyncing) {
+                                        showRestoreModeDialog = true
+                                    }
+                                    .padding(vertical = 11.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Icon(Icons.Outlined.CloudDownload, contentDescription = null, tint = TextPrimary, modifier = Modifier.size(16.dp))
+                                    Text("Pulihkan", fontFamily = UiSans, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, color = if (cloudState.connected) TextPrimary else TextSubtle)
+                                }
+                            }
+                        }
+                        Text(
+                            text = "Mencadangkan seluruh memori, obrolan, dan 5 modul produktivitas (ZIP v3). API Key LLM/TTS tidak ikut diunggah.",
+                            fontFamily = UiSans,
+                            fontSize = 11.sp,
+                            lineHeight = 16.sp,
+                            color = TextMuted
+                        )
+                    }
+                }
+
+                // Auto-Backup WorkManager
+                SettingsSection(title = "AUTO-BACKUP TERJADWAL") {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf("off" to "Mati", "daily" to "Harian", "weekly" to "Mingguan").forEach { (key, label) ->
+                                val active = cloudState.autoSchedule == key
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(if (active) AccentBlue.copy(alpha = 0.2f) else ElevatedSurface)
+                                        .border(1.dp, if (active) AccentBlue.copy(alpha = 0.6f) else BorderSubtle, RoundedCornerShape(10.dp))
+                                        .clickable {
+                                            onSetAutoSchedule(key, cloudState.wifiOnly)
+                                        }
+                                        .padding(vertical = 9.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = label,
+                                        fontFamily = UiSans,
+                                        fontSize = 12.sp,
+                                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                                        color = if (active) AccentBlue else TextMuted
+                                    )
+                                }
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onSetAutoSchedule(cloudState.autoSchedule, !cloudState.wifiOnly) },
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Hanya via Wi-Fi", fontFamily = UiSans, fontSize = 12.5.sp, fontWeight = FontWeight.Medium, color = TextPrimary)
+                                Text("Hemat kuota seluler saat auto-backup berjalan", fontFamily = UiSans, fontSize = 11.sp, color = TextMuted)
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .width(42.dp)
+                                    .height(24.dp)
+                                    .clip(RoundedCornerShape(50))
+                                    .background(if (cloudState.wifiOnly) AccentBlue else ElevatedSurface)
+                                    .border(1.dp, if (cloudState.wifiOnly) AccentBlue else BorderLight, RoundedCornerShape(50))
+                                    .padding(3.dp),
+                                contentAlignment = if (cloudState.wifiOnly) Alignment.CenterEnd else Alignment.CenterStart
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(18.dp)
+                                        .clip(CircleShape)
+                                        .background(if (cloudState.wifiOnly) DominantBg else TextMuted)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Enkripsi Passphrase
+                SettingsSection(
+                    title = "ENKRIPSI PASSPHRASE (OPSIONAL)",
+                    badgeText = if (cloudState.encryptionEnabled) "AES-256" else null
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            text = if (cloudState.encryptionEnabled) {
+                                "Aktif: Seluruh file ZIP dikunci AES-256-GCM sebelum diunggah."
+                            } else {
+                                "Nonaktif: ZIP v3 diunggah tanpa password tambahan (hanya link privat LinkKu yang terenkripsi PIN)."
+                            },
+                            fontFamily = UiSans,
+                            fontSize = 12.sp,
+                            lineHeight = 17.sp,
+                            color = TextMuted
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(ElevatedSurface)
+                                    .border(1.dp, BorderLight, RoundedCornerShape(10.dp))
+                                    .clickable {
+                                        passphraseInput = ""
+                                        passphraseConfirm = ""
+                                        passphraseError = null
+                                        showPassphraseDialog = true
+                                    }
+                                    .padding(vertical = 9.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = if (cloudState.encryptionEnabled) "Ubah Passphrase" else "Aktifkan Passphrase",
+                                    fontFamily = UiSans,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = AccentBlue
+                                )
+                            }
+                            if (cloudState.encryptionEnabled) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(SemanticDanger.copy(alpha = 0.08f))
+                                        .border(1.dp, SemanticDanger.copy(alpha = 0.3f), RoundedCornerShape(10.dp))
+                                        .clickable {
+                                            onSetPassphrase("")
+                                            onShowBanner("Enkripsi passphrase cloud dinonaktifkan")
+                                        }
+                                        .padding(horizontal = 12.dp, vertical = 9.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "Matikan",
+                                        fontFamily = UiSans,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = SemanticDanger
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun formatCloudSize(bytes: Long): String {
+    if (bytes <= 0L) return "0 B"
+    val kb = bytes / 1024.0
+    if (kb < 1024.0) return String.format(Locale.US, "%.1f KB", kb)
+    return String.format(Locale.US, "%.2f MB", kb / 1024.0)
+}
+
+

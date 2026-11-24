@@ -24,8 +24,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -94,12 +97,21 @@ fun EcosystemKuShell(
         val dailyOsActions = remember(asistenViewModel) { asistenViewModel.createDailyOsActions() }
         val blockerInteraction = remember { MutableInteractionSource() }
         val lifecycleOwner = LocalLifecycleOwner.current
+        val focusManager = LocalFocusManager.current
+        val keyboardController = LocalSoftwareKeyboardController.current
+        val isAsistenActive = selectedTab == AppTab.ASISTEN && !showKronik && !showLinkku && !showCuciMoney && !showIdeku && !showDailyOs
+        val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+        var wasImeVisible by remember { mutableStateOf(false) }
 
         DisposableEffect(lifecycleOwner) {
             val observer = LifecycleEventObserver { _, event ->
                 when (event) {
                     Lifecycle.Event.ON_START -> asistenViewModel.setForegroundActive(true)
-                    Lifecycle.Event.ON_STOP -> asistenViewModel.setForegroundActive(false)
+                    Lifecycle.Event.ON_STOP -> {
+                        asistenViewModel.setForegroundActive(false)
+                        focusManager.clearFocus(force = true)
+                        keyboardController?.hide()
+                    }
                     else -> Unit
                 }
             }
@@ -109,10 +121,19 @@ fun EcosystemKuShell(
             }
         }
 
-        LaunchedEffect(selectedTab, showKronik, showLinkku, showCuciMoney, showIdeku, showDailyOs) {
-            asistenViewModel.setAsistenTabActive(
-                selectedTab == AppTab.ASISTEN && !showKronik && !showLinkku && !showCuciMoney && !showIdeku && !showDailyOs
-            )
+        LaunchedEffect(imeVisible) {
+            if (wasImeVisible && !imeVisible) {
+                focusManager.clearFocus(force = true)
+            }
+            wasImeVisible = imeVisible
+        }
+
+        LaunchedEffect(isAsistenActive) {
+            asistenViewModel.setAsistenTabActive(isAsistenActive)
+            if (!isAsistenActive) {
+                focusManager.clearFocus(force = true)
+                keyboardController?.hide()
+            }
         }
 
         LaunchedEffect(asistenViewModel) {
@@ -197,8 +218,6 @@ fun EcosystemKuShell(
                         onToggleMute = asistenViewModel::toggleMute,
                         onToggleVoiceClipMute = asistenViewModel::toggleVoiceClipMute,
                         onClearChat = asistenViewModel::clearChatHistoryOnly,
-                        onPickWallpaper = asistenViewModel::setStageWallpaper,
-                        onResetWallpaper = asistenViewModel::clearStageWallpaper,
                         onSelectChoices = asistenViewModel::selectMessageChoices,
                         onNewChatSession = asistenViewModel::startNewChatSession,
                         onSwitchChatSession = asistenViewModel::switchChatSession,
@@ -209,6 +228,7 @@ fun EcosystemKuShell(
                         modifier = Modifier
                             .fillMaxSize()
                             .zIndex(if (selectedTab == AppTab.ASISTEN) 1f else 0f)
+                            .focusProperties { canFocus = isAsistenActive }
                     )
 
                     if (selectedTab == AppTab.APPS) {
@@ -286,6 +306,16 @@ fun EcosystemKuShell(
                                 onClearMemoryProfile = { asistenViewModel.clearMemoryProfile(showBanner = true) },
                                 onExportZip = asistenViewModel::buildEcosystemZipBytes,
                                 onImportZip = asistenViewModel::importEcosystemZipBytes,
+                                cloudState = asistenState.cloudState,
+                                onConnectCloud = asistenViewModel::connectGoogleDrive,
+                                onHandleCloudAuthIntent = asistenViewModel::handleGoogleDriveAuthIntent,
+                                onDisconnectCloud = asistenViewModel::disconnectGoogleDrive,
+                                onRefreshCloudInfo = asistenViewModel::refreshCloudRemoteInfo,
+                                onCloudBackupNow = asistenViewModel::backupToCloudNow,
+                                onPrepareCloudRestore = asistenViewModel::prepareCloudRestore,
+                                onDecryptCloudBytes = asistenViewModel::decryptCloudBytesWithPassphrase,
+                                onSetCloudAutoSchedule = asistenViewModel::setCloudAutoSchedule,
+                                onSetCloudPassphrase = asistenViewModel::setCloudPassphrase,
                                 onShowBanner = asistenViewModel::showBannerMessage,
                                 onResetKronik = asistenViewModel::resetKronikData,
                                 onResetLinkku = asistenViewModel::resetLinkkuData,
@@ -303,7 +333,6 @@ fun EcosystemKuShell(
                 // Saat keyboard tampil, bottom nav disembunyikan: imePadding di AsistenScreen sudah
                 // menghitung tinggi keyboard penuh dari dasar layar, jadi jika bottom nav tetap
                 // ada, tingginya terhitung dua kali dan bar chat melayang jauh di atas keyboard.
-                val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
                 if (!imeVisible) {
                     EcosystemBottomNavBar(
                         selectedTab = selectedTab,

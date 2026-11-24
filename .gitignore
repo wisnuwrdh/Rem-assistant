@@ -1,10 +1,6 @@
-node_modules/
-.next/
-coverage/
 .DS_Store
 *.log
 .env*
-!.env.example
 android/.gradle/
 android/build/
 android/app/build/

@@ -14,8 +14,8 @@ android {
         applicationId = "com.ecosystemku.assistant"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
 
         val apiBaseUrl = (providers.gradleProperty("API_BASE_URL").orNull
             ?: System.getenv("API_BASE_URL")
@@ -111,9 +111,14 @@ dependencies {
     implementation(libs.androidx.webkit)
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.common)
+    implementation(libs.androidx.work.runtime.ktx)
+
+    implementation(libs.play.services.auth)
 
     implementation(libs.okhttp)
     implementation(libs.okhttp.sse)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
+
+    testImplementation(libs.junit)
 }

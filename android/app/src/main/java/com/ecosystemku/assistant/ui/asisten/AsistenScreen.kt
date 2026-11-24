@@ -4,7 +4,6 @@ import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.widget.Toast
@@ -62,11 +61,9 @@ import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.History
-import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material.icons.outlined.RestartAlt
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -152,8 +149,6 @@ fun AsistenScreen(
     onToggleMute: () -> Unit = {},
     onToggleVoiceClipMute: () -> Unit = {},
     onClearChat: () -> Unit = {},
-    onPickWallpaper: (Uri) -> Unit = {},
-    onResetWallpaper: () -> Unit = {},
     onSelectChoices: (Long, List<String>) -> Unit = { _, _ -> },
     onNewChatSession: () -> Unit = {},
     onSwitchChatSession: (Long) -> Unit = {},
@@ -163,12 +158,6 @@ fun AsistenScreen(
     onRegenerateMessage: (Long) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val wallpaperLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        if (uri != null) onPickWallpaper(uri)
-    }
-
     BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
@@ -558,52 +547,6 @@ fun AsistenScreen(
                                             onToggleVoiceClipMute()
                                         }
                                     )
-                                    DropdownMenuItem(
-                                        text = {
-                                            Text(
-                                                text = "Ganti Wallpaper Rem",
-                                                fontFamily = UiSans,
-                                                fontSize = 13.sp,
-                                                color = TextPrimary
-                                            )
-                                        },
-                                        leadingIcon = {
-                                            Icon(
-                                                imageVector = Icons.Outlined.Image,
-                                                contentDescription = null,
-                                                tint = AccentBlue,
-                                                modifier = Modifier.size(18.dp)
-                                            )
-                                        },
-                                        onClick = {
-                                            menuExpanded = false
-                                            wallpaperLauncher.launch("image/*")
-                                        }
-                                    )
-                                    if (uiState.stageWallpaperFile != null) {
-                                        DropdownMenuItem(
-                                            text = {
-                                                Text(
-                                                    text = "Reset Wallpaper Rem",
-                                                    fontFamily = UiSans,
-                                                    fontSize = 13.sp,
-                                                    color = TextPrimary
-                                                )
-                                            },
-                                            leadingIcon = {
-                                                Icon(
-                                                    imageVector = Icons.Outlined.RestartAlt,
-                                                    contentDescription = null,
-                                                    tint = TextMuted,
-                                                    modifier = Modifier.size(18.dp)
-                                                )
-                                            },
-                                            onClick = {
-                                                menuExpanded = false
-                                                onResetWallpaper()
-                                            }
-                                        )
-                                    }
                                     DropdownMenuItem(
                                         text = {
                                             Text(
