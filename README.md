@@ -103,6 +103,7 @@ Sebelum memanggil LLM, klien menyuntikkan konteks nyata secara berurutan:
 * **Quick Replies (`[CHOICES:...]`):** Kartu pilihan interaktif di bawah pesan Rem:
   * `single`: tap satu chip langsung mengirim pilihan sebagai pesan balasan (mis. pilih buku *Personal*/*Bisnis*, pilih kategori CuciMoney+, pilih wishlist, atau konfirmasi).
   * `multi`: daftar centang multi-opsi dengan tombol **Kirim**.
+* **Input Suara Custom Rem (`RemVoiceInputDialog`):** Pengenalan suara berbasis Android `SpeechRecognizer` (`id-ID`) dengan dialog custom ber-avatar Rem, animasi ring RMS real-time, transkrip parsial langsung, serta fallback ke `RecognizerIntent` sistem jika diperlukan.
 
 ---
 
@@ -261,7 +262,7 @@ Digunakan oleh **Web Preview** (`server.js` pada port `3000` atau `process.env.P
 │               ├── live2d/            # Live2DStageController (JS <-> Kotlin bridge)
 │               ├── notifications/     # DailyOsNotificationHelper
 │               └── ui/
-│                   ├── asisten/       # AsistenScreen & AsistenViewModel (otak ekosistem)
+│                   ├── asisten/       # AsistenScreen, RemVoiceInputDialog, & AsistenViewModel (otak ekosistem)
 │                   ├── apps/          # AppsHubScreen + cucimoney/, dailyos/, ideku/, kronik/, linkku/
 │                   ├── navigation/    # BottomNavBar (Asisten, Apps, Setelan)
 │                   ├── setelan/       # SetelanScreen (AI config, memori, tema, wallpaper, ZIP v3)

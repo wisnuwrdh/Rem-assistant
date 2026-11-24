@@ -1,12 +1,16 @@
 package com.ecosystemku.assistant.ui.asisten
 
+import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -1179,18 +1183,64 @@ private fun ChatInputCapsule(
     onInputChanged: (String) -> Unit,
     onSend: () -> Unit
 ) {
+    val context = LocalContext.current
     val inputText by inputTextFlow.collectAsStateWithLifecycle()
+    var showVoiceDialog by remember { mutableStateOf(false) }
+
+    fun appendSpokenText(spoken: String) {
+        val clean = spoken.trim()
+        if (clean.isNotEmpty()) {
+            val combined = if (inputText.isBlank()) clean else "${inputText.trim()} $clean"
+            onInputChanged(combined)
+        }
+    }
+
     val speechLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
             val matches = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
-            val spoken = matches?.firstOrNull()?.trim().orEmpty()
-            if (spoken.isNotEmpty()) {
-                val combined = if (inputText.isBlank()) spoken else "${inputText.trim()} $spoken"
-                onInputChanged(combined)
-            }
+            appendSpokenText(matches?.firstOrNull().orEmpty())
         }
+    }
+
+    fun launchSystemSpeechFallback() {
+        runCatching {
+            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "id-ID")
+                putExtra(RecognizerIntent.EXTRA_PROMPT, "Bicara dengan Rem...")
+            }
+            speechLauncher.launch(intent)
+        }
+    }
+
+    val audioPermLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            if (SpeechRecognizer.isRecognitionAvailable(context)) {
+                showVoiceDialog = true
+            } else {
+                launchSystemSpeechFallback()
+            }
+        } else {
+            Toast.makeText(context, "Izin mikrofon diperlukan untuk input suara", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    if (showVoiceDialog) {
+        RemVoiceInputDialog(
+            onDismiss = { showVoiceDialog = false },
+            onResult = { spoken ->
+                showVoiceDialog = false
+                appendSpokenText(spoken)
+            },
+            onFallbackSystemVoice = {
+                showVoiceDialog = false
+                launchSystemSpeechFallback()
+            }
+        )
     }
 
     Row(
@@ -1232,7 +1282,7 @@ private fun ChatInputCapsule(
 
         Spacer(modifier = Modifier.width(8.dp))
 
-        // Tombol Mikrofon (Input Suara STT Android)
+        // Tombol Mikrofon (Input Suara STT Custom Rem + fallback sistem)
         Box(
             modifier = Modifier
                 .size(34.dp)
@@ -1243,13 +1293,18 @@ private fun ChatInputCapsule(
                     enabled = !isThinking,
                     role = Role.Button,
                     onClick = {
-                        runCatching {
-                            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "id-ID")
-                                putExtra(RecognizerIntent.EXTRA_PROMPT, "Bicara dengan Rem...")
+                        val hasMicPerm = ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.RECORD_AUDIO
+                        ) == PackageManager.PERMISSION_GRANTED
+                        if (hasMicPerm) {
+                            if (SpeechRecognizer.isRecognitionAvailable(context)) {
+                                showVoiceDialog = true
+                            } else {
+                                launchSystemSpeechFallback()
                             }
-                            speechLauncher.launch(intent)
+                        } else {
+                            audioPermLauncher.launch(Manifest.permission.RECORD_AUDIO)
                         }
                     }
                 ),
