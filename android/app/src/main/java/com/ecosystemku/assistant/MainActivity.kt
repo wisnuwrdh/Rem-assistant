@@ -1,8 +1,10 @@
 package com.ecosystemku.assistant
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -37,6 +39,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ecosystemku.assistant.device.AndroidDeviceBridge
 import com.ecosystemku.assistant.device.DeviceActionEvent
+import com.ecosystemku.assistant.notifications.DailyOsNotificationHelper
 import com.ecosystemku.assistant.ui.apps.AppsHubScreen
 import com.ecosystemku.assistant.ui.apps.cucimoney.CuciMoneyScreen
 import com.ecosystemku.assistant.ui.apps.dailyos.DailyOsScreen
@@ -45,6 +48,7 @@ import com.ecosystemku.assistant.ui.apps.kronik.KronikScreen
 import com.ecosystemku.assistant.ui.apps.linkku.LinkkuScreen
 import com.ecosystemku.assistant.ui.asisten.AsistenScreen
 import com.ecosystemku.assistant.ui.asisten.AsistenViewModel
+import com.ecosystemku.assistant.ui.kg.KnowledgeGraphScreen
 import com.ecosystemku.assistant.ui.navigation.AppTab
 import com.ecosystemku.assistant.ui.navigation.EcosystemBottomNavBar
 import com.ecosystemku.assistant.ui.setelan.SetelanScreen
@@ -52,21 +56,43 @@ import com.ecosystemku.assistant.ui.theme.DominantBg
 import com.ecosystemku.assistant.ui.theme.EcosystemKuTheme
 
 class MainActivity : ComponentActivity() {
+    private var pendingLaunchAction by mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        extractLaunchAction(intent)
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
         )
         setContent {
-            EcosystemKuShell()
+            EcosystemKuShell(
+                pendingLaunchAction = pendingLaunchAction,
+                onConsumeLaunchAction = { pendingLaunchAction = null }
+            )
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        extractLaunchAction(intent)
+    }
+
+    private fun extractLaunchAction(intent: Intent?) {
+        val action = intent?.getStringExtra(DailyOsNotificationHelper.EXTRA_LAUNCH_ACTION)
+        if (!action.isNullOrBlank()) {
+            intent.removeExtra(DailyOsNotificationHelper.EXTRA_LAUNCH_ACTION)
+            pendingLaunchAction = action
         }
     }
 }
 
 @Composable
 fun EcosystemKuShell(
-    asistenViewModel: AsistenViewModel = viewModel()
+    asistenViewModel: AsistenViewModel = viewModel(),
+    pendingLaunchAction: String? = null,
+    onConsumeLaunchAction: () -> Unit = {}
 ) {
     var selectedTab by rememberSaveable { mutableStateOf(AppTab.ASISTEN) }
     var showKronik by rememberSaveable { mutableStateOf(false) }
@@ -74,6 +100,7 @@ fun EcosystemKuShell(
     var showCuciMoney by rememberSaveable { mutableStateOf(false) }
     var showIdeku by rememberSaveable { mutableStateOf(false) }
     var showDailyOs by rememberSaveable { mutableStateOf(false) }
+    var showKnowledgeGraph by rememberSaveable { mutableStateOf(false) }
     val asistenState by asistenViewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var pendingPermissionLabel by remember { mutableStateOf("") }
@@ -99,7 +126,7 @@ fun EcosystemKuShell(
         val lifecycleOwner = LocalLifecycleOwner.current
         val focusManager = LocalFocusManager.current
         val keyboardController = LocalSoftwareKeyboardController.current
-        val isAsistenActive = selectedTab == AppTab.ASISTEN && !showKronik && !showLinkku && !showCuciMoney && !showIdeku && !showDailyOs
+        val isAsistenActive = selectedTab == AppTab.ASISTEN && !showKronik && !showLinkku && !showCuciMoney && !showIdeku && !showDailyOs && !showKnowledgeGraph
         val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
         var wasImeVisible by remember { mutableStateOf(false) }
 
@@ -133,6 +160,20 @@ fun EcosystemKuShell(
             if (!isAsistenActive) {
                 focusManager.clearFocus(force = true)
                 keyboardController?.hide()
+            }
+        }
+
+        LaunchedEffect(pendingLaunchAction) {
+            if (pendingLaunchAction == DailyOsNotificationHelper.ACTION_KENALI_AKU) {
+                onConsumeLaunchAction()
+                showKronik = false
+                showLinkku = false
+                showCuciMoney = false
+                showIdeku = false
+                showDailyOs = false
+                showKnowledgeGraph = false
+                selectedTab = AppTab.ASISTEN
+                asistenViewModel.startKenaliAkuSession()
             }
         }
 
@@ -283,6 +324,12 @@ fun EcosystemKuShell(
                                 isSynthesizingMemoryProfile = asistenState.isSynthesizingMemoryProfile,
                                 autoLearnMemory = asistenState.autoLearnMemory,
                                 isLearningMemory = asistenState.isLearningMemory,
+                                kgNodeCount = asistenState.kgNodes.size,
+                                kgEdgeCount = asistenState.kgEdges.size,
+                                kgMicroQuestionsEnabled = asistenState.kgMicroQuestionsEnabled,
+                                kgWeeklyReflectionEnabled = asistenState.kgWeeklyReflectionEnabled,
+                                kgWeeklyReflectionDay = asistenState.kgWeeklyReflectionDay,
+                                kgWeeklyReflectionTime = asistenState.kgWeeklyReflectionTime,
                                 deviceLocationOptIn = asistenState.deviceLocationOptIn,
                                 onUpdateProfileName = asistenViewModel::setProfileName,
                                 onSetThemeMode = asistenViewModel::setThemeMode,
@@ -297,12 +344,18 @@ fun EcosystemKuShell(
                                 onSetNotifTimes = asistenViewModel::setNotifTimes,
                                 onTestNotification = asistenViewModel::triggerTestNotification,
                                 onToggleAutoLearn = asistenViewModel::setAutoLearnMemory,
+                                onOpenKnowledgeGraph = { showKnowledgeGraph = true },
+                                onToggleKgMicroQuestions = asistenViewModel::setKgMicroQuestionsEnabled,
+                                onToggleKgWeeklyReflection = asistenViewModel::setKgWeeklyReflectionEnabled,
+                                onSetKgWeeklyReflectionSchedule = asistenViewModel::setKgWeeklyReflectionSchedule,
                                 onSetDeviceLocationOptIn = asistenViewModel::setDeviceLocationOptIn,
                                 onAddManualMemory = asistenViewModel::addManualMemory,
                                 onDeleteMemory = asistenViewModel::deleteMemory,
                                 onDeleteSummary = asistenViewModel::deleteSummary,
                                 onClearMemories = asistenViewModel::clearAllMemories,
                                 onRefreshMemoryProfile = { asistenViewModel.refreshMemoryProfile(force = true) },
+                                onSaveMemoryProfileSection = asistenViewModel::saveMemoryProfileSection,
+                                onDeleteMemoryProfileSection = asistenViewModel::deleteMemoryProfileSection,
                                 onClearMemoryProfile = { asistenViewModel.clearMemoryProfile(showBanner = true) },
                                 onExportZip = asistenViewModel::buildEcosystemZipBytes,
                                 onImportZip = asistenViewModel::importEcosystemZipBytes,
@@ -421,6 +474,41 @@ fun EcosystemKuShell(
                     uiState = asistenState.dailyOsState,
                     actions = dailyOsActions,
                     onClose = { showDailyOs = false },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+        }
+
+        if (showKnowledgeGraph) {
+            BackHandler(enabled = true) { showKnowledgeGraph = false }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(15f)
+                    .background(DominantBg)
+                    .clickable(interactionSource = blockerInteraction, indication = null) {}
+            ) {
+                KnowledgeGraphScreen(
+                    profileName = asistenState.profileName,
+                    nodes = asistenState.kgNodes,
+                    edges = asistenState.kgEdges,
+                    isSyncing = asistenState.isSyncingKg,
+                    onEnsureSyncedOnce = asistenViewModel::ensureKgSyncedOnce,
+                    onSyncSignals = { asistenViewModel.syncKnowledgeGraphSignals(silent = false) },
+                    onStartKenaliAku = {
+                        showKnowledgeGraph = false
+                        selectedTab = AppTab.ASISTEN
+                        asistenViewModel.startKenaliAkuSession()
+                    },
+                    onAddManualEdge = asistenViewModel::addManualKgEdge,
+                    onMarkEdgeHistorical = asistenViewModel::markKgEdgeHistorical,
+                    onUpdateNode = asistenViewModel::updateKgNode,
+                    onDeleteNode = asistenViewModel::deleteKgNode,
+                    onDeleteEdge = asistenViewModel::deleteKgEdge,
+                    onClearGraph = asistenViewModel::clearKnowledgeGraph,
+                    onExportDigitalTwinJson = asistenViewModel::buildDigitalTwinJson,
+                    onShowBanner = asistenViewModel::showBannerMessage,
+                    onClose = { showKnowledgeGraph = false },
                     modifier = Modifier.fillMaxSize()
                 )
             }

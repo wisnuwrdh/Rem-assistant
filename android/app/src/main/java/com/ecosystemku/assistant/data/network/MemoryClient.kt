@@ -1,6 +1,8 @@
 package com.ecosystemku.assistant.data.network
 
 import com.ecosystemku.assistant.BuildConfig
+import com.ecosystemku.assistant.data.kg.ExtractedTripleDto
+import com.ecosystemku.assistant.data.kg.KnowledgeGraphHelpers
 import com.ecosystemku.assistant.data.local.ConversationSummaryEntity
 import com.ecosystemku.assistant.data.local.UserMemoryEntity
 import kotlinx.serialization.Serializable
@@ -25,7 +27,8 @@ data class ExtractedFactDto(
 data class MemoryExtractResponseDto(
     val facts: List<ExtractedFactDto> = emptyList(),
     val deleteKeys: List<String> = emptyList(),
-    val summary: String? = null
+    val summary: String? = null,
+    val triples: List<ExtractedTripleDto> = emptyList()
 )
 
 @Serializable
@@ -37,7 +40,8 @@ data class MemoryProfileSectionDto(
 @Serializable
 data class MemoryProfileData(
     val sections: List<MemoryProfileSectionDto> = emptyList(),
-    val updatedAt: Long = 0L
+    val updatedAt: Long = 0L,
+    val manuallyEdited: Boolean = false
 )
 
 class MemoryClient(
@@ -64,23 +68,30 @@ class MemoryClient(
         }
 
         val systemPrompt = """
-Kamu adalah modul ekstraksi memori personal untuk asisten virtual bernama Rem.
-Tugasmu: baca potongan percakapan terbaru dan ekstrak HANYA fakta personal yang EKSPLISIT diungkapkan oleh User (bukan ucapan fiksi/roleplay Rem, bukan asumsi atau tebakan).
+Kamu adalah modul ekstraksi memori personal & Knowledge Graph untuk asisten virtual bernama Rem.
+Tugasmu: baca potongan percakapan terbaru dan ekstrak HANYA informasi personal yang EKSPLISIT diungkapkan oleh User (bukan ucapan fiksi/roleplay Rem, bukan asumsi atau tebakan).
 
-Kategori valid:
+Kategori facts valid:
 - identitas (nama, panggilan, pekerjaan, domisili, umur, perangkat)
 - preferensi (kesukaan, ketidaksukaan, makanan/minuman, gaya bicara, musik, hobi)
 - kebiasaan (rutinitas harian, jam tidur/bangun, pola kerja)
 - tujuan (rencana, target belajar, proyek, cita-cita)
 - catatan (fakta penting lain yang layak diingat jangka panjang)
 
+Tipe node triples valid:
+SELF, NILAI, POLA_PIKIR, KEBIASAAN, TUJUAN, EMOSI_PEMICU, KEPUTUSAN, MINAT, ORANG, KONTEKS
+Relasi triples valid:
+MENGUTAMAKAN, MEMICU, MENURUNKAN, MENDUKUNG, CENDERUNG_SAAT, ALASANNYA, MENGHINDARI, TERCERMIN_DI, TERKAIT
+
 Aturan ketat:
 1. Jawab HANYA dengan objek JSON valid tanpa teks tambahan atau markdown.
-2. Format JSON: {"facts":[{"category":"identitas|preferensi|kebiasaan|tujuan|catatan","factKey":"snake_case_singkat","factValue":"nilai ringkas bahasa Indonesia","confidence":0.85}],"deleteKeys":["fact_key_yang_diminta_dihapus"],"summary":"ringkasan 1 kalimat singkat topik obrolan atau null"}
-3. Jika User mengubah atau mengoreksi fakta yang sudah ada, gunakan factKey yang sama dengan factValue baru.
-4. Jika User secara eksplisit meminta melupakan/menghapus info tertentu atau menyatakan suatu fakta lama tidak lagi berlaku dan harus dihapus, masukkan factKey yang cocok dari daftar Memori saat ini ke "deleteKeys". Jika tidak ada yang dihapus, isi "deleteKeys": [].
-5. Jika tidak ada fakta personal baru yang layak disimpan dari percakapan ini, kembalikan {"facts":[],"deleteKeys":[],"summary":null}.
-6. Jangan ulangi fakta yang nilainya persis sama dengan memori yang sudah ada.
+2. Format JSON: {"facts":[{"category":"identitas|preferensi|kebiasaan|tujuan|catatan","factKey":"snake_case_singkat","factValue":"nilai ringkas bahasa Indonesia","confidence":0.85}],"deleteKeys":["fact_key_yang_diminta_dihapus"],"summary":"ringkasan 1 kalimat singkat topik obrolan atau null","triples":[{"fromType":"SELF|...","fromLabel":"Tuan|label singkat","relation":"MENGUTAMAKAN|ALASANNYA|...","toType":"NILAI|POLA_PIKIR|...","toLabel":"label singkat","evidence":"alasan/konteks singkat dari chat","confidence":0.85,"replacesLabel":""}]}
+3. Isi "triples" (maks 4 item) HANYA untuk pola pikir, nilai hidup, keputusan beserta alasannya, pemicu emosi, atau kaitan kebiasaan nyata. Jika tidak ada, isi "triples": [].
+4. Jika User menyatakan perubahan/evolusi dari pola lama ke pola baru (mis. dulu begadang, sekarang tidur jam 10; dulu fokus X, sekarang beralih ke Y), isi "replacesLabel" dengan label pola lama agar node lama ditandai historis.
+5. Jika User mengubah atau mengoreksi fakta yang sudah ada, gunakan factKey yang sama dengan factValue baru.
+6. Jika User secara eksplisit meminta melupakan/menghapus info tertentu atau menyatakan suatu fakta lama tidak lagi berlaku dan harus dihapus, masukkan factKey yang cocok dari daftar Memori saat ini ke "deleteKeys". Jika tidak ada yang dihapus, isi "deleteKeys": [].
+7. Jika tidak ada info baru yang layak disimpan dari percakapan ini, kembalikan {"facts":[],"deleteKeys":[],"summary":null,"triples":[]}.
+8. Jangan ulangi fakta yang nilainya persis sama dengan memori yang sudah ada.
         """.trimIndent()
 
         val userPayload = "Memori saat ini:\n$knownFactsText\n\nPercakapan terbaru:\n${sanitizedTurns.joinToString("\n")}"
@@ -92,7 +103,7 @@ Aturan ketat:
                 ChatTurnDto("user", userPayload)
             ),
             temperature = 0.15,
-            maxTokens = 500
+            maxTokens = 750
         ).getOrNull() ?: return null
 
         val cleaned = DirectLlmClient.stripJsonFences(rawContent)
@@ -134,6 +145,24 @@ Aturan ketat:
             .distinct()
             .take(8)
 
+        val normalizedTriples = parsed.triples
+            .mapNotNull { t ->
+                val fromLbl = sanitizePlainText(t.fromLabel).take(64)
+                val toLbl = sanitizePlainText(t.toLabel).take(64)
+                if (fromLbl.length < 2 || toLbl.length < 2) return@mapNotNull null
+                ExtractedTripleDto(
+                    fromType = KnowledgeGraphHelpers.normalizeNodeType(t.fromType),
+                    fromLabel = fromLbl,
+                    relation = KnowledgeGraphHelpers.normalizeRelation(t.relation),
+                    toType = KnowledgeGraphHelpers.normalizeNodeType(t.toType),
+                    toLabel = toLbl,
+                    evidence = sanitizePlainText(t.evidence).take(200),
+                    confidence = t.confidence.coerceIn(0.3f, 1.0f),
+                    replacesLabel = sanitizePlainText(t.replacesLabel).take(64)
+                )
+            }
+            .take(4)
+
         val summary = parsed.summary
             ?.trim()
             ?.takeIf { it.length > 4 && !it.equals("null", ignoreCase = true) }
@@ -142,7 +171,8 @@ Aturan ketat:
         return MemoryExtractResponseDto(
             facts = normalizedFacts,
             deleteKeys = normalizedDeleteKeys,
-            summary = summary
+            summary = summary,
+            triples = normalizedTriples
         )
     }
 

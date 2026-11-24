@@ -26,9 +26,11 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         IdekuIdeaEntity::class,
         DailyOsHabitEntity::class,
         DailyOsTodoEntity::class,
-        RemReminderEntity::class
+        RemReminderEntity::class,
+        KgNodeEntity::class,
+        KgEdgeEntity::class
     ],
-    version = 14,
+    version = 15,
     exportSchema = false
 )
 abstract class AssistantDatabase : RoomDatabase() {
@@ -40,6 +42,7 @@ abstract class AssistantDatabase : RoomDatabase() {
     abstract fun idekuDao(): IdekuDao
     abstract fun dailyOsDao(): DailyOsDao
     abstract fun remReminderDao(): RemReminderDao
+    abstract fun knowledgeGraphDao(): KnowledgeGraphDao
 
     companion object {
         @Volatile
@@ -371,6 +374,52 @@ abstract class AssistantDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `kg_nodes` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `nodeKey` TEXT NOT NULL,
+                        `nodeType` TEXT NOT NULL,
+                        `label` TEXT NOT NULL,
+                        `summary` TEXT NOT NULL,
+                        `salience` REAL NOT NULL,
+                        `sourceType` TEXT NOT NULL,
+                        `firstSeenAt` INTEGER NOT NULL,
+                        `lastSeenAt` INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_kg_nodes_nodeKey` ON `kg_nodes` (`nodeKey`)"
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `kg_edges` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `fromNodeId` INTEGER NOT NULL,
+                        `toNodeId` INTEGER NOT NULL,
+                        `relation` TEXT NOT NULL,
+                        `evidence` TEXT NOT NULL,
+                        `weight` REAL NOT NULL,
+                        `confidence` REAL NOT NULL,
+                        `updatedAt` INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_kg_edges_fromNodeId` ON `kg_edges` (`fromNodeId`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_kg_edges_toNodeId` ON `kg_edges` (`toNodeId`)"
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_kg_edges_fromNodeId_toNodeId_relation` ON `kg_edges` (`fromNodeId`, `toNodeId`, `relation`)"
+                )
+            }
+        }
+
         fun getInstance(context: Context): AssistantDatabase {
             return instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
@@ -391,7 +440,8 @@ abstract class AssistantDatabase : RoomDatabase() {
                         MIGRATION_10_11,
                         MIGRATION_11_12,
                         MIGRATION_12_13,
-                        MIGRATION_13_14
+                        MIGRATION_13_14,
+                        MIGRATION_14_15
                     )
                     .fallbackToDestructiveMigrationOnDowngrade()
                     .build()

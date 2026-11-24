@@ -316,6 +316,7 @@ object SseTagParser {
             "cuci", "cucimoney", "cucimoney+", "keuangan", "transaksi" -> "cuci"
             "ideku", "ide", "wishlist" -> "ideku"
             "dailyos", "daily", "habit", "todo" -> "dailyos"
+            "kg", "graph", "knowledge_graph", "otak", "kepribadian", "pola_pikir" -> "kg"
             "device", "perangkat", "hp", "android", "calendar", "kalender", "battery", "baterai", "location", "lokasi", "reminder", "reminders", "pengingat" -> "device"
             "chat", "obrolan", "sessions", "sesi", "log" -> "chat"
             "all", "semua" -> "all"

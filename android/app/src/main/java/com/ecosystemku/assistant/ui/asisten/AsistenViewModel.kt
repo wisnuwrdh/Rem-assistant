@@ -21,6 +21,8 @@ import com.ecosystemku.assistant.data.cloud.CloudBackupUiState
 import com.ecosystemku.assistant.data.cloud.CloudRestoreFetchResult
 import com.ecosystemku.assistant.data.cloud.CloudSyncResult
 import com.ecosystemku.assistant.data.cloud.GoogleDriveBackupClient
+import com.ecosystemku.assistant.data.kg.BehavioralSignalSync
+import com.ecosystemku.assistant.data.kg.KnowledgeGraphRepository
 import com.ecosystemku.assistant.data.local.AiConfigField
 import com.ecosystemku.assistant.data.local.AiConfigSnapshot
 import com.ecosystemku.assistant.data.local.ApiKeyStore
@@ -40,6 +42,8 @@ import com.ecosystemku.assistant.data.local.CuciWishlistEntity
 import com.ecosystemku.assistant.data.local.DailyOsHabitEntity
 import com.ecosystemku.assistant.data.local.DailyOsTodoEntity
 import com.ecosystemku.assistant.data.local.IdekuIdeaEntity
+import com.ecosystemku.assistant.data.local.KgEdgeEntity
+import com.ecosystemku.assistant.data.local.KgNodeEntity
 import com.ecosystemku.assistant.data.local.KronikEntryEntity
 import com.ecosystemku.assistant.data.local.LinkkuBackupWrapperDto
 import com.ecosystemku.assistant.data.local.LinkkuCategoryEntity
@@ -60,6 +64,7 @@ import com.ecosystemku.assistant.data.network.KronikMoodClient
 import com.ecosystemku.assistant.data.network.LinkkuMetaClient
 import com.ecosystemku.assistant.data.network.MemoryClient
 import com.ecosystemku.assistant.data.network.MemoryProfileData
+import com.ecosystemku.assistant.data.network.MemoryProfileSectionDto
 import com.ecosystemku.assistant.data.network.SseTagParser
 import com.ecosystemku.assistant.device.AndroidDeviceBridge
 import com.ecosystemku.assistant.device.DeviceActionEvent
@@ -96,6 +101,7 @@ import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
@@ -149,6 +155,13 @@ data class AsistenUiState(
     val isSynthesizingMemoryProfile: Boolean = false,
     val autoLearnMemory: Boolean = true,
     val isLearningMemory: Boolean = false,
+    val kgNodes: List<KgNodeEntity> = emptyList(),
+    val kgEdges: List<KgEdgeEntity> = emptyList(),
+    val isSyncingKg: Boolean = false,
+    val kgMicroQuestionsEnabled: Boolean = true,
+    val kgWeeklyReflectionEnabled: Boolean = false,
+    val kgWeeklyReflectionDay: Int = Calendar.SUNDAY,
+    val kgWeeklyReflectionTime: String = "20:00",
     val kronikEntries: List<KronikEntryEntity> = emptyList(),
     val kronikBannerMessage: String? = null,
     val linkkuState: LinkkuUiState = LinkkuUiState(),
@@ -172,6 +185,9 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
     private val idekuDao = db.idekuDao()
     private val dailyOsDao = db.dailyOsDao()
     private val remReminderDao = db.remReminderDao()
+    private val kgDao = db.knowledgeGraphDao()
+    private val kgRepository = KnowledgeGraphRepository(kgDao)
+    private val behavioralSignalSync = BehavioralSignalSync(db, kgRepository)
     private val asistenPrefs = application.getSharedPreferences("asisten_prefs", Context.MODE_PRIVATE)
     private val linkkuPrefs = application.getSharedPreferences("linkku_prefs", Context.MODE_PRIVATE)
     private val cuciPrefs = application.getSharedPreferences("cucimoney_prefs", Context.MODE_PRIVATE)
@@ -212,6 +228,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
     private var idleBubbleJob: Job? = null
     private var idleTimerJob: Job? = null
     private var lastBubbleAt = 0L
+    private var lastBehavioralKgSyncAt = 0L
     private var isForeground = true
     private var isAsistenTabActive = true
 
@@ -293,7 +310,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         - Bagikan teks lewat menu Share Android: [DEVICE:SHARE|teks]
 
         ## Pencarian Arsip Lokal & Info Perangkat (On-Demand Search)
-        Ringkasan modul di prompt hanya menampilkan item terbaru. Jika Tuan menanyakan arsip lama, transaksi bulan/tanggal/kategori tertentu (mis. 2026-10), jurnal lama, ide/bookmark yang tidak muncul di ringkasan, riwayat habit, obrolan dari sesi lalu, atau kondisi perangkat (baterai, jadwal kalender, lokasi perkiraan, daftar pengingat aktif), JANGAN menebak. Keluarkan tag pencarian HANYA satu baris: [SEARCH:scope|kata_kunci] (scope valid: kronik, linkku, cuci, ideku, dailyos, device, chat, all; untuk scope device, isi query dengan battery, calendar, calendar YYYY-MM-DD, location, atau reminders). Khusus scope cuci, untuk query terstruktur gunakan format key=value dipisah titik koma, misalnya [SEARCH:cuci|book=Personal;month=2026-10;cat=Makan;dir=out] (parameter tersedia: book, month, from, to, cat, acc, dir, q). Sistem akan mengambil & menghitung data akurat dari database/perangkat agar Rem bisa menjawab dengan tepat.
+        Ringkasan modul di prompt hanya menampilkan item terbaru. Jika Tuan menanyakan arsip lama, transaksi bulan/tanggal/kategori tertentu (mis. 2026-10), jurnal lama, ide/bookmark yang tidak muncul di ringkasan, riwayat habit, obrolan dari sesi lalu, relasi/pola pikir di Knowledge Graph, atau kondisi perangkat (baterai, jadwal kalender, lokasi perkiraan, daftar pengingat aktif), JANGAN menebak. Keluarkan tag pencarian HANYA satu baris: [SEARCH:scope|kata_kunci] (scope valid: kronik, linkku, cuci, ideku, dailyos, kg, device, chat, all; untuk scope device, isi query dengan battery, calendar, calendar YYYY-MM-DD, location, atau reminders; untuk scope kg, cari simpul/relasi kebiasaan, pola pikir, nilai hidup, atau tujuan di Knowledge Graph). Khusus scope cuci, untuk query terstruktur gunakan format key=value dipisah titik koma, misalnya [SEARCH:cuci|book=Personal;month=2026-10;cat=Makan;dir=out] (parameter tersedia: book, month, from, to, cat, acc, dir, q). Sistem akan mengambil & menghitung data akurat dari database/perangkat agar Rem bisa menjawab dengan tepat.
 
         ## Memori Personal
         Jika Tuan secara eksplisit meminta Rem mengingat, memperbarui, atau melupakan informasi tertentu:
@@ -384,6 +401,10 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         val habitNotifOn = asistenPrefs.getBoolean("asisten_notif_habit_on", true)
         val todoNotifOn = asistenPrefs.getBoolean("asisten_notif_todo_on", true)
         val autoLearn = asistenPrefs.getBoolean("asisten_auto_learn", true)
+        val kgMicroQuestions = asistenPrefs.getBoolean("asisten_kg_micro_questions", true)
+        val kgWeeklyOn = asistenPrefs.getBoolean("asisten_kg_weekly_enabled", false)
+        val kgWeeklyDay = asistenPrefs.getInt("asisten_kg_weekly_day", Calendar.SUNDAY).coerceIn(Calendar.SUNDAY, Calendar.SATURDAY)
+        val kgWeeklyTime = asistenPrefs.getString("asisten_kg_weekly_time", "20:00")?.takeIf { it.contains(":") } ?: "20:00"
         val locOptIn = asistenPrefs.getBoolean("asisten_device_location_opt_in", false)
         val frac = asistenPrefs.getFloat("asisten_stage_fraction", 0.56f).coerceIn(0.35f, 0.70f)
         val rawWallpaper = asistenPrefs.getString("asisten_wallpaper_file", null)?.trim()?.takeIf { it.isNotEmpty() }
@@ -434,6 +455,10 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 notifHabitEnabled = habitNotifOn,
                 notifTodoEnabled = todoNotifOn,
                 autoLearnMemory = autoLearn,
+                kgMicroQuestionsEnabled = kgMicroQuestions,
+                kgWeeklyReflectionEnabled = kgWeeklyOn,
+                kgWeeklyReflectionDay = kgWeeklyDay,
+                kgWeeklyReflectionTime = kgWeeklyTime,
                 deviceLocationOptIn = locOptIn,
                 memoryProfile = memProfile,
                 stageFraction = frac,
@@ -449,6 +474,12 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
             habitTime = habitTime,
             todoEnabled = todoNotifOn,
             todoTime = todoTime
+        )
+        com.ecosystemku.assistant.notifications.DailyOsNotificationHelper.syncWeeklyReflectionSchedule(
+            context = app,
+            enabled = kgWeeklyOn,
+            dayOfWeek = kgWeeklyDay,
+            timeStr = kgWeeklyTime
         )
         CloudBackupScheduler.syncSchedule(
             context = app,
@@ -581,6 +612,16 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
             userMemoryDao.observeLatestSummaries(5).collect { items ->
                 _uiState.update { it.copy(summaries = items) }
             }
+        }
+
+        viewModelScope.launch {
+            combine(
+                kgDao.observeNodes(),
+                kgDao.observeEdges()
+            ) { nodes, edges -> nodes to edges }
+                .collect { (nodes, edges) ->
+                    _uiState.update { it.copy(kgNodes = nodes, kgEdges = edges) }
+                }
         }
 
         viewModelScope.launch {
@@ -1104,6 +1145,9 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 return@launch
             }
             val current = _uiState.value.memoryProfile
+            if (!force && current.manuallyEdited) {
+                return@launch
+            }
             if (!force && current.sections.isNotEmpty() &&
                 System.currentTimeMillis() - current.updatedAt < 45_000L
             ) {
@@ -1128,10 +1172,237 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun saveMemoryProfileSection(index: Int?, title: String, body: String) {
+        val cleanTitle = title.trim().take(60)
+        val cleanBody = body.trim().take(800)
+        if (cleanTitle.isBlank() || cleanBody.isBlank()) return
+        val current = _uiState.value.memoryProfile
+        val updatedSections = current.sections.toMutableList()
+        val item = MemoryProfileSectionDto(title = cleanTitle, body = cleanBody)
+        if (index != null && index in updatedSections.indices) {
+            updatedSections[index] = item
+        } else {
+            updatedSections.add(item)
+        }
+        val next = MemoryProfileData(
+            sections = updatedSections,
+            updatedAt = System.currentTimeMillis(),
+            manuallyEdited = true
+        )
+        val encoded = DailyOsHelpers.json.encodeToString(next)
+        asistenPrefs.edit().putString("asisten_memory_profile_json", encoded).apply()
+        _uiState.update { it.copy(memoryProfile = next) }
+        showBannerMessage(if (index != null) "Bagian ringkasan diperbarui" else "Bagian ringkasan ditambahkan")
+    }
+
+    fun deleteMemoryProfileSection(index: Int) {
+        val current = _uiState.value.memoryProfile
+        if (index !in current.sections.indices) return
+        val updatedSections = current.sections.toMutableList().apply { removeAt(index) }
+        if (updatedSections.isEmpty()) {
+            clearMemoryProfile(showBanner = true)
+            return
+        }
+        val next = MemoryProfileData(
+            sections = updatedSections,
+            updatedAt = System.currentTimeMillis(),
+            manuallyEdited = true
+        )
+        val encoded = DailyOsHelpers.json.encodeToString(next)
+        asistenPrefs.edit().putString("asisten_memory_profile_json", encoded).apply()
+        _uiState.update { it.copy(memoryProfile = next) }
+        showBannerMessage("Bagian ringkasan dihapus")
+    }
+
     fun clearMemoryProfile(showBanner: Boolean = true) {
         asistenPrefs.edit().remove("asisten_memory_profile_json").apply()
         _uiState.update { it.copy(memoryProfile = MemoryProfileData()) }
         if (showBanner) showBannerMessage("Ringkasan Memori dihapus")
+    }
+
+    fun setKgMicroQuestionsEnabled(enabled: Boolean) {
+        asistenPrefs.edit().putBoolean("asisten_kg_micro_questions", enabled).apply()
+        _uiState.update { it.copy(kgMicroQuestionsEnabled = enabled) }
+        showBannerMessage(
+            if (enabled) "Pertanyaan refleksi ringan diaktifkan"
+            else "Pertanyaan refleksi ringan dimatikan"
+        )
+    }
+
+    fun setKgWeeklyReflectionEnabled(enabled: Boolean) {
+        val app = getApplication<Application>()
+        asistenPrefs.edit().putBoolean("asisten_kg_weekly_enabled", enabled).apply()
+        _uiState.update { it.copy(kgWeeklyReflectionEnabled = enabled) }
+        val st = _uiState.value
+        com.ecosystemku.assistant.notifications.DailyOsNotificationHelper.syncWeeklyReflectionSchedule(
+            context = app,
+            enabled = enabled,
+            dayOfWeek = st.kgWeeklyReflectionDay,
+            timeStr = st.kgWeeklyReflectionTime
+        )
+        if (enabled && !com.ecosystemku.assistant.notifications.DailyOsNotificationHelper.hasNotificationPermission(app)) {
+            _deviceEvents.tryEmit(
+                DeviceActionEvent.RequestPermission(android.Manifest.permission.POST_NOTIFICATIONS, "Notifikasi")
+            )
+        }
+        showBannerMessage(
+            if (enabled) "Pengingat refleksi mingguan diaktifkan"
+            else "Pengingat refleksi mingguan dimatikan"
+        )
+    }
+
+    fun setKgWeeklyReflectionSchedule(dayOfWeek: Int, timeStr: String) {
+        val app = getApplication<Application>()
+        val cleanDay = dayOfWeek.coerceIn(Calendar.SUNDAY, Calendar.SATURDAY)
+        val cleanTime = timeStr.trim().takeIf { it.matches(Regex("\\d{2}:\\d{2}")) } ?: "20:00"
+        asistenPrefs.edit()
+            .putInt("asisten_kg_weekly_day", cleanDay)
+            .putString("asisten_kg_weekly_time", cleanTime)
+            .apply()
+        _uiState.update {
+            it.copy(
+                kgWeeklyReflectionDay = cleanDay,
+                kgWeeklyReflectionTime = cleanTime
+            )
+        }
+        com.ecosystemku.assistant.notifications.DailyOsNotificationHelper.syncWeeklyReflectionSchedule(
+            context = app,
+            enabled = _uiState.value.kgWeeklyReflectionEnabled,
+            dayOfWeek = cleanDay,
+            timeStr = cleanTime
+        )
+        showBannerMessage("Jadwal refleksi mingguan diperbarui ($cleanTime)")
+    }
+
+    fun syncKnowledgeGraphSignals(silent: Boolean = false) {
+        if (_uiState.value.isSyncingKg) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isSyncingKg = true) }
+            try {
+                behavioralSignalSync.syncAll(_uiState.value.profileName)
+                lastBehavioralKgSyncAt = System.currentTimeMillis()
+                if (!silent) {
+                    showBannerMessage("Sinyal Knowledge Graph disinkronkan")
+                }
+            } finally {
+                _uiState.update { it.copy(isSyncingKg = false) }
+            }
+        }
+    }
+
+    fun ensureKgSyncedOnce() {
+        if (lastBehavioralKgSyncAt == 0L) {
+            syncKnowledgeGraphSignals(silent = true)
+        }
+    }
+
+    fun addManualKgEdge(
+        fromType: String,
+        fromLabel: String,
+        relation: String,
+        toType: String,
+        toLabel: String,
+        evidence: String,
+        replacesLabel: String = ""
+    ) {
+        if (fromLabel.isBlank() || toLabel.isBlank()) return
+        viewModelScope.launch {
+            val ok = kgRepository.addManualEdge(
+                profileName = _uiState.value.profileName,
+                fromType = fromType,
+                fromLabel = fromLabel,
+                relation = relation,
+                toType = toType,
+                toLabel = toLabel,
+                evidence = evidence,
+                replacesLabel = replacesLabel
+            )
+            if (ok) {
+                showBannerMessage("Koneksi Knowledge Graph ditambahkan")
+            } else {
+                showBannerMessage("Simpul sumber dan tujuan tidak boleh sama")
+            }
+        }
+    }
+
+    fun markKgEdgeHistorical(edgeId: Long) {
+        viewModelScope.launch {
+            kgRepository.markEdgeHistorical(edgeId)
+            showBannerMessage("Relasi ditandai historis (bobot diturunkan)")
+        }
+    }
+
+    fun updateKgNode(nodeId: Long, label: String, summary: String) {
+        if (label.isBlank()) return
+        viewModelScope.launch {
+            kgRepository.updateNodeDetails(nodeId, label, summary)
+            showBannerMessage("Simpul Knowledge Graph diperbarui")
+        }
+    }
+
+    fun deleteKgNode(nodeId: Long) {
+        viewModelScope.launch {
+            val target = kgDao.getNodeById(nodeId)
+            if (target?.nodeType == "SELF") {
+                showBannerMessage("Simpul pusat SELF tidak dapat dihapus")
+                return@launch
+            }
+            kgRepository.deleteNode(nodeId)
+            showBannerMessage("Simpul Knowledge Graph dihapus")
+        }
+    }
+
+    fun deleteKgEdge(edgeId: Long) {
+        viewModelScope.launch {
+            kgRepository.deleteEdge(edgeId)
+            showBannerMessage("Relasi Knowledge Graph dihapus")
+        }
+    }
+
+    fun clearKnowledgeGraph() {
+        viewModelScope.launch {
+            kgDao.clearAll()
+            lastBehavioralKgSyncAt = 0L
+            showBannerMessage("Knowledge Graph dibersihkan")
+        }
+    }
+
+    suspend fun buildDigitalTwinJson(): String {
+        val memories = userMemoryDao.getAllMemories()
+        val summaries = userMemoryDao.getLatestSummaries(30)
+        return kgRepository.exportDigitalTwinJson(
+            profileName = _uiState.value.profileName,
+            memories = memories,
+            summaries = summaries
+        )
+    }
+
+    fun startKenaliAkuSession() {
+        if (_uiState.value.isThinking) return
+        if (!ApiKeyStore.isLlmConfigured(getApplication())) {
+            _uiState.update {
+                it.copy(errorMessage = "LLM belum diatur. Isi Base URL, Model, & API Key di Setelan.")
+            }
+            return
+        }
+        streamJob?.cancel()
+        streamJob = viewModelScope.launch {
+            audioManager.stop()
+            val sid = createSessionWithGreeting(title = "Sesi Kenali Aku")
+            asistenPrefs.edit().putLong("asisten_current_session_id", sid).apply()
+            _activeSessionId.value = sid
+            _uiState.update { it.copy(currentSessionId = sid) }
+            val starterText = "Rem, ayo mulai Sesi Kenali Aku untuk memetakan pola pikir, nilai hidup, kebiasaan, dan tujuan jangka panjangku."
+            val userMsgId = chatDao.insert(
+                ChatMessageEntity(
+                    sessionId = sid,
+                    role = "user",
+                    content = starterText,
+                    createdAt = System.currentTimeMillis()
+                )
+            )
+            streamAssistantReply(sessionId = sid, sourceUserMsgId = userMsgId)
+        }
     }
 
     fun clearAllMemories() {
@@ -1150,6 +1421,8 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
             chatDao.clearAllSessions()
             userMemoryDao.clearAll()
             userMemoryDao.clearSummaries()
+            kgDao.clearAll()
+            lastBehavioralKgSyncAt = 0L
             clearMemoryProfile(showBanner = false)
             _activeSessionId.value = createSessionWithGreeting()
             showBannerMessage("Data Asisten berhasil direset")
@@ -1353,6 +1626,8 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
             chatDao.clearAllSessions()
             userMemoryDao.clearAll()
             userMemoryDao.clearSummaries()
+            kgDao.clearAll()
+            lastBehavioralKgSyncAt = 0L
             clearMemoryProfile(showBanner = false)
             _activeSessionId.value = createSessionWithGreeting()
             refreshDailyOsPrefsIntoState()
@@ -3843,6 +4118,11 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         val topMemories = userMemoryDao.getTopMemories(20)
         val latestSummaries = userMemoryDao.getLatestSummaries(3)
         val activeSession = if (sessionId > 0L) chatDao.getSessionById(sessionId) else null
+        val sessionMessages = if (sessionId > 0L) chatDao.getBySessionAsc(sessionId) else emptyList()
+        val currentUserText = sessionMessages.lastOrNull {
+            it.role == "user" && (currentUserMsgId == null || it.id == currentUserMsgId)
+        }?.content.orEmpty()
+        val kgContext = kgRepository.queryContextForMessage(currentUserText, maxEdges = 14)
         val recentJournals = kronikDao.getVisibleEntries(3)
         val recentPublicLinks = linkkuDao.getPublicLinks(4)
         val cuciState = _uiState.value.cuciMoneyState
@@ -3866,11 +4146,9 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
             else -> "malam"
         }
         val timeFormatted = String.format("%02d:%02d", nowZdt.hour, nowZdt.minute)
-        val prevSessionUserMsg = if (sessionId > 0L) {
-            chatDao.getBySessionAsc(sessionId)
-                .filter { it.role == "user" && it.id != currentUserMsgId }
-                .maxByOrNull { it.createdAt }
-        } else null
+        val prevSessionUserMsg = sessionMessages
+            .filter { it.role == "user" && it.id != currentUserMsgId }
+            .maxByOrNull { it.createdAt }
         val prevGlobalUserMsg = if (prevSessionUserMsg == null) {
             chatDao.getAll()
                 .filter { it.role == "user" && it.id != currentUserMsgId }
@@ -3895,6 +4173,28 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 append("\n\n## Ringkasan Memori Tentang Tuan\n")
                 memProfile.sections.forEach { sec ->
                     append("[${sec.title}] ${sec.body}\n")
+                }
+            }
+            if (kgContext.isNotEmpty()) {
+                append("\n\n## Peta Pengetahuan Personal (Otak Digital)\n")
+                kgContext.forEach { t ->
+                    val hist = if (com.ecosystemku.assistant.data.kg.KnowledgeGraphHelpers.isHistoricalEdge(t.edge)) "[HISTORIS] " else ""
+                    val ev = if (t.edge.evidence.isNotBlank()) " — \"${t.edge.evidence.take(80)}\"" else ""
+                    append("- $hist${t.fromNode.label} [${t.fromNode.nodeType}] —(${t.edge.relation}, w=${"%.1f".format(Locale.US, t.edge.weight)})→ ${t.toNode.label} [${t.toNode.nodeType}]$ev\n")
+                }
+            }
+            val isKenaliAku = activeSession?.title?.contains("Kenali Aku", ignoreCase = true) == true
+            if (isKenaliAku) {
+                append(
+                    "\n\n## Mode Aktif: Sesi Kenali Aku\n" +
+                        "Tujuan sesi ini adalah mengenal Tuan lebih dalam (aturan pengambilan keputusan/trade-off, pola pikir, prinsip hidup, kebiasaan, pemicu emosi, dan tujuan jangka panjang) untuk memperkaya Otak Digital Tuan. Ajukan HANYA SATU pertanyaan reflektif yang natural, hangat, dan spesifik per giliran (berdasarkan Peta Pengetahuan di atas; jika ada kebiasaan/prinsip lama yang mungkin bergeser, tanyakan apakah masih berlaku). Jika membantu, sertakan opsi cepat [CHOICES:single|...] yang relevan."
+                )
+            } else if (_uiState.value.kgMicroQuestionsEnabled) {
+                val userTurnsInSession = sessionMessages.count { it.role == "user" }
+                if (userTurnsInSession in 1..2 && kgContext.size < 10) {
+                    append(
+                        "\n\nCatatan opsional: bila terasa natural dan relevan dengan topik, Rem boleh menyelipkan maksimal satu pertanyaan ringan singkat untuk lebih memahami alasan/preferensi/pola pikir Tuan (jangan memaksa jika Tuan sedang terburu-buru atau bertanya hal teknis)."
+                    )
                 }
             }
             if (topMemories.isNotEmpty()) {
@@ -4215,6 +4515,21 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                         )
                     }
                 }
+                if (result.triples.isNotEmpty()) {
+                    kgRepository.recordTriples(
+                        profileName = _uiState.value.profileName,
+                        triples = result.triples,
+                        sourceType = "chat",
+                        weightBoost = 0.7f
+                    )
+                }
+                val nowSync = System.currentTimeMillis()
+                if (nowSync - lastBehavioralKgSyncAt >= 6 * 60 * 60_000L) {
+                    runCatching {
+                        behavioralSignalSync.syncAll(_uiState.value.profileName)
+                        lastBehavioralKgSyncAt = nowSync
+                    }
+                }
                 if (memoryChanged) {
                     refreshMemoryProfile(force = false)
                 }
@@ -4478,6 +4793,13 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                     )
                 }
                 out.append(AndroidDeviceBridge.readCoarseLocation(app, optIn)).append("\n")
+            }
+        }
+
+        if (scope == "kg" || scope == "all") {
+            val kgResult = kgRepository.searchGraph(rawQuery)
+            if (scope == "kg" || !kgResult.startsWith("Tidak ditemukan")) {
+                out.append(kgResult).append("\n")
             }
         }
 

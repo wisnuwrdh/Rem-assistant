@@ -19,8 +19,11 @@ import java.util.Calendar
 
 object DailyOsNotificationHelper {
     const val CHANNEL_ID = "dailyos_reminders"
+    const val EXTRA_LAUNCH_ACTION = "launch_action"
+    const val ACTION_KENALI_AKU = "kenali_aku"
     private const val REQ_HABIT = 1001
     private const val REQ_TODO = 1002
+    private const val REQ_KG_WEEKLY = 1003
 
     fun ensureChannel(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -51,12 +54,16 @@ object DailyOsNotificationHelper {
         context: Context,
         notificationId: Int,
         title: String,
-        body: String
+        body: String,
+        launchAction: String? = null
     ): Boolean {
         if (!hasNotificationPermission(context)) return false
         ensureChannel(context)
         val launchIntent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            if (!launchAction.isNullOrBlank()) {
+                putExtra(EXTRA_LAUNCH_ACTION, launchAction)
+            }
         }
         val contentPending = PendingIntent.getActivity(
             context,
@@ -199,6 +206,55 @@ object DailyOsNotificationHelper {
         }.getOrDefault(false)
     }
 
+    fun syncWeeklyReflectionSchedule(
+        context: Context,
+        enabled: Boolean,
+        dayOfWeek: Int = Calendar.SUNDAY,
+        timeStr: String = "20:00"
+    ) {
+        ensureChannel(context)
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+        val intent = Intent(context, DailyOsAlarmReceiver::class.java).apply {
+            putExtra("notif_id", REQ_KG_WEEKLY)
+            putExtra("title", "Rem • Refleksi Mingguan Otak Digital")
+            putExtra("body", "Tuan, yuk luangkan 2 menit untuk Sesi Kenali Aku mingguan agar peta pola pikirmu makin akurat. 💙")
+            putExtra(EXTRA_LAUNCH_ACTION, ACTION_KENALI_AKU)
+        }
+        val pending = PendingIntent.getBroadcast(
+            context,
+            REQ_KG_WEEKLY,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        alarmManager.cancel(pending)
+        if (!enabled) return
+
+        val parts = timeStr.split(":")
+        val hour = parts.getOrNull(0)?.toIntOrNull()?.coerceIn(0, 23) ?: 20
+        val minute = parts.getOrNull(1)?.toIntOrNull()?.coerceIn(0, 59) ?: 0
+        val targetDay = dayOfWeek.coerceIn(Calendar.SUNDAY, Calendar.SATURDAY)
+
+        val cal = Calendar.getInstance().apply {
+            set(Calendar.DAY_OF_WEEK, targetDay)
+            set(Calendar.HOUR_OF_DAY, hour)
+            set(Calendar.MINUTE, minute)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+            if (timeInMillis <= System.currentTimeMillis()) {
+                add(Calendar.WEEK_OF_YEAR, 1)
+            }
+        }
+
+        runCatching {
+            alarmManager.setInexactRepeating(
+                AlarmManager.RTC_WAKEUP,
+                cal.timeInMillis,
+                AlarmManager.INTERVAL_DAY * 7L,
+                pending
+            )
+        }
+    }
+
     fun cancelOneTimeReminder(context: Context, reminderId: Long) {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
         val reqCode = 20_000 + ((reminderId.coerceAtLeast(1L) % 100_000L).toInt())
@@ -219,6 +275,7 @@ class DailyOsAlarmReceiver : BroadcastReceiver() {
         val id = intent.getIntExtra("notif_id", 1001)
         val title = intent.getStringExtra("title") ?: "Rem • Pengingat Daily OS"
         val body = intent.getStringExtra("body") ?: "Jangan lupa cek Daily OS hari ini, Tuan. 💙"
-        DailyOsNotificationHelper.postNotification(context, id, title, body)
+        val launchAction = intent.getStringExtra(DailyOsNotificationHelper.EXTRA_LAUNCH_ACTION)
+        DailyOsNotificationHelper.postNotification(context, id, title, body, launchAction)
     }
 }

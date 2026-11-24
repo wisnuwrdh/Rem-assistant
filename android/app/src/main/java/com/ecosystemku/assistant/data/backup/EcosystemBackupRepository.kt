@@ -1,6 +1,8 @@
 package com.ecosystemku.assistant.data.backup
 
 import android.content.Context
+import com.ecosystemku.assistant.data.kg.KgBackupWrapperDto
+import com.ecosystemku.assistant.data.kg.KnowledgeGraphHelpers
 import com.ecosystemku.assistant.data.local.AssistantDatabase
 import com.ecosystemku.assistant.data.local.ChatMessageEntity
 import com.ecosystemku.assistant.data.local.ChatSessionEntity
@@ -13,6 +15,8 @@ import com.ecosystemku.assistant.data.local.CuciMemberEntity
 import com.ecosystemku.assistant.data.local.CuciTransactionEntity
 import com.ecosystemku.assistant.data.local.CuciWishlistEntity
 import com.ecosystemku.assistant.data.local.IdekuIdeaEntity
+import com.ecosystemku.assistant.data.local.KgEdgeEntity
+import com.ecosystemku.assistant.data.local.KgNodeEntity
 import com.ecosystemku.assistant.data.local.LinkkuBackupWrapperDto
 import com.ecosystemku.assistant.data.local.LinkkuCategoryEntity
 import com.ecosystemku.assistant.data.local.LinkkuEncryptedPrivatePayloadDto
@@ -113,6 +117,7 @@ class EcosystemBackupRepository(private val appContext: Context) {
     private val cuciMoneyDao = db.cuciMoneyDao()
     private val idekuDao = db.idekuDao()
     private val dailyOsDao = db.dailyOsDao()
+    private val kgDao = db.knowledgeGraphDao()
 
     private val asistenPrefs = appContext.getSharedPreferences("asisten_prefs", Context.MODE_PRIVATE)
     private val linkkuPrefs = appContext.getSharedPreferences("linkku_prefs", Context.MODE_PRIVATE)
@@ -192,6 +197,9 @@ class EcosystemBackupRepository(private val appContext: Context) {
             memoryProfileJson = asistenPrefs.getString("asisten_memory_profile_json", null)
         )
         val asistenJson = DailyOsHelpers.json.encodeToString(asistenWrapper)
+        val kgJson = DailyOsHelpers.json.encodeToString(
+            KnowledgeGraphHelpers.buildBackupDto(kgDao.getAllNodes(), kgDao.getAllEdges())
+        )
 
         val entries = mapOf(
             "manifest.json" to manifestJson,
@@ -200,7 +208,8 @@ class EcosystemBackupRepository(private val appContext: Context) {
             "kronik.json" to kronikJson,
             "cucimoney.json" to cuciJson,
             "linkku.json" to linkkuJson,
-            "asisten.json" to asistenJson
+            "asisten.json" to asistenJson,
+            "knowledge_graph.json" to kgJson
         )
 
         val baos = ByteArrayOutputStream()
@@ -497,6 +506,58 @@ class EcosystemBackupRepository(private val appContext: Context) {
                     latestSessionId = chatDao.getAllSessions().firstOrNull()?.id
                     restoredModules++
                 }
+            }
+
+            val kgRaw = files["knowledge_graph.json"]
+            if (kgRaw != null) {
+                runCatching {
+                    val wrapper = DailyOsHelpers.json.decodeFromString<KgBackupWrapperDto>(kgRaw)
+                    if (replaceAll) {
+                        kgDao.clearAll()
+                    }
+                    val nowMs = System.currentTimeMillis()
+                    val keyToId = kgDao.getAllNodes().associate { it.nodeKey to it.id }.toMutableMap()
+                    wrapper.nodes.forEach { n ->
+                        if (n.nodeKey.isBlank() || n.label.isBlank()) return@forEach
+                        if (!keyToId.containsKey(n.nodeKey)) {
+                            val newId = kgDao.insertNode(
+                                KgNodeEntity(
+                                    nodeKey = n.nodeKey,
+                                    nodeType = KnowledgeGraphHelpers.normalizeNodeType(n.nodeType),
+                                    label = n.label.take(120),
+                                    summary = n.summary.take(300),
+                                    salience = n.salience.coerceIn(0.1f, 1.0f),
+                                    sourceType = n.sourceType.ifBlank { "chat" },
+                                    firstSeenAt = if (n.firstSeenAt > 0L) n.firstSeenAt else nowMs,
+                                    lastSeenAt = if (n.lastSeenAt > 0L) n.lastSeenAt else nowMs
+                                )
+                            )
+                            keyToId[n.nodeKey] = newId
+                        }
+                    }
+                    wrapper.edges.forEach { e ->
+                        val fromId = keyToId[e.fromKey] ?: return@forEach
+                        val toId = keyToId[e.toKey] ?: return@forEach
+                        if (fromId == toId) return@forEach
+                        val rel = KnowledgeGraphHelpers.normalizeRelation(e.relation)
+                        if (kgDao.getEdgeByTriple(fromId, toId, rel) == null) {
+                            kgDao.insertEdge(
+                                KgEdgeEntity(
+                                    fromNodeId = fromId,
+                                    toNodeId = toId,
+                                    relation = rel,
+                                    evidence = e.evidence.take(240),
+                                    weight = e.weight.coerceIn(0.3f, 5.0f),
+                                    confidence = e.confidence.coerceIn(0.3f, 1.0f),
+                                    updatedAt = if (e.updatedAt > 0L) e.updatedAt else nowMs
+                                )
+                            )
+                        }
+                    }
+                    restoredModules++
+                }
+            } else if (replaceAll && files["asisten.json"] != null) {
+                kgDao.clearAll()
             }
 
             if (restoredModules == 0) {
