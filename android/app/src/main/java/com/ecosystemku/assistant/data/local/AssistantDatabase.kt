@@ -9,6 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [
+        ChatSessionEntity::class,
         ChatMessageEntity::class,
         UserMemoryEntity::class,
         ConversationSummaryEntity::class,
@@ -26,7 +27,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         DailyOsHabitEntity::class,
         DailyOsTodoEntity::class
     ],
-    version = 10,
+    version = 13,
     exportSchema = false
 )
 abstract class AssistantDatabase : RoomDatabase() {
@@ -315,6 +316,43 @@ abstract class AssistantDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `chat_messages` ADD COLUMN `choicesJson` TEXT")
+            }
+        }
+
+        private val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `chat_sessions` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `title` TEXT NOT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("ALTER TABLE `chat_messages` ADD COLUMN `sessionId` INTEGER NOT NULL DEFAULT 1")
+                db.execSQL(
+                    """
+                    INSERT INTO `chat_sessions` (`id`, `title`, `createdAt`, `updatedAt`)
+                    SELECT 1, 'Obrolan Sebelumnya', COALESCE(MIN(`createdAt`), 0), COALESCE(MAX(`createdAt`), 0)
+                    FROM `chat_messages`
+                    WHERE EXISTS (SELECT 1 FROM `chat_messages`)
+                    """.trimIndent()
+                )
+            }
+        }
+
+        private val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `chat_sessions` ADD COLUMN `rollingSummary` TEXT")
+                db.execSQL("ALTER TABLE `chat_sessions` ADD COLUMN `summarizedCount` INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         fun getInstance(context: Context): AssistantDatabase {
             return instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
@@ -331,7 +369,10 @@ abstract class AssistantDatabase : RoomDatabase() {
                         MIGRATION_6_7,
                         MIGRATION_7_8,
                         MIGRATION_8_9,
-                        MIGRATION_9_10
+                        MIGRATION_9_10,
+                        MIGRATION_10_11,
+                        MIGRATION_11_12,
+                        MIGRATION_12_13
                     )
                     .fallbackToDestructiveMigrationOnDowngrade()
                     .build()

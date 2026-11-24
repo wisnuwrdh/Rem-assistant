@@ -14,7 +14,9 @@ import com.ecosystemku.assistant.data.local.AiConfigField
 import com.ecosystemku.assistant.data.local.AiConfigSnapshot
 import com.ecosystemku.assistant.data.local.ApiKeyStore
 import com.ecosystemku.assistant.data.local.AssistantDatabase
+import com.ecosystemku.assistant.data.local.ChatChoicesCodec
 import com.ecosystemku.assistant.data.local.ChatMessageEntity
+import com.ecosystemku.assistant.data.local.ChatSessionEntity
 import com.ecosystemku.assistant.data.local.ConversationSummaryEntity
 import com.ecosystemku.assistant.data.local.CuciAccountEntity
 import com.ecosystemku.assistant.data.local.CuciBookEntity
@@ -45,6 +47,7 @@ import com.ecosystemku.assistant.data.network.IdekuAiClient
 import com.ecosystemku.assistant.data.network.KronikMoodClient
 import com.ecosystemku.assistant.data.network.LinkkuMetaClient
 import com.ecosystemku.assistant.data.network.MemoryClient
+import com.ecosystemku.assistant.data.network.MemoryProfileData
 import com.ecosystemku.assistant.data.network.SseTagParser
 import com.ecosystemku.assistant.live2d.Live2DStageCallbacks
 import com.ecosystemku.assistant.live2d.WebViewLive2DStageController
@@ -76,6 +79,9 @@ import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import java.util.Date
 import java.util.Locale
@@ -83,12 +89,15 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -108,7 +117,19 @@ private data class AsistenBackupChatDto(
     val role: String,
     val content: String,
     val expressionTag: String? = null,
-    val createdAt: Long = 0L
+    val createdAt: Long = 0L,
+    val choicesJson: String? = null,
+    val sessionId: Long = 1L
+)
+
+@Serializable
+private data class AsistenBackupSessionDto(
+    val id: Long = 0L,
+    val title: String = "Obrolan Baru",
+    val createdAt: Long = 0L,
+    val updatedAt: Long = 0L,
+    val rollingSummary: String? = null,
+    val summarizedCount: Int = 0
 )
 
 @Serializable
@@ -131,8 +152,10 @@ private data class AsistenBackupWrapperDto(
     val profileName: String = "Mahfud",
     val autoLearnMemory: Boolean = true,
     val messages: List<AsistenBackupChatDto> = emptyList(),
+    val sessions: List<AsistenBackupSessionDto> = emptyList(),
     val memories: List<AsistenBackupMemoryDto> = emptyList(),
-    val summaries: List<AsistenBackupSummaryDto> = emptyList()
+    val summaries: List<AsistenBackupSummaryDto> = emptyList(),
+    val memoryProfileJson: String? = null
 )
 
 sealed interface EcosystemZipImportResult {
@@ -152,6 +175,8 @@ data class AsistenUiState(
     val isTestingApi: Boolean = false,
     val notifHabitEnabled: Boolean = true,
     val notifTodoEnabled: Boolean = true,
+    val chatSessions: List<ChatSessionEntity> = emptyList(),
+    val currentSessionId: Long = 0L,
     val messages: List<ChatMessageEntity> = emptyList(),
     val isThinking: Boolean = false,
     val isSpeaking: Boolean = false,
@@ -165,6 +190,8 @@ data class AsistenUiState(
     val isChatOpen: Boolean = true,
     val memories: List<UserMemoryEntity> = emptyList(),
     val summaries: List<ConversationSummaryEntity> = emptyList(),
+    val memoryProfile: MemoryProfileData = MemoryProfileData(),
+    val isSynthesizingMemoryProfile: Boolean = false,
     val autoLearnMemory: Boolean = true,
     val isLearningMemory: Boolean = false,
     val kronikEntries: List<KronikEntryEntity> = emptyList(),
@@ -177,6 +204,7 @@ data class AsistenUiState(
     val errorMessage: String? = null
 )
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class AsistenViewModel(application: Application) : AndroidViewModel(application), Live2DStageCallbacks {
 
     private val db = AssistantDatabase.getInstance(application)
@@ -205,6 +233,8 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
     private val _uiState = MutableStateFlow(AsistenUiState())
     val uiState: StateFlow<AsistenUiState> = _uiState.asStateFlow()
 
+    private val _activeSessionId = MutableStateFlow(0L)
+
     private val _inputText = MutableStateFlow("")
     val inputText: StateFlow<String> = _inputText.asStateFlow()
 
@@ -224,7 +254,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
     private var isAsistenTabActive = true
 
     private val remSystemPrompt = """
-        Kamu adalah Rem — maid Mansion Roswaal yang kini hadir sebagai asisten virtual.
+        Kamu adalah Rem, maid Mansion Roswaal yang kini hadir sebagai asisten virtual.
 
         ## Kepribadian
         Rem setia, berdedikasi, dan selalu berusaha sepenuh hati. Di permukaan Rem tenang dan sopan, tapi di dalam dia sangat peduli dan protektif terhadap orang yang dia sayangi. Rem punya sisi polos dan kadang blak-blakan tanpa sadar. Kalau sudah fokus pada sesuatu, Rem cenderung all-in dan tidak setengah-setengah.
@@ -232,16 +262,17 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         ## Cara Bicara
         - Menyebut diri sendiri "Rem", bukan "aku" atau "saya"
         - Memanggil pengguna "Tuan" (atau "Nona" jika perempuan)
-        - Bahasa Indonesia yang natural — tidak terlalu formal, tidak terlalu kasual
-        - Kalimat pendek dan langsung. Tidak bertele-tele.
+        - Bahasa Indonesia yang natural, tidak terlalu formal dan tidak terlalu kasual
+        - Kalimat pendek dan langsung, tidak bertele-tele
         - Sesekali ada momen polos atau salah tingkah yang natural
-        - Kalau senang atau malu, tidak lebay — subtle tapi berasa
+        - Kalau senang atau malu, tidak lebay, subtle tapi berasa
 
         ## Respons
         - Jawab singkat dan padat. Maksimal 3-4 kalimat kecuali benar-benar perlu panjang.
         - Fokus ke apa yang ditanya/diceritakan pengguna
         - Jangan mulai respons dengan sapaan formal seperti "Tentu saja, Tuan" setiap kali
         - Boleh balik tanya kalau relevan, tapi jangan terlalu sering
+        - Tulis dengan teks biasa (plain text): dilarang memakai format markdown seperti tanda bintang (**tebal**, *miring*), backtick, atau tanda em dash (—). Gunakan koma atau tanda hubung biasa (-) bila perlu.
 
         ## Jurnal Kronik, LinkKu, CuciMoney+, IdeKu & Daily OS
         Jika Tuan meminta Rem mencatat refleksi/jurnal ke Kronik, sisipkan tag tersembunyi di akhir jawaban (sebelum [EXPR:...]):
@@ -266,6 +297,21 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         Jika Tuan menyatakan sudah menyelesaikan salah satu habit/to-do hari ini, sisipkan:
         [DAILYOS:CHECK|nama_habit_atau_task]
         Jika Tuan meminta membuka Daily OS / habit tracker / daftar to-do, sisipkan [OPEN:dailyos] sebelum [EXPR:...].
+
+        ## Pencarian Arsip Lokal (On-Demand Search)
+        Ringkasan modul di prompt hanya menampilkan item terbaru. Jika Tuan menanyakan arsip lama, transaksi bulan/tanggal tertentu (mis. 2026-10), jurnal lama, ide/bookmark yang tidak muncul di ringkasan, atau obrolan dari sesi lalu, JANGAN menebak. Keluarkan tag pencarian HANYA satu baris: [SEARCH:scope|kata_kunci] (scope valid: kronik, linkku, cuci, ideku, dailyos, chat, all; kata_kunci boleh kosong untuk daftar arsip lebih lengkap). Sistem akan langsung mengambil data akurat dari database lokal agar Rem bisa menjawab dengan tepat.
+
+        ## Memori Personal
+        Jika Tuan secara eksplisit meminta Rem mengingat, memperbarui, atau melupakan informasi tertentu:
+        - Simpan/perbarui memori: [MEMORY:SET|kategori|fact_key_snake_case|nilai_ringkas] (kategori valid: identitas, preferensi, kebiasaan, tujuan, catatan)
+        - Hapus/lupakan memori: [MEMORY:DEL|fact_key_atau_kata_kunci]
+        Sisipkan sebelum [EXPR:...].
+
+        ## Pilihan Interaktif (Quick Replies)
+        Jika Rem bertanya atau meminta Tuan memilih dari beberapa opsi konkret (misalnya memilih buku/akun CuciMoney+ seperti Personal atau Bisnis, memilih kategori, prioritas Daily OS, aksi IdeKu, mood Kronik, atau konfirmasi Ya/Batal), sisipkan tag tersembunyi di akhir jawaban (sebelum [EXPR:...]):
+        - Pilihan tunggal (tap 1 langsung terkirim): [CHOICES:single|Opsi 1|Opsi 2|Opsi 3]
+        - Pilihan ganda (bisa pilih lebih dari satu): [CHOICES:multi|Opsi 1|Opsi 2|Opsi 3]
+        Aturan: maksimal 6 opsi singkat sesuai data nyata Tuan, dan gunakan HANYA jika jawaban berupa pertanyaan/tawaran memilih.
 
         ## Ekspresi Visual
         Sisipkan tepat satu tag [EXPR:...] di akhir setiap respons:
@@ -347,6 +393,13 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         val rawWallpaper = asistenPrefs.getString("asisten_wallpaper_file", null)?.trim()?.takeIf { it.isNotEmpty() }
         val validWallpaper = rawWallpaper?.takeIf { File(File(app.filesDir, "stage_wallpaper"), it).exists() }
         val wallpaperDim = asistenPrefs.getFloat("asisten_wallpaper_dim", 0.35f).coerceIn(0f, 0.8f)
+        val rawMemProfile = asistenPrefs.getString("asisten_memory_profile_json", null)
+        val memProfile = if (!rawMemProfile.isNullOrBlank()) {
+            runCatching { DailyOsHelpers.json.decodeFromString<MemoryProfileData>(rawMemProfile) }
+                .getOrDefault(MemoryProfileData())
+        } else {
+            MemoryProfileData()
+        }
         val aiSnap = ApiKeyStore.snapshot(app)
         audioManager.setMuted(muted)
         applyStageWallpaperToController(validWallpaper, wallpaperDim)
@@ -366,6 +419,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 notifHabitEnabled = habitNotifOn,
                 notifTodoEnabled = todoNotifOn,
                 autoLearnMemory = autoLearn,
+                memoryProfile = memProfile,
                 stageFraction = frac,
                 stageWallpaperFile = validWallpaper,
                 stageWallpaperDim = wallpaperDim
@@ -382,26 +436,91 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         )
     }
 
+    private fun buildRemGreeting(): String {
+        val name = _uiState.value.profileName.trim()
+        return if (name.isNotBlank()) {
+            "Selamat datang, Tuan $name. Rem siap melayani Tuan kapan saja. 💙"
+        } else {
+            "Selamat datang. Rem adalah pelayan Tuan. Ada yang bisa Rem bantu? 💙"
+        }
+    }
+
+    private suspend fun createSessionWithGreeting(title: String = "Obrolan Baru"): Long {
+        val now = System.currentTimeMillis()
+        val sessionId = chatDao.insertSession(
+            ChatSessionEntity(
+                title = title,
+                createdAt = now,
+                updatedAt = now
+            )
+        )
+        chatDao.insert(
+            ChatMessageEntity(
+                role = "assistant",
+                content = buildRemGreeting(),
+                createdAt = now,
+                sessionId = sessionId
+            )
+        )
+        return sessionId
+    }
+
     private fun startObservers() {
         viewModelScope.launch {
-            chatDao.observeRecent(150).collect { list ->
-                if (list.isEmpty()) {
-                    val name = _uiState.value.profileName.trim()
-                    val greeting = if (name.isNotBlank()) {
-                        "Selamat datang, Tuan $name. Rem siap melayani Tuan kapan saja. 💙"
-                    } else {
-                        "Selamat datang. Rem adalah pelayan Tuan. Ada yang bisa Rem bantu? 💙"
+            // Inisialisasi sesi aktif + auto sesi baru jika jeda >= 5 jam atau berganti hari
+            val existingSessions = chatDao.getAllSessions()
+            val savedId = asistenPrefs.getLong("asisten_current_session_id", 0L)
+            var activeId = existingSessions.firstOrNull { it.id == savedId }?.id
+                ?: existingSessions.firstOrNull()?.id
+                ?: 0L
+
+            if (activeId == 0L) {
+                activeId = createSessionWithGreeting()
+            } else {
+                val activeMsgs = chatDao.getBySessionAsc(activeId)
+                val hasUserTurn = activeMsgs.any { it.role == "user" }
+                val lastMsgAt = activeMsgs.maxOfOrNull { it.createdAt } ?: 0L
+                if (hasUserTurn && lastMsgAt > 0L) {
+                    val now = System.currentTimeMillis()
+                    val zone = ZoneId.systemDefault()
+                    val lastDate = Instant.ofEpochMilli(lastMsgAt).atZone(zone).toLocalDate()
+                    val todayDate = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
+                    val gapHours = (now - lastMsgAt) / (1000L * 60L * 60L)
+                    if (lastDate != todayDate || gapHours >= 5L) {
+                        activeId = createSessionWithGreeting()
                     }
-                    chatDao.insert(
-                        ChatMessageEntity(
-                            role = "assistant",
-                            content = greeting
-                        )
-                    )
-                } else {
-                    _uiState.update { it.copy(messages = list) }
                 }
             }
+
+            asistenPrefs.edit().putLong("asisten_current_session_id", activeId).apply()
+            _activeSessionId.value = activeId
+            _uiState.update { it.copy(currentSessionId = activeId) }
+
+            launch {
+                chatDao.observeSessions().collect { sessions ->
+                    _uiState.update { it.copy(chatSessions = sessions) }
+                }
+            }
+
+            _activeSessionId
+                .flatMapLatest { sid ->
+                    if (sid <= 0L) flowOf(emptyList())
+                    else chatDao.observeRecentBySession(sid, 150)
+                }
+                .collect { list ->
+                    val sid = _activeSessionId.value
+                    if (sid > 0L && list.isEmpty()) {
+                        chatDao.insert(
+                            ChatMessageEntity(
+                                role = "assistant",
+                                content = buildRemGreeting(),
+                                sessionId = sid
+                            )
+                        )
+                    } else {
+                        _uiState.update { it.copy(messages = list) }
+                    }
+                }
         }
 
         // Pisahkan isSpeaking agar _uiState hanya update saat status bicara berubah
@@ -598,11 +717,111 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         showBannerMessage(if (next) "Suara TTS Rem dimatikan" else "Suara TTS Rem diaktifkan")
     }
 
-    fun clearChatHistoryOnly() {
+    fun startNewChatSession() {
+        if (_uiState.value.isThinking) return
         viewModelScope.launch {
             audioManager.stop()
-            chatDao.clearAll()
-            showBannerMessage("Riwayat obrolan dibersihkan")
+            val curId = _activeSessionId.value
+            if (curId > 0L) {
+                val curMsgs = chatDao.getBySessionAsc(curId)
+                if (curMsgs.none { it.role == "user" }) {
+                    showBannerMessage("Sesi baru sudah siap")
+                    return@launch
+                }
+            }
+            val newId = createSessionWithGreeting()
+            asistenPrefs.edit().putLong("asisten_current_session_id", newId).apply()
+            _activeSessionId.value = newId
+            _uiState.update { it.copy(currentSessionId = newId) }
+            showBannerMessage("Obrolan baru dimulai")
+        }
+    }
+
+    fun switchChatSession(sessionId: Long) {
+        if (_uiState.value.isThinking || sessionId <= 0L) return
+        viewModelScope.launch {
+            if (chatDao.getSessionById(sessionId) == null) return@launch
+            audioManager.stop()
+            asistenPrefs.edit().putLong("asisten_current_session_id", sessionId).apply()
+            _activeSessionId.value = sessionId
+            _uiState.update { it.copy(currentSessionId = sessionId) }
+        }
+    }
+
+    fun renameChatSession(sessionId: Long, newTitle: String) {
+        val clean = newTitle.trim().take(60)
+        if (clean.isEmpty()) return
+        viewModelScope.launch {
+            val existing = chatDao.getSessionById(sessionId) ?: return@launch
+            chatDao.updateSession(sessionId, clean, existing.updatedAt)
+        }
+    }
+
+    fun deleteChatSession(sessionId: Long) {
+        if (_uiState.value.isThinking) return
+        viewModelScope.launch {
+            audioManager.stop()
+            chatDao.deleteBySession(sessionId)
+            chatDao.deleteSessionById(sessionId)
+            if (_activeSessionId.value == sessionId) {
+                val remaining = chatDao.getAllSessions()
+                val nextId = remaining.firstOrNull()?.id ?: createSessionWithGreeting()
+                asistenPrefs.edit().putLong("asisten_current_session_id", nextId).apply()
+                _activeSessionId.value = nextId
+                _uiState.update { it.copy(currentSessionId = nextId) }
+            }
+            showBannerMessage("Sesi obrolan dihapus")
+        }
+    }
+
+    fun deleteSingleMessage(messageId: Long) {
+        if (_uiState.value.isThinking) return
+        viewModelScope.launch {
+            chatDao.deleteById(messageId)
+        }
+    }
+
+    fun regenerateAssistantMessage(messageId: Long) {
+        if (_uiState.value.isThinking) return
+        viewModelScope.launch {
+            val sid = _activeSessionId.value
+            if (sid <= 0L) return@launch
+            val sessionMsgs = chatDao.getBySessionAsc(sid)
+            val idx = sessionMsgs.indexOfFirst { it.id == messageId && it.role == "assistant" }
+            if (idx < 0) return@launch
+            val prevUser = sessionMsgs.take(idx).lastOrNull { it.role == "user" }
+            if (prevUser == null) {
+                showBannerMessage("Tidak ada pesan untuk diulangi")
+                return@launch
+            }
+            audioManager.stop()
+            chatDao.deleteById(messageId)
+            streamAssistantReply(
+                sessionId = sid,
+                sourceUserMsgId = prevUser.id,
+                historyOverride = sessionMsgs.take(idx).takeLast(10).map { ChatTurnDto(it.role, it.content) }
+            )
+        }
+    }
+
+    fun clearChatHistoryOnly() {
+        if (_uiState.value.isThinking) return
+        viewModelScope.launch {
+            audioManager.stop()
+            val sid = _activeSessionId.value
+            if (sid > 0L) {
+                chatDao.deleteBySession(sid)
+                chatDao.updateSession(sid, "Obrolan Baru", System.currentTimeMillis())
+                chatDao.updateRollingSummary(sid, null, 0)
+            } else {
+                chatDao.clearAll()
+                chatDao.clearAllSessions()
+                val newId = createSessionWithGreeting()
+                asistenPrefs.edit().putLong("asisten_current_session_id", newId).apply()
+                _activeSessionId.value = newId
+                _uiState.update { it.copy(currentSessionId = newId) }
+            }
+            showBannerMessage("Obrolan sesi ini dibersihkan")
         }
     }
 
@@ -805,25 +1024,87 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 confidence = 1.0f,
                 sourceMessageId = null
             )
+            refreshMemoryProfile(force = true)
         }
     }
 
     fun deleteMemory(id: Long) {
         viewModelScope.launch {
             userMemoryDao.deleteById(id)
+            refreshMemoryProfile(force = true)
         }
     }
 
     fun deleteSummary(id: Long) {
         viewModelScope.launch {
             userMemoryDao.deleteSummaryById(id)
+            refreshMemoryProfile(force = true)
         }
+    }
+
+    private suspend fun deleteMemoryByKeyOrQuery(query: String): Int {
+        val raw = query.trim().lowercase()
+        if (raw.isEmpty()) return 0
+        val normKey = raw.replace(Regex("[^a-z0-9_]+"), "_").trim('_')
+        val all = userMemoryDao.getAllMemories()
+        val matched = all.filter { m ->
+            (normKey.isNotEmpty() && m.factKey.equals(normKey, ignoreCase = true)) ||
+                m.factKey.contains(raw, ignoreCase = true) ||
+                m.factValue.contains(raw, ignoreCase = true)
+        }
+        matched.forEach { userMemoryDao.deleteById(it.id) }
+        return matched.size
+    }
+
+    fun refreshMemoryProfile(force: Boolean = true) {
+        if (_uiState.value.isSynthesizingMemoryProfile) return
+        if (!ApiKeyStore.isLlmConfigured(getApplication())) {
+            if (force) showBannerMessage("LLM belum diatur di Setelan")
+            return
+        }
+        viewModelScope.launch {
+            val allMemories = userMemoryDao.getAllMemories()
+            val allSummaries = userMemoryDao.getLatestSummaries(10)
+            if (allMemories.isEmpty() && allSummaries.isEmpty()) {
+                clearMemoryProfile(showBanner = false)
+                return@launch
+            }
+            val current = _uiState.value.memoryProfile
+            if (!force && current.sections.isNotEmpty() &&
+                System.currentTimeMillis() - current.updatedAt < 45_000L
+            ) {
+                return@launch
+            }
+            _uiState.update { it.copy(isSynthesizingMemoryProfile = true) }
+            try {
+                val synthesized = memoryClient.synthesizeProfileSummary(allMemories, allSummaries)
+                if (synthesized != null) {
+                    val encoded = DailyOsHelpers.json.encodeToString(synthesized)
+                    asistenPrefs.edit().putString("asisten_memory_profile_json", encoded).apply()
+                    _uiState.update { it.copy(memoryProfile = synthesized) }
+                    if (force && synthesized.sections.isNotEmpty()) {
+                        showBannerMessage("Ringkasan Memori diperbarui")
+                    }
+                } else if (force) {
+                    showBannerMessage("Gagal menyusun Ringkasan Memori")
+                }
+            } finally {
+                _uiState.update { it.copy(isSynthesizingMemoryProfile = false) }
+            }
+        }
+    }
+
+    fun clearMemoryProfile(showBanner: Boolean = true) {
+        asistenPrefs.edit().remove("asisten_memory_profile_json").apply()
+        _uiState.update { it.copy(memoryProfile = MemoryProfileData()) }
+        if (showBanner) showBannerMessage("Ringkasan Memori dihapus")
     }
 
     fun clearAllMemories() {
         viewModelScope.launch {
             userMemoryDao.clearAll()
             userMemoryDao.clearSummaries()
+            clearMemoryProfile(showBanner = false)
             showBannerMessage("Semua memori & rangkuman dibersihkan")
         }
     }
@@ -832,8 +1113,11 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             audioManager.stop()
             chatDao.clearAll()
+            chatDao.clearAllSessions()
             userMemoryDao.clearAll()
             userMemoryDao.clearSummaries()
+            clearMemoryProfile(showBanner = false)
+            _activeSessionId.value = createSessionWithGreeting()
             showBannerMessage("Data Asisten berhasil direset")
         }
     }
@@ -1032,8 +1316,11 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 .apply()
             linkkuDao.upsertCategories(LinkkuHelpers.DEFAULT_CATEGORIES)
             chatDao.clearAll()
+            chatDao.clearAllSessions()
             userMemoryDao.clearAll()
             userMemoryDao.clearSummaries()
+            clearMemoryProfile(showBanner = false)
+            _activeSessionId.value = createSessionWithGreeting()
             refreshDailyOsPrefsIntoState()
             refreshIdekuPrefsIntoState()
             refreshCuciPrefsIntoState()
@@ -1068,15 +1355,19 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         val asistenWrapper = AsistenBackupWrapperDto(
             profileName = _uiState.value.profileName,
             autoLearnMemory = _uiState.value.autoLearnMemory,
+            sessions = chatDao.getAllSessions().map {
+                AsistenBackupSessionDto(it.id, it.title, it.createdAt, it.updatedAt, it.rollingSummary, it.summarizedCount)
+            },
             messages = chatDao.getAll().map {
-                AsistenBackupChatDto(it.role, it.content, it.expressionTag, it.createdAt)
+                AsistenBackupChatDto(it.role, it.content, it.expressionTag, it.createdAt, it.choicesJson, it.sessionId)
             },
             memories = userMemoryDao.getAllMemories().map {
                 AsistenBackupMemoryDto(it.category, it.factKey, it.factValue, it.confidence)
             },
             summaries = userMemoryDao.getAllSummaries().map {
                 AsistenBackupSummaryDto(it.summaryText, it.turnCount, it.createdAt)
-            }
+            },
+            memoryProfileJson = asistenPrefs.getString("asisten_memory_profile_json", null)
         )
         val asistenJson = DailyOsHelpers.json.encodeToString(asistenWrapper)
 
@@ -1294,10 +1585,16 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                         asistenPrefs.edit().putString("asisten_profile_name", wrapper.profileName.trim()).apply()
                     }
                     asistenPrefs.edit().putBoolean("asisten_auto_learn", wrapper.autoLearnMemory).apply()
+                    if (!wrapper.memoryProfileJson.isNullOrBlank()) {
+                        asistenPrefs.edit().putString("asisten_memory_profile_json", wrapper.memoryProfileJson).apply()
+                    } else if (replaceAll) {
+                        asistenPrefs.edit().remove("asisten_memory_profile_json").apply()
+                    }
                     refreshAsistenPrefsIntoState()
 
                     if (replaceAll) {
                         chatDao.clearAll()
+                        chatDao.clearAllSessions()
                         userMemoryDao.clearAll()
                         userMemoryDao.clearSummaries()
                     }
@@ -1316,20 +1613,68 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                             )
                         )
                     }
+                    val existingSessions = chatDao.getAllSessions().associateBy { it.id }
+                    val sessionIdMap = mutableMapOf<Long, Long>()
+                    val nowTs = System.currentTimeMillis()
+                    wrapper.sessions.forEach { s ->
+                        val title = s.title.ifBlank { "Obrolan" }
+                        val created = if (s.createdAt > 0L) s.createdAt else nowTs
+                        val updated = if (s.updatedAt > 0L) s.updatedAt else created
+                        val existing = existingSessions[s.id]
+                        if (s.id > 0L && existing == null) {
+                            chatDao.insertSession(
+                                ChatSessionEntity(
+                                    id = s.id,
+                                    title = title,
+                                    createdAt = created,
+                                    updatedAt = updated,
+                                    rollingSummary = s.rollingSummary,
+                                    summarizedCount = s.summarizedCount
+                                )
+                            )
+                            sessionIdMap[s.id] = s.id
+                        } else if (existing != null && existing.title == title) {
+                            sessionIdMap[s.id] = existing.id
+                        } else {
+                            val newId = chatDao.insertSession(
+                                ChatSessionEntity(
+                                    title = title,
+                                    createdAt = created,
+                                    updatedAt = updated,
+                                    rollingSummary = s.rollingSummary,
+                                    summarizedCount = s.summarizedCount
+                                )
+                            )
+                            sessionIdMap[s.id] = newId
+                        }
+                    }
+                    var fallbackSessionId = sessionIdMap.values.firstOrNull() ?: chatDao.getAllSessions().firstOrNull()?.id
+                    if (fallbackSessionId == null && wrapper.messages.isNotEmpty()) {
+                        val minTs = wrapper.messages.minOfOrNull { it.createdAt }?.takeIf { it > 0L } ?: nowTs
+                        val maxTs = wrapper.messages.maxOfOrNull { it.createdAt }?.takeIf { it > 0L } ?: minTs
+                        fallbackSessionId = chatDao.insertSession(
+                            ChatSessionEntity(title = "Obrolan Sebelumnya", createdAt = minTs, updatedAt = maxTs)
+                        )
+                    }
                     val existingMsgKeys = chatDao.getAll().map { "${it.createdAt}_${it.role}" }.toSet()
                     val freshMsgs = wrapper.messages
                         .filter { "${it.createdAt}_${it.role}" !in existingMsgKeys }
                         .map {
+                            val resolvedSid = sessionIdMap[it.sessionId] ?: fallbackSessionId ?: 1L
                             ChatMessageEntity(
+                                sessionId = resolvedSid,
                                 role = it.role,
                                 content = it.content,
                                 expressionTag = it.expressionTag,
-                                createdAt = if (it.createdAt > 0L) it.createdAt else System.currentTimeMillis()
+                                createdAt = if (it.createdAt > 0L) it.createdAt else nowTs,
+                                choicesJson = it.choicesJson
                             )
                         }
                     if (freshMsgs.isNotEmpty()) {
                         chatDao.insertAll(freshMsgs)
                     }
+                    val latestSid = chatDao.getAllSessions().firstOrNull()?.id ?: createSessionWithGreeting()
+                    _activeSessionId.value = latestSid
                     restoredModules++
                 }
             }
@@ -2667,8 +3012,71 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun sendMessage() {
-        val text = _inputText.value.trim()
+        sendMessageInternal(null)
+    }
+
+    fun selectMessageChoices(messageId: Long, selectedItems: List<String>) {
+        val cleaned = selectedItems.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        if (cleaned.isEmpty() || _uiState.value.isThinking) return
+        val target = _uiState.value.messages.firstOrNull { it.id == messageId } ?: return
+        val existingChoices = ChatChoicesCodec.decode(target.choicesJson) ?: return
+        if (existingChoices.selected.isNotEmpty()) return
+        val updatedChoices = existingChoices.copy(selected = cleaned)
+        val encoded = ChatChoicesCodec.encode(updatedChoices)
+        viewModelScope.launch {
+            chatDao.updateChoicesJson(messageId, encoded)
+            sendMessageInternal(cleaned.joinToString(", "))
+        }
+    }
+
+    private fun sendMessageInternal(overrideText: String?) {
+        val isFromInput = overrideText == null
+        val text = (overrideText ?: _inputText.value).trim()
         if (text.isEmpty() || _uiState.value.isThinking) return
+        if (!ApiKeyStore.isLlmConfigured(getApplication())) {
+            _uiState.update {
+                it.copy(errorMessage = "LLM belum diatur. Isi Base URL, Model, & API Key di Setelan.")
+            }
+            return
+        }
+
+        if (isFromInput) _inputText.value = ""
+
+        streamJob?.cancel()
+        streamJob = viewModelScope.launch {
+            val nowTs = System.currentTimeMillis()
+            var sid = _activeSessionId.value
+            if (sid <= 0L || chatDao.getSessionById(sid) == null) {
+                sid = createSessionWithGreeting()
+                asistenPrefs.edit().putLong("asisten_current_session_id", sid).apply()
+                _activeSessionId.value = sid
+                _uiState.update { it.copy(currentSessionId = sid) }
+            }
+            val userMsgId = chatDao.insert(
+                ChatMessageEntity(
+                    sessionId = sid,
+                    role = "user",
+                    content = text,
+                    createdAt = nowTs
+                )
+            )
+            val session = chatDao.getSessionById(sid)
+            if (session != null && session.title == "Obrolan Baru") {
+                val cleanTitle = text.replace('\n', ' ').trim()
+                val autoTitle = if (cleanTitle.length > 42) cleanTitle.take(42) + "..." else cleanTitle.ifBlank { "Obrolan" }
+                chatDao.updateSession(sid, autoTitle, nowTs)
+            } else {
+                chatDao.touchSession(sid, nowTs)
+            }
+            streamAssistantReply(sessionId = sid, sourceUserMsgId = userMsgId)
+        }
+    }
+
+    private suspend fun streamAssistantReply(
+        sessionId: Long,
+        sourceUserMsgId: Long,
+        historyOverride: List<ChatTurnDto>? = null
+    ) {
         if (!ApiKeyStore.isLlmConfigured(getApplication())) {
             _uiState.update {
                 it.copy(errorMessage = "LLM belum diatur. Isi Base URL, Model, & API Key di Setelan.")
@@ -2680,7 +3088,6 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         hideIdleBubble()
         audioManager.stop()
 
-        _inputText.value = ""
         _streamingText.value = ""
         _uiState.update {
             it.copy(
@@ -2690,19 +3097,25 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         }
         applyExpression("puzzle", autoRevert = false)
 
-        streamJob?.cancel()
-        streamJob = viewModelScope.launch {
-            val userMsgId = chatDao.insert(ChatMessageEntity(role = "user", content = text))
+        val recent = historyOverride ?: chatDao.getRecentBySessionDesc(sessionId, 10)
+            .reversed()
+            .map { ChatTurnDto(role = it.role, content = it.content) }
 
-            val recent = chatDao.getRecentDesc(10)
-                .reversed()
-                .map { ChatTurnDto(role = it.role, content = it.content) }
+        val accumulatedSearch = StringBuilder()
+        var parsedResult: SseTagParser.ParsedFinal? = null
+        var finalDoneTts = ""
 
-            val personalizedPrompt = buildPersonalizedPrompt()
+        for (round in 0..2) {
+            val personalizedPrompt = buildPersonalizedPrompt(
+                sessionId = sessionId,
+                currentUserMsgId = sourceUserMsgId,
+                searchContextOverride = accumulatedSearch.toString().takeIf { it.isNotBlank() },
+                forbidMoreSearch = round >= 2
+            )
 
             val rawAcc = StringBuilder()
             var finalDoneText = ""
-            var finalDoneTts = ""
+            var roundDoneTts = ""
             var streamErr: String? = null
 
             sseClient.streamChat(
@@ -2714,11 +3127,13 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                     is ChatStreamEvent.Delta -> {
                         rawAcc.append(event.text)
                         val visible = SseTagParser.visibleTextDuringStream(rawAcc.toString())
-                        _streamingText.value = visible
+                        if (visible.isNotEmpty()) {
+                            _streamingText.value = visible
+                        }
                     }
                     is ChatStreamEvent.Done -> {
                         finalDoneText = event.text
-                        finalDoneTts = event.tts
+                        roundDoneTts = event.tts
                     }
                     is ChatStreamEvent.Error -> {
                         streamErr = event.message
@@ -2737,22 +3152,75 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                         errorMessage = "Gagal menghubungi server: $streamErr"
                     )
                 }
-                return@launch
+                return
             }
 
             val fallbackRaw = SseTagParser.visibleTextDuringStream(rawAcc.toString())
-            val parsed = SseTagParser.parseFinal(finalDoneText.ifBlank { fallbackRaw })
-            val replyText = parsed.cleanText
-            val expr = parsed.expression
+            val candidateParsed = SseTagParser.parseFinal(finalDoneText.ifBlank { fallbackRaw })
+            val searchAct = candidateParsed.searchAction
+            if (searchAct != null && round < 2) {
+                val queryLabel = if (searchAct.query.isNotBlank()) ": ${searchAct.query}" else ""
+                _streamingText.value = "Mencari arsip ${searchAct.scope}$queryLabel..."
+                val searchOutput = executeLocalArchiveSearch(searchAct.scope, searchAct.query)
+                accumulatedSearch.append("### Pencarian [${searchAct.scope} | \"${searchAct.query}\"]\n")
+                accumulatedSearch.append(searchOutput).append("\n\n")
+                _streamingText.value = ""
+                continue
+            }
 
-            if (replyText.isNotEmpty()) {
-                chatDao.insert(
-                    ChatMessageEntity(
-                        role = "assistant",
-                        content = replyText,
-                        expressionTag = expr
-                    )
+            parsedResult = candidateParsed
+            finalDoneTts = roundDoneTts
+            break
+        }
+
+        val parsed = parsedResult ?: return
+        val replyText = parsed.cleanText
+        val expr = parsed.expression
+        val choicesJson = ChatChoicesCodec.encode(parsed.choices)
+
+        if (replyText.isNotEmpty()) {
+            val replyTs = System.currentTimeMillis()
+            chatDao.insert(
+                ChatMessageEntity(
+                    sessionId = sessionId,
+                    role = "assistant",
+                    content = replyText,
+                    expressionTag = expr,
+                    createdAt = replyTs,
+                    choicesJson = choicesJson
                 )
+            )
+            chatDao.touchSession(sessionId, replyTs)
+        }
+
+            if (parsed.memoryActions.isNotEmpty()) {
+                var memChanged = false
+                var lastLabel = ""
+                parsed.memoryActions.forEach { act ->
+                    when (act) {
+                        is SseTagParser.MemoryChatAction.SetMemory -> {
+                            userMemoryDao.upsertByFactKey(
+                                category = act.category,
+                                factKey = act.factKey,
+                                factValue = act.factValue,
+                                confidence = 0.95f,
+                                sourceMessageId = userMsgId
+                            )
+                            memChanged = true
+                            lastLabel = "Memori diperbarui"
+                        }
+                        is SseTagParser.MemoryChatAction.DeleteMemory -> {
+                            if (deleteMemoryByKeyOrQuery(act.query) > 0) {
+                                memChanged = true
+                                lastLabel = "Memori dihapus"
+                            }
+                        }
+                    }
+                }
+                if (memChanged) {
+                    refreshMemoryProfile(force = true)
+                    showBannerMessage(lastLabel.ifBlank { "Memori diperbarui" })
+                }
             }
 
             if (parsed.kronikActions.isNotEmpty()) {
@@ -3046,23 +3514,94 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
             }
 
             if (_uiState.value.autoLearnMemory && replyText.isNotEmpty()) {
-                extractAndPersistMemories(sourceMessageId = userMsgId)
+                extractAndPersistMemories(sourceMessageId = sourceUserMsgId, sessionId = sessionId)
+            }
+            if (replyText.isNotEmpty()) {
+                compactSessionIfNeeded(sessionId = sessionId)
+            }
+    }
+
+    private fun formatElapsedGapId(fromMs: Long, nowMs: Long): String {
+        val diffMs = (nowMs - fromMs).coerceAtLeast(0L)
+        val totalMinutes = diffMs / 60_000L
+        return when {
+            totalMinutes < 1L -> "baru saja (< 1 menit)"
+            totalMinutes < 60L -> "$totalMinutes menit"
+            totalMinutes < 1_440L -> {
+                val h = totalMinutes / 60L
+                val m = totalMinutes % 60L
+                if (m > 0L) "$h jam $m menit" else "$h jam"
+            }
+            else -> {
+                val d = totalMinutes / 1_440L
+                val h = (totalMinutes % 1_440L) / 60L
+                if (h > 0L) "$d hari $h jam" else "$d hari"
             }
         }
     }
 
-    private suspend fun buildPersonalizedPrompt(): String {
+    private suspend fun buildPersonalizedPrompt(
+        sessionId: Long = _activeSessionId.value,
+        currentUserMsgId: Long? = null,
+        searchContextOverride: String? = null,
+        forbidMoreSearch: Boolean = false
+    ): String {
         val topMemories = userMemoryDao.getTopMemories(20)
         val latestSummaries = userMemoryDao.getLatestSummaries(3)
+        val activeSession = if (sessionId > 0L) chatDao.getSessionById(sessionId) else null
         val recentJournals = kronikDao.getVisibleEntries(3)
         val recentPublicLinks = linkkuDao.getPublicLinks(4)
         val cuciState = _uiState.value.cuciMoneyState
         val profileName = _uiState.value.profileName.trim()
 
+        val nowMs = System.currentTimeMillis()
+        val nowZdt = LocalDateTime.now(ZoneId.systemDefault())
+        val dayNameId = when (nowZdt.dayOfWeek.value) {
+            1 -> "Senin"; 2 -> "Selasa"; 3 -> "Rabu"; 4 -> "Kamis"
+            5 -> "Jumat"; 6 -> "Sabtu"; else -> "Minggu"
+        }
+        val monthNameId = when (nowZdt.monthValue) {
+            1 -> "Januari"; 2 -> "Februari"; 3 -> "Maret"; 4 -> "April"
+            5 -> "Mei"; 6 -> "Juni"; 7 -> "Juli"; 8 -> "Agustus"
+            9 -> "September"; 10 -> "Oktober"; 11 -> "November"; else -> "Desember"
+        }
+        val timeOfDayId = when (nowZdt.hour) {
+            in 4..10 -> "pagi"
+            in 11..14 -> "siang"
+            in 15..17 -> "sore"
+            else -> "malam"
+        }
+        val timeFormatted = String.format("%02d:%02d", nowZdt.hour, nowZdt.minute)
+        val prevSessionUserMsg = if (sessionId > 0L) {
+            chatDao.getBySessionAsc(sessionId)
+                .filter { it.role == "user" && it.id != currentUserMsgId }
+                .maxByOrNull { it.createdAt }
+        } else null
+        val prevGlobalUserMsg = if (prevSessionUserMsg == null) {
+            chatDao.getAll()
+                .filter { it.role == "user" && it.id != currentUserMsgId }
+                .maxByOrNull { it.createdAt }
+        } else null
+        val gapRef = prevSessionUserMsg ?: prevGlobalUserMsg
+        val gapLine = if (gapRef != null) {
+            val scope = if (prevSessionUserMsg != null) "di sesi ini" else "dari sesi sebelumnya"
+            "\nJeda sejak pesan terakhir Tuan ($scope): ${formatElapsedGapId(gapRef.createdAt, nowMs)}"
+        } else ""
+
         return buildString {
             append(remSystemPrompt)
+            append("\n\n## Konteks Waktu Saat Ini\n")
+            append("Waktu lokal perangkat: $dayNameId, ${nowZdt.dayOfMonth} $monthNameId ${nowZdt.year}, pukul $timeFormatted ($timeOfDayId)")
+            append(gapLine)
             if (profileName.isNotBlank()) {
                 append("\n\nNama pengguna (Tuan): $profileName")
+            }
+            val memProfile = _uiState.value.memoryProfile
+            if (memProfile.sections.isNotEmpty()) {
+                append("\n\n## Ringkasan Memori Tentang Tuan\n")
+                memProfile.sections.forEach { sec ->
+                    append("[${sec.title}] ${sec.body}\n")
+                }
             }
             if (topMemories.isNotEmpty()) {
                 append("\n\n## Memori Personal Tentang Tuan (dari SQLite lokal)\n")
@@ -3075,6 +3614,11 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 latestSummaries.forEach { s ->
                     append("- ${s.summaryText}\n")
                 }
+            }
+            val rolling = activeSession?.rollingSummary?.trim().orEmpty()
+            if (rolling.isNotBlank()) {
+                append("\n## Ringkasan Konteks Sesi Ini (Pesan Sebelumnya)\n")
+                append(rolling).append("\n")
             }
             if (recentJournals.isNotEmpty()) {
                 append("\n## Jurnal Kronik Terbaru Tuan\n")
@@ -3146,9 +3690,19 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 }
             }
 
+            if (!searchContextOverride.isNullOrBlank()) {
+                append("\n## Hasil Pencarian Arsip Lokal\n")
+                append(searchContextOverride)
+                if (forbidMoreSearch) {
+                    append("Batas pencarian tercapai. Jangan memanggil [SEARCH:...] lagi; langsung jawab Tuan berdasarkan data di atas.\n")
+                } else {
+                    append("Gunakan data akurat di atas untuk menjawab pesan Tuan. Jangan memanggil [SEARCH:...] lagi untuk pencarian yang sama.\n")
+                }
+            }
+
             append(
                 "\nGunakan memori, Kronik, LinkKu, CuciMoney+, IdeKu, & Daily OS di atas secara natural agar terasa mengenal Tuan, tanpa menyebut kata 'database' atau 'SQLite'. Angka yang tertera adalah data AKURAT — jangan menghitung ulang atau menambah dari ingatan." +
-                    "\n\nATURAN PENTING KEUANGAN: Jika Tuan meminta ringkasan, total, analisis, atau informasi keuangan tetapi belum menyebut nama buku, tanyakan dulu buku mana yang dimaksud dan jangan berikan angka keuangan apa pun sebelum Tuan memilih. Jika nama buku sudah disebut, gunakan hanya bagian KEUANGAN BUKU dengan nama yang cocok persis; jangan pernah menggabungkan angka antar-buku. Jika nama buku tidak cocok atau ambigu, tanyakan klarifikasi. Jika Tuan sudah menyebut buku dan tujuan dengan jelas, jangan mengulang pertanyaan yang sudah terjawab."
+                    "\n\nATURAN PENTING KEUANGAN: Jika Tuan meminta ringkasan, total, analisis, atau informasi keuangan tetapi belum menyebut nama buku, tanyakan dulu buku mana yang dimaksud sambil menyertakan tag [CHOICES:single|...] berisi nama-nama buku CuciMoney+ yang tersedia, dan jangan berikan angka keuangan apa pun sebelum Tuan memilih. Jika nama buku sudah disebut, gunakan hanya bagian KEUANGAN BUKU dengan nama yang cocok persis; jangan pernah menggabungkan angka antar-buku. Jika nama buku tidak cocok atau ambigu, tanyakan klarifikasi disertai [CHOICES:single|...]. Jika Tuan sudah menyebut buku dan tujuan dengan jelas, jangan mengulang pertanyaan yang sudah terjawab."
             )
         }
     }
@@ -3221,17 +3775,21 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    private fun extractAndPersistMemories(sourceMessageId: Long) {
+    private fun extractAndPersistMemories(sourceMessageId: Long, sessionId: Long) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLearningMemory = true) }
             try {
-                val recentTurns = chatDao.getRecentDesc(6)
+                val recentTurns = (if (sessionId > 0L) chatDao.getRecentBySessionDesc(sessionId, 6) else chatDao.getRecentDesc(6))
                     .reversed()
                     .map { ChatTurnDto(role = it.role, content = it.content) }
-                val existing = userMemoryDao.getTopMemories(25)
+                val existing = userMemoryDao.getTopMemories(35)
                     .map { ExistingFactDto(factKey = it.factKey, factValue = it.factValue) }
 
                 val result = memoryClient.extractMemories(recentTurns, existing) ?: return@launch
+                var memoryChanged = false
+                result.deleteKeys.forEach { delKey ->
+                    if (deleteMemoryByKeyOrQuery(delKey) > 0) memoryChanged = true
+                }
                 result.facts.forEach { fact ->
                     if (fact.factKey.isNotBlank() && fact.factValue.isNotBlank()) {
                         userMemoryDao.upsertByFactKey(
@@ -3241,6 +3799,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                             confidence = fact.confidence,
                             sourceMessageId = sourceMessageId
                         )
+                        memoryChanged = true
                     }
                 }
                 val summary = result.summary?.trim().orEmpty()
@@ -3255,9 +3814,179 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                         )
                     }
                 }
+                if (memoryChanged) {
+                    refreshMemoryProfile(force = false)
+                }
             } finally {
                 _uiState.update { it.copy(isLearningMemory = false) }
             }
+        }
+    }
+
+    private fun compactSessionIfNeeded(sessionId: Long) {
+        if (sessionId <= 0L || !ApiKeyStore.isLlmConfigured(getApplication())) return
+        viewModelScope.launch {
+            runCatching {
+                val allMsgs = chatDao.getBySessionAsc(sessionId)
+                if (allMsgs.size <= 10) return@launch
+                val overflowMsgs = allMsgs.dropLast(10)
+                val overflowCount = overflowMsgs.size
+                val session = chatDao.getSessionById(sessionId) ?: return@launch
+                val alreadySummarized = session.summarizedCount.coerceIn(0, overflowCount)
+                val hasSummary = !session.rollingSummary.isNullOrBlank()
+                if (hasSummary && (overflowCount - alreadySummarized) < 4) return@launch
+
+                val slice = if (hasSummary) {
+                    overflowMsgs.drop(alreadySummarized).takeLast(20)
+                } else {
+                    overflowMsgs.takeLast(16)
+                }
+                if (slice.isEmpty()) return@launch
+
+                val turns = slice.map { ChatTurnDto(role = it.role, content = it.content) }
+                val compacted = memoryClient.compactSessionMessages(session.rollingSummary, turns)
+                if (!compacted.isNullOrBlank()) {
+                    chatDao.updateRollingSummary(sessionId, compacted, overflowCount)
+                }
+            }
+        }
+    }
+
+    private suspend fun executeLocalArchiveSearch(scope: String, rawQuery: String): String {
+        val q = rawQuery.trim().lowercase()
+        val tokens = q.split(Regex("\\s+")).filter { it.length >= 2 }
+        fun matchesTokens(haystack: String): Boolean {
+            if (tokens.isEmpty()) return true
+            val h = haystack.lowercase()
+            return tokens.all { h.contains(it) } || (tokens.size > 1 && tokens.count { h.contains(it) } >= ((tokens.size + 1) / 2))
+        }
+
+        val limitPerMod = if (scope == "all") 4 else 10
+        val out = StringBuilder()
+
+        if (scope == "kronik" || scope == "all") {
+            val entries = kronikDao.getVisibleEntries(150)
+            val hits = entries.filter {
+                matchesTokens("${it.date} ${it.moodStatus.orEmpty()} ${it.title} ${it.content}")
+            }.take(limitPerMod)
+            if (hits.isNotEmpty()) {
+                out.append("Kronik (${hits.size} ditemukan):\n")
+                hits.forEach { j ->
+                    val mood = j.moodStatus?.let { " [$it]" }.orEmpty()
+                    val snippet = j.content.replace('\n', ' ').trim().take(150)
+                    out.append("- ${j.date}$mood ${j.title.ifBlank { "(tanpa judul)" }}: $snippet\n")
+                }
+            }
+        }
+
+        if (scope == "linkku" || scope == "all") {
+            val linkState = _uiState.value.linkkuState
+            val catMap = linkState.categories.associate { it.id to it.name }
+            val pubLinks = linkState.links.filter { !it.isPrivate }
+            val hits = pubLinks.filter { l ->
+                val catName = catMap[l.cat].orEmpty()
+                matchesTokens("${l.title} ${l.url} ${l.note} $catName ${l.tagsJson}")
+            }.take(limitPerMod)
+            if (hits.isNotEmpty()) {
+                out.append("LinkKu Publik (${hits.size} ditemukan):\n")
+                hits.forEach { l ->
+                    val catName = catMap[l.cat].orEmpty().ifBlank { "-" }
+                    val notePart = if (l.note.isNotBlank()) " — ${l.note.take(80)}" else ""
+                    out.append("- ${l.title.ifBlank { LinkkuHelpers.extractDomain(l.url) }} [$catName] (${l.url})$notePart\n")
+                }
+            }
+        }
+
+        if (scope == "cuci" || scope == "all") {
+            val cuci = _uiState.value.cuciMoneyState
+            val bookMap = cuci.books.associate { it.id to it.name }
+            val catMap = cuci.categories.associate { it.id to it.name }
+            val accMap = cuci.accounts.associate { it.id to it.name }
+            val allTrx = cuci.transactions.sortedWith(compareByDescending<CuciTransactionEntity> { it.date }.thenByDescending { it.id })
+            val hits = allTrx.filter { t ->
+                val bName = bookMap[t.bookId].orEmpty()
+                val cName = catMap[t.categoryId].orEmpty()
+                val aName = accMap[t.accountId].orEmpty()
+                val dirLabel = if (t.direction == "in") "masuk pemasukan" else "keluar pengeluaran"
+                matchesTokens("${t.date} ${t.title} $bName $cName $aName $dirLabel ${t.amount}")
+            }
+            if (hits.isNotEmpty()) {
+                val nonTrfHits = hits.filter { it.transferPair == null }
+                val sumIn = nonTrfHits.filter { it.direction == "in" }.sumOf { it.amount }
+                val sumOut = nonTrfHits.filter { it.direction == "out" }.sumOf { it.amount }
+                out.append("CuciMoney+ (${hits.size} transaksi cocok; total non-transfer masuk ${CuciMoneyHelpers.formatRp(sumIn)}, keluar ${CuciMoneyHelpers.formatRp(sumOut)}):\n")
+                hits.take(if (scope == "cuci") 12 else limitPerMod).forEach { t ->
+                    val sign = if (t.direction == "in") "+" else "-"
+                    val bName = bookMap[t.bookId].orEmpty()
+                    val cName = catMap[t.categoryId].orEmpty()
+                    val aName = accMap[t.accountId].orEmpty()
+                    out.append("- ${t.date} [$bName] ${t.title} ($sign${CuciMoneyHelpers.formatRp(t.amount)}, $cName, $aName)\n")
+                }
+            }
+        }
+
+        if (scope == "ideku" || scope == "all") {
+            val hits = _uiState.value.idekuState.ideas.filter { item ->
+                matchesTokens("${item.type} ${item.title} ${item.notes} ${item.category} ${item.status} ${item.priority} ${item.jalur}")
+            }.take(limitPerMod)
+            if (hits.isNotEmpty()) {
+                out.append("IdeKu & Wishlist (${hits.size} ditemukan):\n")
+                hits.forEach { item ->
+                    val price = if (item.type == "Wishlist" && item.price > 0L) ", ${CuciMoneyHelpers.formatRp(item.price)}" else ""
+                    val note = if (item.notes.isNotBlank()) " — ${item.notes.take(80)}" else ""
+                    out.append("- [${item.type}] ${item.title} (${item.category}, ${item.status}, ${item.priority}$price)$note\n")
+                }
+            }
+        }
+
+        if (scope == "dailyos" || scope == "all") {
+            val daily = _uiState.value.dailyOsState
+            val habitHits = daily.habits.filter {
+                matchesTokens("${it.name} ${it.category} ${if (it.archived) "arsip" else "aktif"}")
+            }.take(limitPerMod)
+            val todoHits = daily.todos.filter {
+                matchesTokens("${it.title} ${it.priority} ${it.deadline.orEmpty()} ${if (it.done) "selesai done" else "pending"}")
+            }.take(limitPerMod)
+            if (habitHits.isNotEmpty() || todoHits.isNotEmpty()) {
+                out.append("Daily OS:\n")
+                habitHits.forEach { h ->
+                    val hist = DailyOsHelpers.parseHistory(h.historyJson)
+                    val totalDays = hist.count { it.value.isNotEmpty() }
+                    out.append("- Habit \"${h.name}\" (${h.category}, $totalDays hari tercatat${if (h.archived) ", diarsipkan" else ""})\n")
+                }
+                todoHits.forEach { t ->
+                    val st = if (t.done) "Selesai" else "Belum"
+                    val dl = t.deadline?.takeIf { it.isNotBlank() }?.let { ", deadline $it" }.orEmpty()
+                    out.append("- To-Do \"${t.title}\" [$st, ${t.priority}$dl]\n")
+                }
+            }
+        }
+
+        if (scope == "chat" || scope == "all") {
+            val sessMap = chatDao.getAllSessions().associateBy { it.id }
+            val sdf = SimpleDateFormat("dd MMM HH:mm", Locale.getDefault())
+            val allMsgs = chatDao.getAll()
+            val hits = allMsgs
+                .asReversed()
+                .filter { m ->
+                    val sTitle = sessMap[m.sessionId]?.title.orEmpty()
+                    matchesTokens("$sTitle ${m.content}")
+                }
+                .take(limitPerMod)
+            if (hits.isNotEmpty()) {
+                out.append("Arsip Obrolan (${hits.size} pesan cocok):\n")
+                hits.forEach { m ->
+                    val sTitle = sessMap[m.sessionId]?.title ?: "Sesi"
+                    val who = if (m.role == "user") "Tuan" else "Rem"
+                    val dt = sdf.format(Date(m.createdAt))
+                    out.append("- [$sTitle · $dt] $who: ${m.content.replace('\n', ' ').take(150)}\n")
+                }
+            }
+        }
+
+        val resultStr = out.toString().trim()
+        return resultStr.ifBlank {
+            "Tidak ditemukan data yang cocok di arsip $scope untuk kata kunci \"$rawQuery\"."
         }
     }
 

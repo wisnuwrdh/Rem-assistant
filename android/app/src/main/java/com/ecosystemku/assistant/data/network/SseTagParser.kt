@@ -1,9 +1,14 @@
 package com.ecosystemku.assistant.data.network
 
+import com.ecosystemku.assistant.data.local.ChatChoicesData
+
 object SseTagParser {
     private val JA_REGEX = Regex("""\[JA][\s\S]*?(\[/JA]|$)""", RegexOption.IGNORE_CASE)
     private val EXPR_REGEX = Regex("""\[EXPR:([a-z]+)]""", RegexOption.IGNORE_CASE)
     private val OPEN_REGEX = Regex("""\[OPEN:([a-z0-9-]+)]""", RegexOption.IGNORE_CASE)
+    private val CHOICES_REGEX = Regex("""\[(?:CHOICES|OPTIONS):([^\]\r\n]+)]""", RegexOption.IGNORE_CASE)
+    private val SEARCH_REGEX = Regex("""\[SEARCH:([^\]\r\n]+)]""", RegexOption.IGNORE_CASE)
+    private val MEMORY_REGEX = Regex("""\[MEMORY:([^\]\r\n]+)]""", RegexOption.IGNORE_CASE)
     private val KRONIK_REGEX = Regex("""\[KRONIK:([^\]\r\n]+)]""", RegexOption.IGNORE_CASE)
     private val LINKKU_REGEX = Regex("""\[LINKKU:([^\]\r\n]+)]""", RegexOption.IGNORE_CASE)
     private val CUCI_REGEX = Regex("""\[CUCI:([^\]\r\n]+)]""", RegexOption.IGNORE_CASE)
@@ -15,6 +20,23 @@ object SseTagParser {
         "surprise", "serious", "proud", "doubt", "puzzle",
         "upset", "appeal", "navi", "none"
     )
+
+    data class SearchQueryAction(
+        val scope: String,
+        val query: String
+    )
+
+    sealed class MemoryChatAction {
+        data class SetMemory(
+            val category: String,
+            val factKey: String,
+            val factValue: String
+        ) : MemoryChatAction()
+
+        data class DeleteMemory(
+            val query: String
+        ) : MemoryChatAction()
+    }
 
     sealed class KronikChatAction {
         data class AddEntry(
@@ -76,11 +98,33 @@ object SseTagParser {
         ) : DailyOsChatAction()
     }
 
+    private val ITALIC_STAR_REGEX = Regex("""\*([^*\r\n]+)\*""")
+    private val BACKTICK_REGEX = Regex("""`([^`\r\n]+)`""")
+    private val HEADING_REGEX = Regex("""(?m)^#{1,6}\s+""")
+    private val EM_DASH_START_REGEX = Regex("""(^|\n)\s*\u2014\s*""")
+    private val EM_DASH_AFTER_PUNCT_REGEX = Regex("""([.!?,:;(\[])\s*\u2014\s*""")
+    private val EM_DASH_MID_REGEX = Regex("""\s*\u2014\s*""")
+
+    private fun cleanChatFormatting(text: String): String {
+        return text
+            .replace("**", "")
+            .replace("__", "")
+            .replace(ITALIC_STAR_REGEX, "$1")
+            .replace(BACKTICK_REGEX, "$1")
+            .replace(HEADING_REGEX, "")
+            .replace(EM_DASH_START_REGEX, "$1")
+            .replace(EM_DASH_AFTER_PUNCT_REGEX, "$1 ")
+            .replace(EM_DASH_MID_REGEX, ", ")
+    }
+
     fun visibleTextDuringStream(raw: String): String {
         var v = raw
             .replace(JA_REGEX, "")
             .replace(EXPR_REGEX, "")
             .replace(OPEN_REGEX, "")
+            .replace(CHOICES_REGEX, "")
+            .replace(SEARCH_REGEX, "")
+            .replace(MEMORY_REGEX, "")
             .replace(KRONIK_REGEX, "")
             .replace(LINKKU_REGEX, "")
             .replace(CUCI_REGEX, "")
@@ -90,13 +134,16 @@ object SseTagParser {
         if (openBracket != -1 && !v.substring(openBracket).contains(']')) {
             v = v.substring(0, openBracket)
         }
-        return v
+        return cleanChatFormatting(v)
     }
 
     data class ParsedFinal(
         val cleanText: String,
         val expression: String?,
         val openApp: String? = null,
+        val choices: ChatChoicesData? = null,
+        val searchAction: SearchQueryAction? = null,
+        val memoryActions: List<MemoryChatAction> = emptyList(),
         val kronikActions: List<KronikChatAction> = emptyList(),
         val linkkuActions: List<LinkkuChatAction> = emptyList(),
         val cuciActions: List<CuciChatAction> = emptyList(),
@@ -110,6 +157,11 @@ object SseTagParser {
         val expression = if (rawExpr != null && rawExpr in VALID_EXPRS) rawExpr else null
 
         val openApp = OPEN_REGEX.find(rawText)?.groupValues?.getOrNull(1)?.lowercase()
+        val choices = CHOICES_REGEX.find(rawText)?.groupValues?.getOrNull(1)?.let { parseChoicesPayload(it) }
+        val searchAction = SEARCH_REGEX.find(rawText)?.groupValues?.getOrNull(1)?.let { parseSearchPayload(it) }
+        val memoryActions = MEMORY_REGEX.findAll(rawText).mapNotNull { match ->
+            parseMemoryPayload(match.groupValues.getOrNull(1).orEmpty())
+        }.toList()
         val kronikActions = KRONIK_REGEX.findAll(rawText).mapNotNull { match ->
             parseKronikPayload(match.groupValues.getOrNull(1).orEmpty())
         }.toList()
@@ -126,27 +178,102 @@ object SseTagParser {
             parseDailyOsPayload(match.groupValues.getOrNull(1).orEmpty())
         }.toList()
 
-        val clean = rawText
-            .replace(JA_REGEX, "")
-            .replace(EXPR_REGEX, "")
-            .replace(OPEN_REGEX, "")
-            .replace(KRONIK_REGEX, "")
-            .replace(LINKKU_REGEX, "")
-            .replace(CUCI_REGEX, "")
-            .replace(IDEKU_REGEX, "")
-            .replace(DAILYOS_REGEX, "")
-            .trim()
+        val clean = cleanChatFormatting(
+            rawText
+                .replace(JA_REGEX, "")
+                .replace(EXPR_REGEX, "")
+                .replace(OPEN_REGEX, "")
+                .replace(CHOICES_REGEX, "")
+                .replace(SEARCH_REGEX, "")
+                .replace(MEMORY_REGEX, "")
+                .replace(KRONIK_REGEX, "")
+                .replace(LINKKU_REGEX, "")
+                .replace(CUCI_REGEX, "")
+                .replace(IDEKU_REGEX, "")
+                .replace(DAILYOS_REGEX, "")
+        ).trim()
 
         return ParsedFinal(
             cleanText = clean,
             expression = expression,
             openApp = openApp,
+            choices = choices,
+            searchAction = searchAction,
+            memoryActions = memoryActions,
             kronikActions = kronikActions,
             linkkuActions = linkkuActions,
             cuciActions = cuciActions,
             idekuActions = idekuActions,
             dailyOsActions = dailyOsActions
         )
+    }
+
+    private fun parseSearchPayload(payload: String): SearchQueryAction? {
+        val parts = payload.split("|").map { it.trim() }
+        if (parts.isEmpty()) return null
+        val rawScope = parts[0].lowercase()
+        val normalizedScope = when (rawScope) {
+            "kronik", "jurnal" -> "kronik"
+            "linkku", "bookmark", "link" -> "linkku"
+            "cuci", "cucimoney", "cucimoney+", "keuangan", "transaksi" -> "cuci"
+            "ideku", "ide", "wishlist" -> "ideku"
+            "dailyos", "daily", "habit", "todo" -> "dailyos"
+            "chat", "obrolan", "sessions", "sesi", "log" -> "chat"
+            "all", "semua" -> "all"
+            else -> null
+        }
+        return if (normalizedScope != null) {
+            val q = parts.drop(1).joinToString(" ").trim().take(80)
+            SearchQueryAction(scope = normalizedScope, query = q)
+        } else {
+            SearchQueryAction(scope = "all", query = parts.joinToString(" ").trim().take(80))
+        }
+    }
+
+    private fun parseMemoryPayload(payload: String): MemoryChatAction? {
+        val parts = payload.split("|").map { it.trim() }
+        if (parts.isEmpty()) return null
+        return when (parts[0].uppercase()) {
+            "SET", "ADD", "UPDATE" -> {
+                val catRaw = parts.getOrNull(1).orEmpty().lowercase()
+                val cat = if (catRaw in setOf("identitas", "preferensi", "kebiasaan", "tujuan", "catatan")) catRaw else "catatan"
+                val key = parts.getOrNull(2).orEmpty()
+                    .lowercase()
+                    .replace(Regex("[^a-z0-9_]+"), "_")
+                    .trim('_')
+                    .take(48)
+                val valTxt = parts.getOrNull(3).orEmpty().take(180)
+                if (key.length < 2 || valTxt.isBlank()) null
+                else MemoryChatAction.SetMemory(category = cat, factKey = key, factValue = valTxt)
+            }
+            "DEL", "DELETE", "FORGET", "REMOVE" -> {
+                val q = parts.getOrNull(1).orEmpty().trim()
+                if (q.isBlank()) null else MemoryChatAction.DeleteMemory(query = q)
+            }
+            else -> null
+        }
+    }
+
+    private fun parseChoicesPayload(payload: String): ChatChoicesData? {
+        val parts = payload.split("|").map { it.trim() }.filter { it.isNotEmpty() }
+        if (parts.isEmpty()) return null
+        val head = parts[0].lowercase()
+        val (mode, rawItems) = when (head) {
+            "multi", "multiple" -> "multi" to parts.drop(1)
+            "single" -> "single" to parts.drop(1)
+            else -> "single" to parts
+        }
+        val items = mutableListOf<String>()
+        val seen = mutableSetOf<String>()
+        for (item in rawItems) {
+            val k = item.lowercase()
+            if (seen.add(k)) {
+                items.add(item.take(60))
+            }
+            if (items.size >= 8) break
+        }
+        if (items.isEmpty()) return null
+        return ChatChoicesData(mode = mode, items = items, selected = emptyList())
     }
 
     private fun parseKronikPayload(payload: String): KronikChatAction? {

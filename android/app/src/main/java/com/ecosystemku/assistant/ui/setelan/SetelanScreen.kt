@@ -78,14 +78,22 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Psychology
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.RestartAlt
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.TextButton
@@ -102,14 +110,19 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.ecosystemku.assistant.data.local.AiConfigField
 import com.ecosystemku.assistant.data.local.AiConfigSnapshot
 import com.ecosystemku.assistant.data.local.ConversationSummaryEntity
 import com.ecosystemku.assistant.data.local.UserMemoryEntity
+import com.ecosystemku.assistant.data.network.MemoryProfileData
 import com.ecosystemku.assistant.notifications.DailyOsNotificationHelper
 import com.ecosystemku.assistant.ui.asisten.EcosystemZipImportResult
 import java.io.File
+import java.text.SimpleDateFormat
 import java.time.LocalDate
+import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
@@ -137,6 +150,8 @@ fun SetelanScreen(
     notifTodoTime: String = "15:00",
     memories: List<UserMemoryEntity> = emptyList(),
     summaries: List<ConversationSummaryEntity> = emptyList(),
+    memoryProfile: MemoryProfileData = MemoryProfileData(),
+    isSynthesizingMemoryProfile: Boolean = false,
     autoLearnMemory: Boolean = true,
     isLearningMemory: Boolean = false,
     onUpdateProfileName: (String) -> Unit = {},
@@ -156,6 +171,8 @@ fun SetelanScreen(
     onDeleteMemory: (Long) -> Unit = {},
     onDeleteSummary: (Long) -> Unit = {},
     onClearMemories: () -> Unit = {},
+    onRefreshMemoryProfile: () -> Unit = {},
+    onClearMemoryProfile: () -> Unit = {},
     onExportZip: suspend () -> ByteArray = { ByteArray(0) },
     onImportZip: suspend (ByteArray, Boolean, String?) -> EcosystemZipImportResult = { _, _, _ ->
         EcosystemZipImportResult.Error("Belum terhubung")
@@ -182,6 +199,7 @@ fun SetelanScreen(
 
     var showProfileDialog by remember { mutableStateOf(false) }
     var profileInput by remember(profileName) { mutableStateOf(profileName) }
+    var showMemoryProfileDialog by remember { mutableStateOf(false) }
 
     var editingAiField by remember { mutableStateOf<AiConfigField?>(null) }
     var aiFieldInput by remember { mutableStateOf("") }
@@ -603,6 +621,20 @@ fun SetelanScreen(
         )
     }
 
+    if (showMemoryProfileDialog) {
+        MemoryProfileSummaryDialog(
+            memoryProfile = memoryProfile,
+            hasSourceFacts = memories.isNotEmpty() || summaries.isNotEmpty(),
+            isSynthesizing = isSynthesizingMemoryProfile,
+            onRefresh = onRefreshMemoryProfile,
+            onClear = {
+                onClearMemoryProfile()
+                showMemoryProfileDialog = false
+            },
+            onDismiss = { showMemoryProfileDialog = false }
+        )
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -770,6 +802,59 @@ fun SetelanScreen(
                                         .background(if (autoLearnMemory) DominantBg else TextMuted)
                                 )
                             }
+                        }
+
+                        HorizontalDivider(thickness = 1.dp, color = BorderSubtle)
+
+                        val profileStatusSub = when {
+                            isSynthesizingMemoryProfile -> "Membuat ringkasan…"
+                            memoryProfile.sections.isNotEmpty() -> {
+                                val stamp = if (memoryProfile.updatedAt > 0L) {
+                                    SimpleDateFormat("dd MMM, HH:mm", Locale("in", "ID")).format(Date(memoryProfile.updatedAt))
+                                } else ""
+                                "${memoryProfile.sections.size} bagian" + if (stamp.isNotEmpty()) " • $stamp" else ""
+                            }
+                            else -> "Lihat profil naratif yang diingat Rem"
+                        }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(ElevatedSurface)
+                                .border(1.dp, BorderSubtle, RoundedCornerShape(12.dp))
+                                .clickable {
+                                    showMemoryProfileDialog = true
+                                    if (memoryProfile.sections.isEmpty() && (memories.isNotEmpty() || summaries.isNotEmpty())) {
+                                        onRefreshMemoryProfile()
+                                    }
+                                }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Ringkasan Memori",
+                                    fontFamily = UiSans,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = TextPrimary
+                                )
+                                Text(
+                                    text = profileStatusSub,
+                                    fontFamily = UiSans,
+                                    fontSize = 11.sp,
+                                    color = TextMuted,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Icon(
+                                imageVector = Icons.Outlined.ChevronRight,
+                                contentDescription = "Buka Ringkasan Memori",
+                                tint = TextMuted,
+                                modifier = Modifier.size(18.dp)
+                            )
                         }
 
                         HorizontalDivider(thickness = 1.dp, color = BorderSubtle)
@@ -1863,6 +1948,180 @@ private fun NotificationRow(
                         .clip(CircleShape)
                         .background(if (enabled) DominantBg else TextMuted)
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MemoryProfileSummaryDialog(
+    memoryProfile: MemoryProfileData,
+    hasSourceFacts: Boolean,
+    isSynthesizing: Boolean,
+    onRefresh: () -> Unit,
+    onClear: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    var menuOpen by remember { mutableStateOf(false) }
+    val statusText = when {
+        isSynthesizing -> "Membuat ringkasan…"
+        memoryProfile.updatedAt > 0L -> "Diperbarui ${
+            SimpleDateFormat("dd MMM yyyy, HH:mm", Locale("in", "ID")).format(Date(memoryProfile.updatedAt))
+        }"
+        else -> "Belum dirangkum"
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(DominantBg)
+                .statusBarsPadding()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(DominantBg.copy(alpha = 0.96f))
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(ElevatedSurface)
+                        .border(1.dp, BorderLight, CircleShape)
+                        .clickable(onClick = onDismiss),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
+                        contentDescription = "Kembali",
+                        tint = TextPrimary,
+                        modifier = Modifier.size(19.dp)
+                    )
+                }
+
+                Column(
+                    modifier = Modifier.weight(1f).padding(horizontal = 12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "Ringkasan memori",
+                        fontFamily = UiSans,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = TextPrimary
+                    )
+                    Text(
+                        text = statusText,
+                        fontFamily = UiSans,
+                        fontSize = 11.5.sp,
+                        color = TextMuted
+                    )
+                }
+
+                Box {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(ElevatedSurface)
+                            .border(1.dp, BorderLight, CircleShape)
+                            .clickable { menuOpen = true },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.MoreVert,
+                            contentDescription = "Opsi Ringkasan Memori",
+                            tint = TextPrimary,
+                            modifier = Modifier.size(19.dp)
+                        )
+                    }
+
+                    DropdownMenu(
+                        expanded = menuOpen,
+                        onDismissRequest = { menuOpen = false },
+                        modifier = Modifier.background(SecondarySurface)
+                    ) {
+                        DropdownMenuItem(
+                            text = {
+                                Text("Perbarui Ringkasan", fontFamily = UiSans, fontSize = 13.sp, color = TextPrimary)
+                            },
+                            leadingIcon = {
+                                Icon(Icons.Outlined.Refresh, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(18.dp))
+                            },
+                            enabled = !isSynthesizing && hasSourceFacts,
+                            onClick = {
+                                menuOpen = false
+                                onRefresh()
+                            }
+                        )
+                        if (memoryProfile.sections.isNotEmpty()) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text("Hapus Ringkasan", fontFamily = UiSans, fontSize = 13.sp, color = SemanticDanger)
+                                },
+                                leadingIcon = {
+                                    Icon(Icons.Outlined.DeleteOutline, contentDescription = null, tint = SemanticDanger, modifier = Modifier.size(18.dp))
+                                },
+                                onClick = {
+                                    menuOpen = false
+                                    onClear()
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
+            HorizontalDivider(thickness = 1.dp, color = BorderSubtle)
+
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp, vertical = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(22.dp)
+            ) {
+                if (memoryProfile.sections.isEmpty()) {
+                    Text(
+                        text = if (isSynthesizing) {
+                            "Rem sedang menyusun ringkasan memori tentangmu…"
+                        } else if (hasSourceFacts) {
+                            "Ringkasan memori belum disusun. Ketuk menu ⋮ di kanan atas lalu pilih Perbarui Ringkasan."
+                        } else {
+                            "Belum ada fakta personal tersimpan. Ngobrol dengan Rem atau tambahkan fakta di Setelan, lalu ringkasan memori akan disusun otomatis."
+                        },
+                        fontFamily = UiSans,
+                        fontSize = 13.5.sp,
+                        lineHeight = 21.sp,
+                        color = TextMuted
+                    )
+                } else {
+                    memoryProfile.sections.forEach { sec ->
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                text = sec.title,
+                                fontFamily = UiSans,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = TextPrimary
+                            )
+                            Text(
+                                text = sec.body,
+                                fontFamily = UiSans,
+                                fontSize = 14.sp,
+                                lineHeight = 22.sp,
+                                color = TextPrimary.copy(alpha = 0.88f)
+                            )
+                        }
+                    }
+                }
             }
         }
     }

@@ -166,6 +166,13 @@ fun EcosystemKuShell(
                         onClearChat = asistenViewModel::clearChatHistoryOnly,
                         onPickWallpaper = asistenViewModel::setStageWallpaper,
                         onResetWallpaper = asistenViewModel::clearStageWallpaper,
+                        onSelectChoices = asistenViewModel::selectMessageChoices,
+                        onNewChatSession = asistenViewModel::startNewChatSession,
+                        onSwitchChatSession = asistenViewModel::switchChatSession,
+                        onRenameChatSession = asistenViewModel::renameChatSession,
+                        onDeleteChatSession = asistenViewModel::deleteChatSession,
+                        onDeleteMessage = asistenViewModel::deleteSingleMessage,
+                        onRegenerateMessage = asistenViewModel::regenerateAssistantMessage,
                         modifier = Modifier
                             .fillMaxSize()
                             .zIndex(if (selectedTab == AppTab.ASISTEN) 1f else 0f)
@@ -219,6 +226,8 @@ fun EcosystemKuShell(
                                 notifTodoTime = asistenState.dailyOsState.notifTodoTime,
                                 memories = asistenState.memories,
                                 summaries = asistenState.summaries,
+                                memoryProfile = asistenState.memoryProfile,
+                                isSynthesizingMemoryProfile = asistenState.isSynthesizingMemoryProfile,
                                 autoLearnMemory = asistenState.autoLearnMemory,
                                 isLearningMemory = asistenState.isLearningMemory,
                                 onUpdateProfileName = asistenViewModel::setProfileName,
@@ -238,6 +247,8 @@ fun EcosystemKuShell(
                                 onDeleteMemory = asistenViewModel::deleteMemory,
                                 onDeleteSummary = asistenViewModel::deleteSummary,
                                 onClearMemories = asistenViewModel::clearAllMemories,
+                                onRefreshMemoryProfile = { asistenViewModel.refreshMemoryProfile(force = true) },
+                                onClearMemoryProfile = { asistenViewModel.clearMemoryProfile(showBanner = true) },
                                 onExportZip = asistenViewModel::buildEcosystemZipBytes,
                                 onImportZip = asistenViewModel::importEcosystemZipBytes,
                                 onShowBanner = asistenViewModel::showBannerMessage,

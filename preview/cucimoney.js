@@ -1670,7 +1670,9 @@
       const todayExp = s.transactions.filter((t) => t.bookId === book.id && t.date === today && t.direction === 'out' && t.transferPair == null).reduce((a, b) => a + b.amount, 0);
       const mIn = s.transactions.filter((t) => t.bookId === book.id && String(t.date || '').startsWith(pref) && t.direction === 'in' && t.transferPair == null).reduce((a, b) => a + b.amount, 0);
       const mOut = s.transactions.filter((t) => t.bookId === book.id && String(t.date || '').startsWith(pref) && t.direction === 'out' && t.transferPair == null).reduce((a, b) => a + b.amount, 0);
-      let blk = `\n\n## Keuangan CuciMoney+ (${book.name})\n- Total Saldo: ${fmtRp(balance, true)}\n- Pengeluaran Hari Ini: ${fmtRp(todayExp, true)}\n- Bulan Ini: Masuk ${fmtRp(mIn, true)}, Keluar ${fmtRp(mOut, true)}\n`;
+      const allBookNames = s.books.map((b) => b.name).join(', ');
+      const accNames = accs.filter((a) => !a.isSavings).map((a) => a.name).join(', ');
+      let blk = `\n\n## Keuangan CuciMoney+ (Buku aktif: ${book.name})\n- Buku tersedia: ${allBookNames || book.name}\n- Akun di buku ini: ${accNames || '-'}\n- Total Saldo: ${fmtRp(balance, true)}\n- Pengeluaran Hari Ini: ${fmtRp(todayExp, true)}\n- Bulan Ini: Masuk ${fmtRp(mIn, true)}, Keluar ${fmtRp(mOut, true)}\n`;
       const rec = s.transactions.filter((t) => t.bookId === book.id).slice(0, 3);
       if (rec.length) {
         blk += '- Transaksi terakhir: ' + rec.map((t) => `${t.title} (${t.direction === 'in' ? '+' : '-'}${fmtRp(t.amount, true)}, ${t.date})`).join('; ') + '\n';

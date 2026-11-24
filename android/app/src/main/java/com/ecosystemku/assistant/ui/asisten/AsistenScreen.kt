@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.speech.RecognizerIntent
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -12,21 +13,26 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -45,17 +51,25 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.automirrored.outlined.VolumeOff
 import androidx.compose.material.icons.automirrored.outlined.VolumeUp
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.MoreHoriz
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.RestartAlt
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -76,19 +90,27 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ecosystemku.assistant.R
+import com.ecosystemku.assistant.data.local.ChatChoicesCodec
+import com.ecosystemku.assistant.data.local.ChatChoicesData
 import com.ecosystemku.assistant.data.local.ChatMessageEntity
+import com.ecosystemku.assistant.data.local.ChatSessionEntity
 import com.ecosystemku.assistant.live2d.WebViewLive2DStageController
 import com.ecosystemku.assistant.ui.theme.AccentBlue
 import com.ecosystemku.assistant.ui.theme.BorderLight
@@ -106,6 +128,9 @@ import com.ecosystemku.assistant.ui.theme.UiSans
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun AsistenScreen(
@@ -124,6 +149,13 @@ fun AsistenScreen(
     onClearChat: () -> Unit = {},
     onPickWallpaper: (Uri) -> Unit = {},
     onResetWallpaper: () -> Unit = {},
+    onSelectChoices: (Long, List<String>) -> Unit = { _, _ -> },
+    onNewChatSession: () -> Unit = {},
+    onSwitchChatSession: (Long) -> Unit = {},
+    onRenameChatSession: (Long, String) -> Unit = { _, _ -> },
+    onDeleteChatSession: (Long) -> Unit = {},
+    onDeleteMessage: (Long) -> Unit = {},
+    onRegenerateMessage: (Long) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val wallpaperLauncher = rememberLauncherForActivityResult(
@@ -347,6 +379,8 @@ fun AsistenScreen(
                     )
 
                     var menuExpanded by remember { mutableStateOf(false) }
+                    var showSessionsDialog by remember { mutableStateOf(false) }
+                    val activeSession = uiState.chatSessions.firstOrNull { it.id == uiState.currentSessionId }
 
                     Row(
                         modifier = Modifier
@@ -355,16 +389,58 @@ fun AsistenScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            imageVector = Icons.Outlined.ChatBubbleOutline,
-                            contentDescription = null,
-                            tint = AccentBlue,
-                            modifier = Modifier.size(19.dp)
-                        )
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(14.dp)
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier
+                                .weight(1f, fill = false)
+                                .clip(RoundedCornerShape(999.dp))
+                                .background(ElevatedSurface.copy(alpha = 0.7f))
+                                .border(1.dp, BorderSubtle, RoundedCornerShape(999.dp))
+                                .clickable { showSessionsDialog = true }
+                                .padding(horizontal = 10.dp, vertical = 5.dp)
                         ) {
+                            Icon(
+                                imageVector = Icons.Outlined.ChatBubbleOutline,
+                                contentDescription = "Log Obrolan",
+                                tint = AccentBlue,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = activeSession?.title ?: "Obrolan Baru",
+                                fontFamily = UiSans,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = TextPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.widthIn(max = 175.dp)
+                            )
+                            if (uiState.chatSessions.size > 1) {
+                                Text(
+                                    text = "${uiState.chatSessions.size}",
+                                    fontFamily = UiSans,
+                                    fontSize = 10.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = AccentBlue
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Add,
+                                contentDescription = "Obrolan Baru",
+                                tint = if (uiState.isThinking) TextSubtle else AccentBlue,
+                                modifier = Modifier
+                                    .size(20.dp)
+                                    .clickable(enabled = !uiState.isThinking) { onNewChatSession() }
+                            )
                             Icon(
                                 imageVector = if (uiState.isMuted) Icons.AutoMirrored.Outlined.VolumeOff else Icons.AutoMirrored.Outlined.VolumeUp,
                                 contentDescription = if (uiState.isMuted) "Nyalakan Suara TTS" else "Matikan Suara TTS",
@@ -387,6 +463,52 @@ fun AsistenScreen(
                                     onDismissRequest = { menuExpanded = false },
                                     modifier = Modifier.background(ElevatedSurface)
                                 ) {
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = "Obrolan Baru",
+                                                fontFamily = UiSans,
+                                                fontSize = 13.sp,
+                                                color = TextPrimary
+                                            )
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = Icons.Outlined.Add,
+                                                contentDescription = null,
+                                                tint = AccentBlue,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        },
+                                        enabled = !uiState.isThinking,
+                                        onClick = {
+                                            menuExpanded = false
+                                            onNewChatSession()
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = "Log Obrolan (${uiState.chatSessions.size})",
+                                                fontFamily = UiSans,
+                                                fontSize = 13.sp,
+                                                color = TextPrimary
+                                            )
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = Icons.Outlined.History,
+                                                contentDescription = null,
+                                                tint = AccentBlue,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        },
+                                        onClick = {
+                                            menuExpanded = false
+                                            showSessionsDialog = true
+                                        }
+                                    )
+                                    HorizontalDivider(color = BorderSubtle)
                                     DropdownMenuItem(
                                         text = {
                                             Text(
@@ -458,7 +580,7 @@ fun AsistenScreen(
                                     DropdownMenuItem(
                                         text = {
                                             Text(
-                                                text = "Bersihkan Riwayat Obrolan",
+                                                text = "Bersihkan Obrolan Sesi Ini",
                                                 fontFamily = UiSans,
                                                 fontSize = 13.sp,
                                                 color = TextPrimary
@@ -482,6 +604,25 @@ fun AsistenScreen(
                         }
                     }
 
+                    if (showSessionsDialog) {
+                        ChatSessionsDialog(
+                            sessions = uiState.chatSessions,
+                            currentSessionId = uiState.currentSessionId,
+                            isThinking = uiState.isThinking,
+                            onDismiss = { showSessionsDialog = false },
+                            onNewSession = {
+                                showSessionsDialog = false
+                                onNewChatSession()
+                            },
+                            onSwitchSession = { sid ->
+                                showSessionsDialog = false
+                                onSwitchChatSession(sid)
+                            },
+                            onRenameSession = onRenameChatSession,
+                            onDeleteSession = onDeleteChatSession
+                        )
+                    }
+
                     HorizontalDivider(thickness = 1.dp, color = BorderSubtle)
                 }
 
@@ -490,6 +631,9 @@ fun AsistenScreen(
                     messages = uiState.messages,
                     isThinking = uiState.isThinking,
                     streamingTextFlow = streamingTextFlow,
+                    onSelectChoices = onSelectChoices,
+                    onDeleteMessage = onDeleteMessage,
+                    onRegenerateMessage = onRegenerateMessage,
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
@@ -544,31 +688,136 @@ fun AsistenScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ChatBubbleRow(
     isUser: Boolean,
-    text: String
+    text: String,
+    messageId: Long? = null,
+    choices: ChatChoicesData? = null,
+    isThinking: Boolean = false,
+    onSelectChoices: (List<String>) -> Unit = {},
+    onDeleteMessage: (() -> Unit)? = null,
+    onRegenerateMessage: (() -> Unit)? = null
 ) {
+    var bubbleMenuExpanded by remember { mutableStateOf(false) }
+    val clipboardManager = LocalClipboardManager.current
+    val context = LocalContext.current
+    val allowActions = messageId != null
+
+    val bubbleActionMenu: @Composable () -> Unit = {
+        if (allowActions) {
+            DropdownMenu(
+                expanded = bubbleMenuExpanded,
+                onDismissRequest = { bubbleMenuExpanded = false },
+                modifier = Modifier.background(ElevatedSurface)
+            ) {
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = "Salin Pesan",
+                            fontFamily = UiSans,
+                            fontSize = 13.sp,
+                            color = TextPrimary
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Outlined.ContentCopy,
+                            contentDescription = null,
+                            tint = AccentBlue,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    },
+                    onClick = {
+                        bubbleMenuExpanded = false
+                        clipboardManager.setText(AnnotatedString(text))
+                        Toast.makeText(context, "Pesan disalin", Toast.LENGTH_SHORT).show()
+                    }
+                )
+                if (!isUser && onRegenerateMessage != null && !isThinking) {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = "Ulangi Jawaban",
+                                fontFamily = UiSans,
+                                fontSize = 13.sp,
+                                color = TextPrimary
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Outlined.Refresh,
+                                contentDescription = null,
+                                tint = AccentBlue,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        },
+                        onClick = {
+                            bubbleMenuExpanded = false
+                            onRegenerateMessage()
+                        }
+                    )
+                }
+                if (onDeleteMessage != null && !isThinking) {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = "Hapus Pesan",
+                                fontFamily = UiSans,
+                                fontSize = 13.sp,
+                                color = TextPrimary
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Outlined.DeleteOutline,
+                                contentDescription = null,
+                                tint = TextMuted,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        },
+                        onClick = {
+                            bubbleMenuExpanded = false
+                            onDeleteMessage()
+                        }
+                    )
+                }
+            }
+        }
+    }
+
     if (isUser) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.End
         ) {
-            Box(
-                modifier = Modifier
-                    .widthIn(max = 280.dp)
-                    .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 18.dp, bottomEnd = 4.dp))
-                    .background(ElevatedSurface)
-                    .border(1.dp, BorderSubtle, RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 18.dp, bottomEnd = 4.dp))
-                    .padding(horizontal = 14.dp, vertical = 10.dp)
-            ) {
-                Text(
-                    text = text,
-                    fontFamily = UiSans,
-                    fontSize = 13.5.sp,
-                    lineHeight = 19.sp,
-                    color = TextPrimary
-                )
+            Box {
+                Box(
+                    modifier = Modifier
+                        .widthIn(max = 280.dp)
+                        .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 18.dp, bottomEnd = 4.dp))
+                        .background(ElevatedSurface)
+                        .border(1.dp, BorderSubtle, RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 18.dp, bottomEnd = 4.dp))
+                        .then(
+                            if (allowActions) {
+                                Modifier.combinedClickable(
+                                    onClick = {},
+                                    onLongClick = { bubbleMenuExpanded = true }
+                                )
+                            } else Modifier
+                        )
+                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                ) {
+                    Text(
+                        text = text,
+                        fontFamily = UiSans,
+                        fontSize = 13.5.sp,
+                        lineHeight = 19.sp,
+                        color = TextPrimary
+                    )
+                }
+                bubbleActionMenu()
             }
         }
     } else {
@@ -591,20 +840,218 @@ private fun ChatBubbleRow(
 
             Spacer(modifier = Modifier.width(10.dp))
 
-            Box(
-                modifier = Modifier
-                    .widthIn(max = 270.dp)
-                    .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomEnd = 18.dp, bottomStart = 4.dp))
-                    .background(ElevatedSurface)
-                    .border(1.dp, BorderSubtle, RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomEnd = 18.dp, bottomStart = 4.dp))
-                    .padding(horizontal = 14.dp, vertical = 10.dp)
+            Column(
+                modifier = Modifier.widthIn(max = 276.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                Box {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomEnd = 18.dp, bottomStart = 4.dp))
+                            .background(ElevatedSurface)
+                            .border(1.dp, BorderSubtle, RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomEnd = 18.dp, bottomStart = 4.dp))
+                            .then(
+                                if (allowActions) {
+                                    Modifier.combinedClickable(
+                                        onClick = {},
+                                        onLongClick = { bubbleMenuExpanded = true }
+                                    )
+                                } else Modifier
+                            )
+                            .padding(horizontal = 14.dp, vertical = 10.dp)
+                    ) {
+                        Text(
+                            text = text,
+                            fontFamily = UiSans,
+                            fontSize = 13.5.sp,
+                            lineHeight = 20.sp,
+                            color = TextPrimary
+                        )
+                    }
+                    bubbleActionMenu()
+                }
+
+                if (choices != null && choices.items.isNotEmpty()) {
+                    ChatChoicesCard(
+                        choices = choices,
+                        isThinking = isThinking,
+                        onSelectChoices = onSelectChoices
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ChatChoicesCard(
+    choices: ChatChoicesData,
+    isThinking: Boolean,
+    onSelectChoices: (List<String>) -> Unit
+) {
+    val isLocked = choices.selected.isNotEmpty()
+    val isMulti = choices.mode.equals("multi", ignoreCase = true)
+    var draftSelected by remember(choices) { mutableStateOf(choices.selected.toSet()) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(SecondarySurface)
+            .border(1.dp, BorderLight, RoundedCornerShape(16.dp))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(9.dp)
+    ) {
+        Text(
+            text = if (isMulti) "Pilih satu atau lebih" else "Pilih salah satu",
+            fontFamily = UiSans,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium,
+            color = TextMuted
+        )
+
+        if (isMulti) {
+            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                choices.items.forEach { item ->
+                    val isActive = if (isLocked) item in choices.selected else item in draftSelected
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (isActive) AccentBlue.copy(alpha = 0.13f) else Color.Transparent)
+                            .border(
+                                1.dp,
+                                if (isActive) AccentBlue.copy(alpha = 0.38f) else Color.Transparent,
+                                RoundedCornerShape(10.dp)
+                            )
+                            .clickable(enabled = !isLocked && !isThinking) {
+                                draftSelected = if (item in draftSelected) draftSelected - item else draftSelected + item
+                            }
+                            .padding(horizontal = 9.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(9.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(18.dp)
+                                .clip(CircleShape)
+                                .background(if (isActive) TextPrimary else Color.Transparent)
+                                .border(1.5.dp, if (isActive) TextPrimary else TextSubtle, CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (isActive) {
+                                Icon(
+                                    imageVector = Icons.Filled.Check,
+                                    contentDescription = null,
+                                    tint = DominantBg,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                            }
+                        }
+                        Text(
+                            text = item,
+                            fontFamily = UiSans,
+                            fontSize = 12.5.sp,
+                            color = if (isLocked && !isActive) TextMuted else TextPrimary
+                        )
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val pickedOrdered = choices.items.filter { it in draftSelected }
                 Text(
-                    text = text,
+                    text = when {
+                        isLocked -> "Kamu memilih: ${choices.selected.joinToString(", ")}"
+                        pickedOrdered.isNotEmpty() -> "Dipilih: ${pickedOrdered.joinToString(", ")}"
+                        else -> "Dipilih: Belum ada"
+                    },
                     fontFamily = UiSans,
-                    fontSize = 13.5.sp,
-                    lineHeight = 20.sp,
-                    color = TextPrimary
+                    fontSize = 11.5.sp,
+                    fontWeight = if (isLocked) FontWeight.Medium else FontWeight.Normal,
+                    color = if (isLocked) StatusOnline else TextMuted,
+                    modifier = Modifier.weight(1f).padding(end = 8.dp)
+                )
+
+                if (!isLocked) {
+                    val canSubmit = pickedOrdered.isNotEmpty() && !isThinking
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(if (canSubmit) AccentBlue else AccentBlue.copy(alpha = 0.4f))
+                            .clickable(enabled = canSubmit, role = Role.Button) {
+                                onSelectChoices(pickedOrdered)
+                            }
+                            .padding(horizontal = 13.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = "Kirim",
+                            fontFamily = UiSans,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = DominantBg
+                        )
+                    }
+                }
+            }
+        } else {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                verticalArrangement = Arrangement.spacedBy(7.dp)
+            ) {
+                choices.items.forEach { item ->
+                    val isSelected = item in choices.selected
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(
+                                when {
+                                    isSelected -> TextPrimary
+                                    isLocked -> ElevatedSurface.copy(alpha = 0.52f)
+                                    else -> ElevatedSurface
+                                }
+                            )
+                            .border(
+                                1.dp,
+                                when {
+                                    isSelected -> TextPrimary
+                                    isLocked -> BorderSubtle
+                                    else -> BorderLight
+                                },
+                                RoundedCornerShape(999.dp)
+                            )
+                            .clickable(enabled = !isLocked && !isThinking, role = Role.Button) {
+                                onSelectChoices(listOf(item))
+                            }
+                            .padding(horizontal = 14.dp, vertical = 7.dp)
+                    ) {
+                        Text(
+                            text = item,
+                            fontFamily = UiSans,
+                            fontSize = 12.5.sp,
+                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                            color = when {
+                                isSelected -> DominantBg
+                                isLocked -> TextMuted
+                                else -> TextPrimary
+                            }
+                        )
+                    }
+                }
+            }
+
+            if (isLocked) {
+                Text(
+                    text = "Kamu memilih: ${choices.selected.joinToString(", ")}",
+                    fontFamily = UiSans,
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = StatusOnline
                 )
             }
         }
@@ -646,6 +1093,9 @@ private fun ChatMessageList(
     messages: List<ChatMessageEntity>,
     isThinking: Boolean,
     streamingTextFlow: StateFlow<String>,
+    onSelectChoices: (Long, List<String>) -> Unit,
+    onDeleteMessage: (Long) -> Unit,
+    onRegenerateMessage: (Long) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val streamingText by streamingTextFlow.collectAsStateWithLifecycle()
@@ -674,9 +1124,16 @@ private fun ChatMessageList(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         items(messages, key = { it.id }) { msg ->
+            val decodedChoices = remember(msg.choicesJson) { ChatChoicesCodec.decode(msg.choicesJson) }
             ChatBubbleRow(
                 isUser = msg.role == "user",
-                text = msg.content
+                text = msg.content,
+                messageId = msg.id,
+                choices = decodedChoices,
+                isThinking = isThinking,
+                onSelectChoices = { picked -> onSelectChoices(msg.id, picked) },
+                onDeleteMessage = { onDeleteMessage(msg.id) },
+                onRegenerateMessage = { onRegenerateMessage(msg.id) }
             )
         }
 
@@ -804,4 +1261,224 @@ private fun ChatInputCapsule(
         }
     }
 }
+
+@Composable
+private fun ChatSessionsDialog(
+    sessions: List<ChatSessionEntity>,
+    currentSessionId: Long,
+    isThinking: Boolean,
+    onDismiss: () -> Unit,
+    onNewSession: () -> Unit,
+    onSwitchSession: (Long) -> Unit,
+    onRenameSession: (Long, String) -> Unit,
+    onDeleteSession: (Long) -> Unit
+) {
+    val formatter = remember { SimpleDateFormat("dd MMM, HH:mm", Locale.getDefault()) }
+    var renamingSession by remember { mutableStateOf<ChatSessionEntity?>(null) }
+    var renameDraft by remember { mutableStateOf("") }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 520.dp)
+                .clip(RoundedCornerShape(20.dp))
+                .background(ElevatedSurface)
+                .border(1.dp, BorderLight, RoundedCornerShape(20.dp))
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = "Log Obrolan",
+                        fontFamily = EditorialSerif,
+                        fontSize = 19.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = TextPrimary
+                    )
+                    Text(
+                        text = "${sessions.size} sesi tersimpan",
+                        fontFamily = UiSans,
+                        fontSize = 11.5.sp,
+                        color = TextMuted
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(if (isThinking) TextSubtle.copy(alpha = 0.25f) else AccentBlue)
+                        .clickable(enabled = !isThinking) { onNewSession() }
+                        .padding(horizontal = 12.dp, vertical = 7.dp)
+                ) {
+                    Text(
+                        text = "+ Baru",
+                        fontFamily = UiSans,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = DominantBg
+                    )
+                }
+            }
+
+            HorizontalDivider(color = BorderSubtle)
+
+            if (sessions.isEmpty()) {
+                Text(
+                    text = "Belum ada sesi obrolan tersimpan.",
+                    fontFamily = UiSans,
+                    fontSize = 13.sp,
+                    color = TextMuted,
+                    modifier = Modifier.padding(vertical = 20.dp)
+                )
+            } else {
+                LazyColumn(
+                    modifier = Modifier.weight(1f, fill = false),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(sessions, key = { it.id }) { session ->
+                        val isActive = session.id == currentSessionId
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(
+                                    if (isActive) AccentBlue.copy(alpha = 0.14f) else SecondarySurface
+                                )
+                                .border(
+                                    1.dp,
+                                    if (isActive) AccentBlue.copy(alpha = 0.45f) else BorderSubtle,
+                                    RoundedCornerShape(14.dp)
+                                )
+                                .clickable(enabled = !isThinking) { onSwitchSession(session.id) }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(
+                                        text = session.title.ifBlank { "Obrolan" },
+                                        fontFamily = UiSans,
+                                        fontSize = 13.5.sp,
+                                        fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Medium,
+                                        color = TextPrimary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                    if (isActive) {
+                                        Text(
+                                            text = "Aktif",
+                                            fontFamily = UiSans,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = StatusOnline
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = formatter.format(Date(session.updatedAt)),
+                                    fontFamily = UiSans,
+                                    fontSize = 11.sp,
+                                    color = TextMuted
+                                )
+                            }
+
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Edit,
+                                    contentDescription = "Ubah Judul Sesi",
+                                    tint = TextMuted,
+                                    modifier = Modifier
+                                        .size(18.dp)
+                                        .clickable {
+                                            renamingSession = session
+                                            renameDraft = session.title
+                                        }
+                                )
+                                Icon(
+                                    imageVector = Icons.Outlined.DeleteOutline,
+                                    contentDescription = "Hapus Sesi",
+                                    tint = if (isThinking) TextSubtle else TextMuted,
+                                    modifier = Modifier
+                                        .size(18.dp)
+                                        .clickable(enabled = !isThinking) { onDeleteSession(session.id) }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(onClick = onDismiss) {
+                    Text(
+                        text = "Tutup",
+                        fontFamily = UiSans,
+                        fontSize = 13.sp,
+                        color = AccentBlue
+                    )
+                }
+            }
+        }
+    }
+
+    val targetRename = renamingSession
+    if (targetRename != null) {
+        AlertDialog(
+            onDismissRequest = { renamingSession = null },
+            containerColor = ElevatedSurface,
+            title = {
+                Text(
+                    text = "Ubah Judul Obrolan",
+                    fontFamily = EditorialSerif,
+                    fontSize = 18.sp,
+                    color = TextPrimary
+                )
+            },
+            text = {
+                OutlinedTextField(
+                    value = renameDraft,
+                    onValueChange = { renameDraft = it.take(60) },
+                    singleLine = true,
+                    placeholder = { Text("Judul sesi", fontSize = 13.sp) }
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onRenameSession(targetRename.id, renameDraft)
+                        renamingSession = null
+                    }
+                ) {
+                    Text("Simpan", color = AccentBlue)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { renamingSession = null }) {
+                    Text("Batal", color = TextMuted)
+                }
+            }
+        )
+    }
+}
+
 

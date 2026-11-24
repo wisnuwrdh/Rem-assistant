@@ -516,16 +516,568 @@
   });
   canvas.addEventListener('pointercancel', () => { petActive = false; });
 
-  // ── Persistent Local Chat History ────────────────────────────────────
+  // ── Persistent Multi-Session Chat History (Fase 1 & 2) ───────────────
   const STORAGE_KEY = 'rem_assistant_history_v1';
-  let chatHistory = [];
-  try { chatHistory = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); } catch (_) {}
-  if (!chatHistory.length) {
-    chatHistory = [{ role: 'assistant', content: 'Selamat datang. Rem adalah pelayan Tuan. Ada yang bisa Rem bantu? 💙' }];
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(chatHistory));
+  const SESSIONS_KEY = 'rem_chat_sessions_v1';
+  const ACTIVE_SESSION_KEY = 'rem_active_session_v1';
+
+  const chatSessionPill = document.getElementById('chat-session-pill');
+  const chatSessionTitleEl = document.getElementById('chat-session-title');
+  const chatSessionCountEl = document.getElementById('chat-session-count');
+  const newChatBtn = document.getElementById('new-chat-btn');
+  const chatMenuBtn = document.getElementById('chat-menu-btn');
+  const chatSheetMenu = document.getElementById('chat-sheet-menu');
+  const menuNewChatBtn = document.getElementById('menu-new-chat');
+  const menuLogChatBtn = document.getElementById('menu-log-chat');
+  const menuClearChatBtn = document.getElementById('menu-clear-chat');
+  const chatSessionsOverlay = document.getElementById('chat-sessions-overlay');
+  const csCloseBtn = document.getElementById('cs-close-btn');
+  const csNewBtn = document.getElementById('cs-new-btn');
+  const csCountSub = document.getElementById('cs-count-sub');
+  const csBodyEl = document.getElementById('cs-body');
+
+  function makeMsgId() {
+    return 'msg_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
+  }
+  function makeSessionId() {
+    return 'sess_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
+  }
+  function makeGreetingMessage(ts = Date.now()) {
+    return {
+      id: makeMsgId(),
+      role: 'assistant',
+      content: 'Selamat datang. Rem adalah pelayan Tuan. Ada yang bisa Rem bantu?',
+      createdAt: ts,
+    };
+  }
+  function localDateKey(ts) {
+    const d = new Date(ts || Date.now());
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${d.getFullYear()}-${mm}-${dd}`;
   }
 
-  function renderBubble(role, text) {
+  let chatSessions = [];
+  let activeSessionId = null;
+
+  try {
+    const raw = JSON.parse(localStorage.getItem(SESSIONS_KEY) || '[]');
+    if (Array.isArray(raw)) {
+      chatSessions = raw.filter((s) => s && Array.isArray(s.messages)).map((s) => ({
+        id: String(s.id || makeSessionId()),
+        title: String(s.title || 'Obrolan').slice(0, 60),
+        createdAt: Number(s.createdAt) || Date.now(),
+        updatedAt: Number(s.updatedAt) || Number(s.createdAt) || Date.now(),
+        rollingSummary: typeof s.rollingSummary === 'string' ? s.rollingSummary : '',
+        summarizedCount: Number(s.summarizedCount) || 0,
+        messages: s.messages.map((m) => ({
+          id: m.id || makeMsgId(),
+          role: m.role === 'user' ? 'user' : 'assistant',
+          content: String(m.content || ''),
+          createdAt: Number(m.createdAt) || Date.now(),
+          ...(m.choices ? { choices: m.choices } : {}),
+        })),
+      }));
+    }
+  } catch (_) {}
+
+  if (!chatSessions.length) {
+    let legacy = [];
+    try { legacy = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); } catch (_) {}
+    const nowTs = Date.now();
+    if (Array.isArray(legacy) && legacy.length) {
+      const firstUser = legacy.find((m) => m?.role === 'user' && String(m.content || '').trim());
+      const rawTitle = firstUser ? String(firstUser.content).replace(/\s+/g, ' ').trim() : '';
+      const legacyTitle = rawTitle ? (rawTitle.length > 42 ? rawTitle.slice(0, 42) + '...' : rawTitle) : 'Obrolan Sebelumnya';
+      chatSessions = [{
+        id: makeSessionId(),
+        title: legacyTitle,
+        createdAt: nowTs,
+        updatedAt: nowTs,
+        rollingSummary: '',
+        summarizedCount: 0,
+        messages: legacy.map((m, i) => ({
+          id: m?.id || `${nowTs}_${i}`,
+          role: m?.role === 'user' ? 'user' : 'assistant',
+          content: String(m?.content || ''),
+          createdAt: Number(m?.createdAt) || (nowTs + i),
+          ...(m?.choices ? { choices: m.choices } : {}),
+        })),
+      }];
+    } else {
+      chatSessions = [{
+        id: makeSessionId(),
+        title: 'Obrolan Baru',
+        createdAt: nowTs,
+        updatedAt: nowTs,
+        rollingSummary: '',
+        summarizedCount: 0,
+        messages: [makeGreetingMessage(nowTs)],
+      }];
+    }
+  }
+
+  activeSessionId = localStorage.getItem(ACTIVE_SESSION_KEY);
+  if (!chatSessions.some((s) => s.id === activeSessionId)) {
+    activeSessionId = chatSessions[0].id;
+  }
+
+  // Smart auto-new-session on app open (only if active session has user turns AND day changed or >=5h gap)
+  (() => {
+    const cur = chatSessions.find((s) => s.id === activeSessionId);
+    if (!cur) return;
+    const hasUserTurns = cur.messages.some((m) => m.role === 'user');
+    const lastTs = cur.updatedAt || cur.messages[cur.messages.length - 1]?.createdAt || cur.createdAt || 0;
+    if (hasUserTurns && lastTs > 0) {
+      const nowTs = Date.now();
+      const dayChanged = localDateKey(lastTs) !== localDateKey(nowTs);
+      const longGap = (nowTs - lastTs) >= (5 * 60 * 60 * 1000);
+      if (dayChanged || longGap) {
+        const fresh = {
+          id: makeSessionId(),
+          title: 'Obrolan Baru',
+          createdAt: nowTs,
+          updatedAt: nowTs,
+          rollingSummary: '',
+          summarizedCount: 0,
+          messages: [makeGreetingMessage(nowTs)],
+        };
+        chatSessions.unshift(fresh);
+        activeSessionId = fresh.id;
+      }
+    }
+  })();
+
+  function getActiveSession() {
+    let s = chatSessions.find((item) => item.id === activeSessionId);
+    if (!s) {
+      if (!chatSessions.length) {
+        const nowTs = Date.now();
+        chatSessions.push({
+          id: makeSessionId(),
+          title: 'Obrolan Baru',
+          createdAt: nowTs,
+          updatedAt: nowTs,
+          rollingSummary: '',
+          summarizedCount: 0,
+          messages: [makeGreetingMessage(nowTs)],
+        });
+      }
+      s = chatSessions[0];
+      activeSessionId = s.id;
+    }
+    return s;
+  }
+
+  function getActiveMessages() {
+    return getActiveSession().messages;
+  }
+
+  function saveChatSessions() {
+    try {
+      localStorage.setItem(SESSIONS_KEY, JSON.stringify(chatSessions));
+      localStorage.setItem(ACTIVE_SESSION_KEY, activeSessionId || '');
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(getActiveMessages()));
+    } catch (_) {}
+    updateSessionHeaderUi();
+  }
+
+  function updateSessionHeaderUi() {
+    const sess = getActiveSession();
+    if (chatSessionTitleEl) chatSessionTitleEl.textContent = sess.title || 'Obrolan Baru';
+    if (chatSessionCountEl) {
+      chatSessionCountEl.textContent = chatSessions.length > 1 ? String(chatSessions.length) : '';
+    }
+    if (csCountSub) {
+      csCountSub.textContent = `${chatSessions.length} sesi tersimpan`;
+    }
+  }
+
+  function formatSessionTimeShort(ts) {
+    if (!ts) return '-';
+    try {
+      return new Date(ts).toLocaleDateString('id-ID', {
+        day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+      });
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function renderChatSessionsOverlay() {
+    updateSessionHeaderUi();
+    if (!csBodyEl) return;
+    csBodyEl.innerHTML = '';
+    const sorted = [...chatSessions].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    if (!sorted.length) {
+      const empty = document.createElement('p');
+      empty.style.cssText = 'color:var(--muted); font-size:13px; text-align:center; padding:24px 0;';
+      empty.textContent = 'Belum ada sesi obrolan tersimpan.';
+      csBodyEl.appendChild(empty);
+      return;
+    }
+    sorted.forEach((s) => {
+      const isActive = s.id === activeSessionId;
+      const card = document.createElement('div');
+      card.className = 'cs-card' + (isActive ? ' active' : '');
+      card.addEventListener('click', () => {
+        if (isThinking) return;
+        activeSessionId = s.id;
+        saveChatSessions();
+        renderChatMessages();
+        chatSessionsOverlay?.classList.remove('open');
+      });
+
+      const info = document.createElement('div');
+      info.style.cssText = 'min-width:0; flex:1;';
+      const titleRow = document.createElement('div');
+      titleRow.style.cssText = 'display:flex; align-items:center; gap:6px;';
+      const titleEl = document.createElement('div');
+      titleEl.style.cssText = 'font-size:13.5px; font-weight:600; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;';
+      titleEl.textContent = s.title || 'Obrolan';
+      titleRow.appendChild(titleEl);
+      if (isActive) {
+        const badge = document.createElement('span');
+        badge.style.cssText = 'font-size:10px; font-weight:600; color:var(--online); flex-shrink:0;';
+        badge.textContent = 'Aktif';
+        titleRow.appendChild(badge);
+      }
+      const meta = document.createElement('div');
+      meta.style.cssText = 'font-size:11px; color:var(--muted); margin-top:2px;';
+      const msgCount = (s.messages || []).length;
+      meta.textContent = `${formatSessionTimeShort(s.updatedAt)} · ${msgCount} pesan`;
+      info.append(titleRow, meta);
+
+      const actions = document.createElement('div');
+      actions.className = 'cs-card-actions';
+
+      const renameBtn = document.createElement('button');
+      renameBtn.type = 'button';
+      renameBtn.className = 'cs-icon-btn';
+      renameBtn.title = 'Ubah Judul';
+      renameBtn.textContent = '✎';
+      renameBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const nextTitle = window.prompt('Ubah judul obrolan:', s.title || '');
+        if (nextTitle && nextTitle.trim()) {
+          s.title = nextTitle.trim().slice(0, 60);
+          saveChatSessions();
+          renderChatSessionsOverlay();
+        }
+      });
+
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'cs-icon-btn';
+      delBtn.title = 'Hapus Sesi';
+      delBtn.textContent = '✕';
+      delBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (isThinking) return;
+        chatSessions = chatSessions.filter((item) => item.id !== s.id);
+        if (!chatSessions.length) {
+          const nowTs = Date.now();
+          chatSessions.push({
+            id: makeSessionId(),
+            title: 'Obrolan Baru',
+            createdAt: nowTs,
+            updatedAt: nowTs,
+            messages: [makeGreetingMessage(nowTs)],
+          });
+        }
+        if (activeSessionId === s.id || !chatSessions.some((item) => item.id === activeSessionId)) {
+          activeSessionId = chatSessions[0].id;
+        }
+        saveChatSessions();
+        renderChatMessages();
+        renderChatSessionsOverlay();
+        showToastMessage('Sesi obrolan dihapus', true);
+      });
+
+      actions.append(renameBtn, delBtn);
+      card.append(info, actions);
+      csBodyEl.appendChild(card);
+    });
+  }
+
+  function startNewChatSession() {
+    if (isThinking) return;
+    const cur = getActiveSession();
+    if (!cur.messages.some((m) => m.role === 'user')) {
+      chatSessionsOverlay?.classList.remove('open');
+      showToastMessage('Sesi baru sudah siap', true);
+      return;
+    }
+    const nowTs = Date.now();
+    const fresh = {
+      id: makeSessionId(),
+      title: 'Obrolan Baru',
+      createdAt: nowTs,
+      updatedAt: nowTs,
+      rollingSummary: '',
+      summarizedCount: 0,
+      messages: [makeGreetingMessage(nowTs)],
+    };
+    chatSessions.unshift(fresh);
+    activeSessionId = fresh.id;
+    saveChatSessions();
+    renderChatMessages();
+    chatSessionsOverlay?.classList.remove('open');
+    showToastMessage('Obrolan baru dimulai', true);
+  }
+
+  function clearCurrentChatSession() {
+    if (isThinking) return;
+    stopAllAudio();
+    const sess = getActiveSession();
+    const nowTs = Date.now();
+    sess.title = 'Obrolan Baru';
+    sess.updatedAt = nowTs;
+    sess.rollingSummary = '';
+    sess.summarizedCount = 0;
+    sess.messages = [makeGreetingMessage(nowTs)];
+    saveChatSessions();
+    renderChatMessages();
+    showToastMessage('Obrolan sesi ini dibersihkan', true);
+  }
+
+  function closeChatMenu() {
+    chatSheetMenu?.classList.remove('open');
+  }
+  if (chatSessionPill) {
+    chatSessionPill.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeChatMenu();
+      renderChatSessionsOverlay();
+      chatSessionsOverlay?.classList.add('open');
+    });
+  }
+  if (newChatBtn) {
+    newChatBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeChatMenu();
+      startNewChatSession();
+    });
+  }
+  if (chatMenuBtn) {
+    chatMenuBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      chatSheetMenu?.classList.toggle('open');
+    });
+  }
+  if (menuNewChatBtn) {
+    menuNewChatBtn.addEventListener('click', () => {
+      closeChatMenu();
+      startNewChatSession();
+    });
+  }
+  if (menuLogChatBtn) {
+    menuLogChatBtn.addEventListener('click', () => {
+      closeChatMenu();
+      renderChatSessionsOverlay();
+      chatSessionsOverlay?.classList.add('open');
+    });
+  }
+  if (menuClearChatBtn) {
+    menuClearChatBtn.addEventListener('click', () => {
+      closeChatMenu();
+      clearCurrentChatSession();
+    });
+  }
+  if (csCloseBtn) {
+    csCloseBtn.addEventListener('click', () => chatSessionsOverlay?.classList.remove('open'));
+  }
+  if (csNewBtn) {
+    csNewBtn.addEventListener('click', () => startNewChatSession());
+  }
+  document.addEventListener('click', (e) => {
+    if (chatSheetMenu?.classList.contains('open') && !chatSheetMenu.contains(e.target) && e.target !== chatMenuBtn) {
+      closeChatMenu();
+    }
+  });
+
+  function parseChoicesFromReply(rawText) {
+    const m = String(rawText || '').match(/\[(?:CHOICES|OPTIONS):([^\]\r\n]+)\]/i);
+    if (!m) return null;
+    const parts = m[1].split('|').map((s) => s.trim()).filter(Boolean);
+    if (!parts.length) return null;
+    const head = parts[0].toLowerCase();
+    let mode = 'single';
+    let rawItems = parts;
+    if (head === 'multi' || head === 'multiple') {
+      mode = 'multi';
+      rawItems = parts.slice(1);
+    } else if (head === 'single') {
+      mode = 'single';
+      rawItems = parts.slice(1);
+    }
+    const items = [];
+    const seen = new Set();
+    for (const item of rawItems) {
+      const k = item.toLowerCase();
+      if (!seen.has(k)) {
+        seen.add(k);
+        items.push(item.slice(0, 60));
+      }
+      if (items.length >= 8) break;
+    }
+    if (!items.length) return null;
+    return { mode, items, selected: [] };
+  }
+
+  function appendChoicesCard(container, msgObj) {
+    const choices = msgObj?.choices;
+    if (!choices || !Array.isArray(choices.items) || !choices.items.length) return;
+    const existing = container.querySelector('.choice-card');
+    if (existing) existing.remove();
+
+    const card = document.createElement('div');
+    card.className = 'choice-card';
+
+    const head = document.createElement('div');
+    head.className = 'choice-card-head';
+    head.textContent = choices.mode === 'multi' ? 'Pilih satu atau lebih' : 'Pilih salah satu';
+    card.appendChild(head);
+
+    const savedSelected = Array.isArray(choices.selected) ? choices.selected : [];
+    const isLocked = savedSelected.length > 0;
+
+    if (choices.mode === 'multi') {
+      const draft = new Set(savedSelected);
+      const list = document.createElement('div');
+      list.className = 'choice-multi-list';
+
+      const foot = document.createElement('div');
+      foot.className = 'choice-card-foot';
+      const status = document.createElement('div');
+      status.className = 'choice-status' + (isLocked ? ' chosen' : '');
+      const sendChoicesBtn = document.createElement('button');
+      sendChoicesBtn.type = 'button';
+      sendChoicesBtn.className = 'choice-send-btn';
+      sendChoicesBtn.textContent = 'Kirim';
+
+      const syncMultiUi = () => {
+        const picked = choices.items.filter((it) => draft.has(it));
+        if (isLocked) {
+          status.textContent = `Kamu memilih: ${savedSelected.join(', ')}`;
+          sendChoicesBtn.style.display = 'none';
+        } else {
+          status.textContent = picked.length ? `Dipilih: ${picked.join(', ')}` : 'Dipilih: Belum ada';
+          sendChoicesBtn.disabled = picked.length === 0 || isThinking;
+        }
+        list.querySelectorAll('.choice-multi-row').forEach((row) => {
+          const on = draft.has(row.dataset.val);
+          row.classList.toggle('active', on);
+          row.disabled = isLocked;
+        });
+      };
+
+      choices.items.forEach((item) => {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'choice-multi-row';
+        row.dataset.val = item;
+        const check = document.createElement('span');
+        check.className = 'choice-check';
+        check.textContent = '✓';
+        const lbl = document.createElement('span');
+        lbl.textContent = item;
+        row.append(check, lbl);
+        row.addEventListener('click', () => {
+          if (isLocked || isThinking) return;
+          if (draft.has(item)) draft.delete(item);
+          else draft.add(item);
+          syncMultiUi();
+        });
+        list.appendChild(row);
+      });
+
+      sendChoicesBtn.addEventListener('click', () => {
+        if (isLocked || isThinking) return;
+        const picked = choices.items.filter((it) => draft.has(it));
+        if (!picked.length) return;
+        choices.selected = picked;
+        saveChatSessions();
+        appendChoicesCard(container, msgObj);
+        sendUserMessage(picked.join(', '));
+      });
+
+      foot.append(status, sendChoicesBtn);
+      card.append(list, foot);
+      syncMultiUi();
+    } else {
+      const wrap = document.createElement('div');
+      wrap.className = 'choice-chips-wrap';
+      choices.items.forEach((item) => {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'choice-chip' + (savedSelected.includes(item) ? ' selected' : '');
+        chip.textContent = item;
+        chip.disabled = isLocked;
+        chip.addEventListener('click', () => {
+          if (isLocked || isThinking) return;
+          choices.selected = [item];
+          saveChatSessions();
+          appendChoicesCard(container, msgObj);
+          sendUserMessage(item);
+        });
+        wrap.appendChild(chip);
+      });
+      card.appendChild(wrap);
+
+      if (isLocked) {
+        const status = document.createElement('div');
+        status.className = 'choice-status chosen';
+        status.textContent = `Kamu memilih: ${savedSelected.join(', ')}`;
+        card.appendChild(status);
+      }
+    }
+
+    container.appendChild(card);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  function attachMsgActions(container, msgObj) {
+    if (!msgObj || !msgObj.id) return;
+    const existing = container.querySelector('.msg-actions');
+    if (existing) existing.remove();
+    const bar = document.createElement('div');
+    bar.className = 'msg-actions';
+
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'msg-act-btn';
+    copyBtn.textContent = 'Salin';
+    copyBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(msgObj.content || '');
+        showToastMessage('Pesan disalin', true);
+      } catch (_) {
+        showToastMessage('Gagal menyalin pesan', false);
+      }
+    });
+    bar.appendChild(copyBtn);
+
+    if (msgObj.role === 'assistant') {
+      const regenBtn = document.createElement('button');
+      regenBtn.type = 'button';
+      regenBtn.className = 'msg-act-btn';
+      regenBtn.textContent = 'Ulangi';
+      regenBtn.addEventListener('click', () => regenerateAssistantMessage(msgObj.id));
+      bar.appendChild(regenBtn);
+    }
+
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.className = 'msg-act-btn danger';
+    delBtn.textContent = 'Hapus';
+    delBtn.addEventListener('click', () => deleteSingleMessage(msgObj.id));
+    bar.appendChild(delBtn);
+
+    container.appendChild(bar);
+  }
+
+  function renderBubble(role, text, msgObj = null) {
     const row = document.createElement('div');
     row.className = `msg-row ${role}`;
     if (role === 'assistant') {
@@ -533,16 +1085,48 @@
       av.className = 'rem-avatar';
       av.textContent = 'R';
       row.appendChild(av);
+      const col = document.createElement('div');
+      col.className = 'msg-col';
+      const b = document.createElement('div');
+      b.className = 'bubble';
+      b.textContent = text;
+      col.appendChild(b);
+      if (msgObj?.choices) appendChoicesCard(col, msgObj);
+      if (msgObj?.id) attachMsgActions(col, msgObj);
+      row.appendChild(col);
+      messagesEl.appendChild(row);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      return { bubble: b, col, row };
     }
     const b = document.createElement('div');
     b.className = 'bubble';
     b.textContent = text;
     row.appendChild(b);
+    if (msgObj?.id) attachMsgActions(row, msgObj);
     messagesEl.appendChild(row);
     messagesEl.scrollTop = messagesEl.scrollHeight;
-    return b;
+    return { bubble: b, col: row, row };
   }
-  chatHistory.forEach((m) => renderBubble(m.role, m.content));
+
+  function renderChatMessages() {
+    messagesEl.innerHTML = '';
+    getActiveMessages().forEach((m) => renderBubble(m.role, m.content, m));
+    updateSessionHeaderUi();
+  }
+
+  function deleteSingleMessage(msgId) {
+    if (isThinking) return;
+    const sess = getActiveSession();
+    const before = sess.messages.length;
+    sess.messages = sess.messages.filter((m) => m.id !== msgId);
+    if (sess.messages.length !== before) {
+      saveChatSessions();
+      renderChatMessages();
+    }
+  }
+
+  saveChatSessions();
+  renderChatMessages();
 
   // ── TTS Player (/api/tts) ────────────────────────────────────────────
   function ensureAudio() {
@@ -597,14 +1181,21 @@
   // ── Phase 1: Personal Memory Store (ceminan SQLite Room di Preview) ─
   const MEM_KEY = 'rem_user_memories_v1';
   const SUM_KEY = 'rem_chat_summaries_v1';
+  const MEM_PROFILE_KEY = 'rem_memory_profile_v1';
   const AUTO_LEARN_KEY = 'rem_auto_learn_v1';
   let userMemories = [];
   let chatSummaries = [];
+  let memoryProfile = { sections: [], updatedAt: 0 };
+  let isSynthesizingProfile = false;
   let autoLearnMemory = localStorage.getItem(AUTO_LEARN_KEY) !== 'false';
   let selectedMemCat = 'preferensi';
 
   try { userMemories = JSON.parse(localStorage.getItem(MEM_KEY) || '[]'); } catch (_) {}
   try { chatSummaries = JSON.parse(localStorage.getItem(SUM_KEY) || '[]'); } catch (_) {}
+  try {
+    const mp = JSON.parse(localStorage.getItem(MEM_PROFILE_KEY) || 'null');
+    if (mp && Array.isArray(mp.sections)) memoryProfile = mp;
+  } catch (_) {}
 
   const memCountSub = document.getElementById('mem-count-sub');
   const memAutoToggle = document.getElementById('mem-auto-toggle');
@@ -615,25 +1206,176 @@
   const memListEl = document.getElementById('mem-list');
   const memClearBtn = document.getElementById('mem-clear-btn');
   const resetAsistenBtn = document.getElementById('reset-asisten-btn');
+  const memProfileOpenBtn = document.getElementById('mem-profile-open-btn');
+  const memProfileSub = document.getElementById('mem-profile-sub');
+  const memSummaryOverlay = document.getElementById('mem-summary-overlay');
+  const msCloseBtn = document.getElementById('ms-close-btn');
+  const msRefreshBtn = document.getElementById('ms-refresh-btn');
+  const msStatusEl = document.getElementById('ms-status');
+  const msBodyEl = document.getElementById('ms-body');
+
+  function formatProfileTimestamp(ts) {
+    if (!ts) return 'Belum dirangkum';
+    try {
+      return 'Diperbarui ' + new Date(ts).toLocaleDateString('id-ID', {
+        day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+      });
+    } catch (_) {
+      return 'Tersedia';
+    }
+  }
+
+  function renderMemoryProfileOverlay() {
+    if (memProfileSub) {
+      memProfileSub.textContent = isSynthesizingProfile
+        ? 'Membuat ringkasan…'
+        : (memoryProfile.sections?.length
+          ? `${memoryProfile.sections.length} bagian · ${formatProfileTimestamp(memoryProfile.updatedAt)}`
+          : 'Lihat profil ringkas yang diingat Rem');
+    }
+    if (msStatusEl) {
+      msStatusEl.textContent = isSynthesizingProfile
+        ? 'Membuat ringkasan…'
+        : formatProfileTimestamp(memoryProfile.updatedAt);
+    }
+    if (msRefreshBtn) msRefreshBtn.disabled = isSynthesizingProfile;
+    if (!msBodyEl) return;
+    msBodyEl.innerHTML = '';
+    const sections = Array.isArray(memoryProfile.sections) ? memoryProfile.sections : [];
+    if (!sections.length) {
+      const empty = document.createElement('p');
+      empty.style.cssText = 'font-size:13.5px; color:var(--muted); line-height:1.6;';
+      empty.textContent = userMemories.length
+        ? 'Ringkasan memori belum dibuat. Tekan tombol ↻ di kanan atas untuk merangkum fakta yang sudah tersimpan.'
+        : 'Belum ada memori personal. Ngobrol dengan Rem atau tambahkan fakta dulu, lalu ringkasan memori akan disusun otomatis.';
+      msBodyEl.appendChild(empty);
+      return;
+    }
+    sections.forEach((sec) => {
+      const wrap = document.createElement('div');
+      const titleEl = document.createElement('h2');
+      titleEl.className = 'ms-sec-title';
+      titleEl.textContent = sec.title;
+      const bodyEl = document.createElement('p');
+      bodyEl.className = 'ms-sec-body';
+      bodyEl.textContent = sec.body;
+      wrap.append(titleEl, bodyEl);
+      msBodyEl.appendChild(wrap);
+    });
+  }
 
   function saveMemories() {
     localStorage.setItem(MEM_KEY, JSON.stringify(userMemories));
     localStorage.setItem(SUM_KEY, JSON.stringify(chatSummaries));
+    localStorage.setItem(MEM_PROFILE_KEY, JSON.stringify(memoryProfile));
     renderMemoriesUI();
+    renderMemoryProfileOverlay();
+  }
+
+  async function refreshMemoryProfileSummary(force = false) {
+    if (isSynthesizingProfile) return;
+    if (!userMemories.length && !chatSummaries.length) {
+      memoryProfile = { sections: [], updatedAt: 0 };
+      saveMemories();
+      return;
+    }
+    if (!force && memoryProfile.updatedAt && Date.now() - memoryProfile.updatedAt < 45000 && memoryProfile.sections?.length) {
+      return;
+    }
+    isSynthesizingProfile = true;
+    renderMemoryProfileOverlay();
+    try {
+      const res = await fetch('/api/memory/extract', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'profile',
+          facts: userMemories.slice(0, 60).map((m) => ({
+            category: m.category,
+            factKey: m.factKey,
+            factValue: m.factValue,
+          })),
+          summaries: chatSummaries.slice(0, 8),
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data?.sections)) {
+          memoryProfile = {
+            sections: data.sections,
+            updatedAt: data.updatedAt || Date.now(),
+          };
+          saveMemories();
+        }
+      }
+    } catch (_) {
+    } finally {
+      isSynthesizingProfile = false;
+      renderMemoryProfileOverlay();
+    }
   }
 
   function upsertMemory(category, factKey, factValue, confidence = 0.85) {
     const key = String(factKey || '').trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 48);
     const val = String(factValue || '').trim().slice(0, 180);
-    if (!key || !val) return;
+    if (!key || !val) return false;
     const now = Date.now();
     const idx = userMemories.findIndex((m) => m.factKey === key);
     if (idx >= 0) {
+      if (userMemories[idx].factValue === val && userMemories[idx].category === category) return false;
       userMemories[idx] = { ...userMemories[idx], category, factValue: val, confidence, updatedAt: now };
     } else {
       userMemories.unshift({ id: now + Math.random(), category, factKey: key, factValue: val, confidence, updatedAt: now });
     }
     saveMemories();
+    return true;
+  }
+
+  function deleteMemoryByKeyOrQuery(keyOrQuery) {
+    const raw = String(keyOrQuery || '').trim().toLowerCase();
+    if (!raw) return 0;
+    const normKey = raw.replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
+    const before = userMemories.length;
+    userMemories = userMemories.filter((m) => {
+      if (normKey && m.factKey.toLowerCase() === normKey) return false;
+      if (m.factKey.toLowerCase().includes(raw) || m.factValue.toLowerCase().includes(raw)) return false;
+      return true;
+    });
+    const removed = before - userMemories.length;
+    if (removed > 0) {
+      if (!userMemories.length && !chatSummaries.length) {
+        memoryProfile = { sections: [], updatedAt: 0 };
+      }
+      saveMemories();
+    }
+    return removed;
+  }
+
+  function applyMemoryTagsFromReply(rawText) {
+    let changed = false;
+    const tagRegex = /\[MEMORY:([^\]\r\n]+)\]/gi;
+    let m;
+    while ((m = tagRegex.exec(rawText)) !== null) {
+      const parts = String(m[1] || '').split('|').map((s) => s.trim());
+      const cmd = (parts[0] || '').toUpperCase();
+      if (cmd === 'SET' || cmd === 'ADD' || cmd === 'UPDATE') {
+        const catRaw = (parts[1] || 'catatan').toLowerCase();
+        const cat = ['identitas', 'preferensi', 'kebiasaan', 'tujuan', 'catatan'].includes(catRaw) ? catRaw : 'catatan';
+        const key = parts[2] || `catatan_${Date.now()}`;
+        const val = parts[3] || '';
+        if (upsertMemory(cat, key, val, 0.95)) {
+          changed = true;
+          showToastMessage('Memori diperbarui', true);
+        }
+      } else if (cmd === 'DEL' || cmd === 'DELETE' || cmd === 'FORGET') {
+        const q = parts[1] || '';
+        if (deleteMemoryByKeyOrQuery(q) > 0) {
+          changed = true;
+          showToastMessage('Memori dihapus', true);
+        }
+      }
+    }
+    if (changed) refreshMemoryProfileSummary(true);
   }
 
   function renderMemoriesUI(learningNow = false) {
@@ -678,6 +1420,7 @@
       del.addEventListener('click', () => {
         userMemories = userMemories.filter((item) => item.factKey !== m.factKey);
         saveMemories();
+        refreshMemoryProfileSummary(true);
       });
 
       row.append(info, del);
@@ -685,6 +1428,23 @@
     });
   }
   renderMemoriesUI();
+  renderMemoryProfileOverlay();
+
+  if (memProfileOpenBtn) {
+    memProfileOpenBtn.addEventListener('click', () => {
+      renderMemoryProfileOverlay();
+      memSummaryOverlay?.classList.add('open');
+      if (!memoryProfile.sections?.length && (userMemories.length || chatSummaries.length)) {
+        refreshMemoryProfileSummary(true);
+      }
+    });
+  }
+  if (msCloseBtn) {
+    msCloseBtn.addEventListener('click', () => memSummaryOverlay?.classList.remove('open'));
+  }
+  if (msRefreshBtn) {
+    msRefreshBtn.addEventListener('click', () => refreshMemoryProfileSummary(true));
+  }
 
   if (memAutoToggle) {
     memAutoToggle.addEventListener('click', () => {
@@ -706,15 +1466,17 @@
       const val = (memValInput?.value || '').trim();
       if (!val) return;
       const rawKey = (memKeyInput?.value || '').trim();
-      upsertMemory(selectedMemCat, rawKey || `catatan_${Date.now()}`, val, 1.0);
+      const added = upsertMemory(selectedMemCat, rawKey || `catatan_${Date.now()}`, val, 1.0);
       if (memKeyInput) memKeyInput.value = '';
       if (memValInput) memValInput.value = '';
+      if (added) refreshMemoryProfileSummary(true);
     });
   }
   if (memClearBtn) {
     memClearBtn.addEventListener('click', () => {
       userMemories = [];
       chatSummaries = [];
+      memoryProfile = { sections: [], updatedAt: 0 };
       saveMemories();
     });
   }
@@ -723,15 +1485,70 @@
       stopAllAudio();
       userMemories = [];
       chatSummaries = [];
+      memoryProfile = { sections: [], updatedAt: 0 };
       saveMemories();
-      chatHistory = [{ role: 'assistant', content: 'Selamat datang. Rem adalah pelayan Tuan. Ada yang bisa Rem bantu? 💙' }];
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(chatHistory));
-      messagesEl.innerHTML = '';
-      chatHistory.forEach((m) => renderBubble(m.role, m.content));
+      const nowTs = Date.now();
+      chatSessions = [{
+        id: makeSessionId(),
+        title: 'Obrolan Baru',
+        createdAt: nowTs,
+        updatedAt: nowTs,
+        messages: [makeGreetingMessage(nowTs)],
+      }];
+      activeSessionId = chatSessions[0].id;
+      saveChatSessions();
+      renderChatMessages();
     });
   }
 
-  function buildPersonalizedSystemPrompt() {
+  function formatElapsedGapId(fromMs, nowMs) {
+    const diffMs = Math.max(0, (nowMs || Date.now()) - (fromMs || 0));
+    const totalMin = Math.floor(diffMs / 60000);
+    if (totalMin < 1) return 'baru saja (< 1 menit)';
+    if (totalMin < 60) return `${totalMin} menit`;
+    if (totalMin < 1440) {
+      const h = Math.floor(totalMin / 60);
+      const m = totalMin % 60;
+      return m > 0 ? `${h} jam ${m} menit` : `${h} jam`;
+    }
+    const d = Math.floor(totalMin / 1440);
+    const h = Math.floor((totalMin % 1440) / 60);
+    return h > 0 ? `${d} hari ${h} jam` : `${d} hari`;
+  }
+
+  function buildTimeAndGapContext(currentUserMsgId = null) {
+    const now = new Date();
+    const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+    const months = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+    const hr = now.getHours();
+    const min = String(now.getMinutes()).padStart(2, '0');
+    const hrStr = String(hr).padStart(2, '0');
+    const tod = (hr >= 4 && hr <= 10) ? 'pagi' : (hr <= 14 ? 'siang' : (hr <= 17 ? 'sore' : 'malam'));
+    let block = `\n\n## Konteks Waktu Saat Ini\nWaktu lokal perangkat: ${days[now.getDay()]}, ${now.getDate()} ${months[now.getMonth()]} ${now.getFullYear()}, pukul ${hrStr}:${min} (${tod})`;
+
+    const activeMsgs = getActiveMessages();
+    const prevInSess = activeMsgs
+      .filter((m) => m.role === 'user' && m.id !== currentUserMsgId)
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
+    let gapRef = prevInSess;
+    let scopeLabel = 'di sesi ini';
+    if (!gapRef) {
+      const allOtherUser = chatSessions
+        .flatMap((s) => s.messages || [])
+        .filter((m) => m.role === 'user' && m.id !== currentUserMsgId)
+        .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
+      if (allOtherUser) {
+        gapRef = allOtherUser;
+        scopeLabel = 'dari sesi sebelumnya';
+      }
+    }
+    if (gapRef?.createdAt) {
+      block += `\nJeda sejak pesan terakhir Tuan (${scopeLabel}): ${formatElapsedGapId(gapRef.createdAt, now.getTime())}`;
+    }
+    return block;
+  }
+
+  function buildPersonalizedSystemPrompt(currentUserMsgId = null, searchContextOverride = '', forbidMoreSearch = false) {
     const kronikRules =
       '\n\n## Integrasi Jurnal Kronik\n' +
       'Kamu terhubung dengan buku jurnal pribadi Tuan yang bernama **Kronik**.\n' +
@@ -776,7 +1593,29 @@
       '  [DAILYOS:CHECK|kata_kunci_nama_habit_atau_tugas]\n' +
       '- Jika Tuan meminta membuka Daily OS / melihat habit atau to-do nya, sisipkan: [OPEN:dailyos]';
 
-    let block = remSystemPrompt + kronikRules + linkkuRules + cuciRules + idekuRules + dailyosRules;
+    const searchRules =
+      '\n\n## Pencarian Arsip Lokal (On-Demand Search)\n' +
+      'Ringkasan modul di prompt hanya menampilkan item terbaru. Jika Tuan menanyakan arsip lama, transaksi bulan/tanggal tertentu (mis. 2026-10), jurnal lama, ide/bookmark yang tidak muncul di ringkasan, atau obrolan dari sesi lalu, JANGAN menebak. Keluarkan tag pencarian HANYA satu baris: [SEARCH:scope|kata_kunci] (scope valid: kronik, linkku, cuci, ideku, dailyos, chat, all; kata_kunci boleh kosong untuk daftar arsip lebih lengkap). Sistem akan langsung mengambil data akurat dari database lokal agar Rem bisa menjawab dengan tepat.';
+
+    const memoryRules =
+      '\n\n## Memori Personal\n' +
+      'Jika Tuan secara eksplisit meminta Rem mengingat, memperbarui, atau melupakan informasi tertentu:\n' +
+      '- Simpan/perbarui: [MEMORY:SET|kategori|fact_key_snake_case|nilai_ringkas] (kategori: identitas, preferensi, kebiasaan, tujuan, catatan)\n' +
+      '- Hapus/lupakan: [MEMORY:DEL|fact_key_atau_kata_kunci]\n' +
+      'Sisipkan sebelum [EXPR:...].';
+
+    const choicesRules =
+      '\n\n## Pilihan Interaktif (Quick Replies)\n' +
+      'Jika Rem bertanya atau meminta Tuan memilih dari beberapa opsi konkret (misalnya memilih buku/akun CuciMoney+ seperti Personal atau Bisnis, kategori, prioritas Daily OS, aksi IdeKu, mood Kronik, atau konfirmasi), sisipkan tag tersembunyi di akhir jawaban (sebelum [EXPR:...]):\n' +
+      '- Pilihan tunggal (tap 1 langsung terkirim): [CHOICES:single|Opsi 1|Opsi 2|Opsi 3]\n' +
+      '- Pilihan ganda (bisa pilih lebih dari satu): [CHOICES:multi|Opsi 1|Opsi 2|Opsi 3]\n' +
+      'Gunakan hanya saat memang ada pertanyaan pilihan konkret (maksimal 6 opsi singkat, sesuai data nyata Tuan).';
+
+    let block = remSystemPrompt + buildTimeAndGapContext(currentUserMsgId) + kronikRules + linkkuRules + cuciRules + idekuRules + dailyosRules + searchRules + memoryRules + choicesRules;
+    if (Array.isArray(memoryProfile.sections) && memoryProfile.sections.length) {
+      block += '\n\n## Ringkasan Memori Tentang Tuan\n' +
+        memoryProfile.sections.map((s) => `[${s.title}] ${s.body}`).join('\n');
+    }
     if (userMemories.length) {
       block += '\n\n## Memori Personal Tentang Tuan\n' +
         userMemories.slice(0, 20).map((m) => `- [${m.category}] ${m.factKey}: ${m.factValue}`).join('\n');
@@ -785,11 +1624,21 @@
       block += '\n\n## Ringkasan Sesi Sebelumnya\n' +
         chatSummaries.slice(0, 3).map((s) => `- ${s}`).join('\n');
     }
+    const activeSess = getActiveSession();
+    if (activeSess?.rollingSummary && activeSess.rollingSummary.trim()) {
+      block += '\n\n## Ringkasan Konteks Sesi Ini (Pesan Sebelumnya)\n' + activeSess.rollingSummary.trim();
+    }
     block += buildKronikContextForAssistant();
     block += buildLinkkuContextForAssistant();
     block += window.CuciMoneyModule?.buildContextForAssistant?.() || '';
     block += window.IdekuModule?.buildContextForAssistant?.() || '';
     block += window.DailyOsModule?.buildContextForAssistant?.() || '';
+    if (searchContextOverride && searchContextOverride.trim()) {
+      block += '\n\n## Hasil Pencarian Arsip Lokal\n' + searchContextOverride;
+      block += forbidMoreSearch
+        ? 'Batas pencarian tercapai. Jangan memanggil [SEARCH:...] lagi; langsung jawab Tuan berdasarkan data di atas.'
+        : 'Gunakan data akurat di atas untuk menjawab pesan Tuan. Jangan memanggil [SEARCH:...] lagi untuk pencarian yang sama.';
+    }
     block += '\nGunakan memori & konteks Kronik / LinkKu / CuciMoney+ / IdeKu / Daily OS di atas secara natural tanpa menyebut kata database atau log.';
     return block;
   }
@@ -802,14 +1651,24 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: chatHistory.slice(-6),
-          existingFacts: userMemories.slice(0, 25).map((m) => ({ factKey: m.factKey, factValue: m.factValue })),
+          messages: getActiveMessages().slice(-6).map((m) => ({ role: m.role, content: m.content })),
+          existingFacts: userMemories.slice(0, 35).map((m) => ({ factKey: m.factKey, factValue: m.factValue })),
         }),
       });
       if (!res.ok) return;
       const data = await res.json();
+      let memoryChanged = false;
+      if (Array.isArray(data?.deleteKeys)) {
+        data.deleteKeys.forEach((k) => {
+          if (deleteMemoryByKeyOrQuery(k) > 0) memoryChanged = true;
+        });
+      }
       if (Array.isArray(data?.facts)) {
-        data.facts.forEach((f) => upsertMemory(f.category || 'catatan', f.factKey, f.factValue, f.confidence || 0.8));
+        data.facts.forEach((f) => {
+          if (upsertMemory(f.category || 'catatan', f.factKey, f.factValue, f.confidence || 0.8)) {
+            memoryChanged = true;
+          }
+        });
       }
       if (typeof data?.summary === 'string' && data.summary.trim().length > 8) {
         const s = data.summary.trim();
@@ -819,10 +1678,45 @@
           saveMemories();
         }
       }
+      if (memoryChanged) {
+        refreshMemoryProfileSummary(false);
+      }
     } catch (_) {
     } finally {
       renderMemoriesUI(false);
     }
+  }
+
+  async function compactSessionIfNeeded(sessionId) {
+    try {
+      const sess = chatSessions.find((s) => s.id === sessionId);
+      if (!sess || !Array.isArray(sess.messages) || sess.messages.length <= 10) return;
+      const overflowMsgs = sess.messages.slice(0, -10);
+      const overflowCount = overflowMsgs.length;
+      const already = Math.min(overflowCount, Math.max(0, Number(sess.summarizedCount) || 0));
+      const hasSummary = Boolean(sess.rollingSummary && sess.rollingSummary.trim());
+      if (hasSummary && (overflowCount - already) < 4) return;
+
+      const slice = hasSummary ? overflowMsgs.slice(already).slice(-20) : overflowMsgs.slice(-16);
+      if (!slice.length) return;
+
+      const res = await fetch('/api/memory/extract', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'compact_session',
+          previousSummary: sess.rollingSummary || '',
+          messages: slice.map((m) => ({ role: m.role, content: m.content })),
+        }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (typeof data?.rollingSummary === 'string' && data.rollingSummary.trim().length >= 8) {
+        sess.rollingSummary = data.rollingSummary.trim();
+        sess.summarizedCount = overflowCount;
+        saveChatSessions();
+      }
+    } catch (_) {}
   }
 
   // ── Unified EcosystemKu Store & Kronik (Jurnal & Legenda) Module ───────
@@ -3196,9 +4090,161 @@
   let isThinking = false;
   let remSystemPrompt = 'Kamu adalah Rem — asisten virtual sopan dan perhatian. Sisipkan [EXPR:happy/smile/shame/sad/surprise/none] di akhir jawaban.';
 
-  async function handleSend() {
-    const text = msgInput.value.trim();
-    if (!text || isThinking) return;
+  function parseSearchTag(rawText) {
+    const m = String(rawText || '').match(/\[SEARCH:([^\]\r\n]+)\]/i);
+    if (!m) return null;
+    const parts = String(m[1] || '').split('|').map((s) => s.trim());
+    if (!parts.length) return null;
+    const rawScope = (parts[0] || '').toLowerCase();
+    let scope = null;
+    if (['kronik', 'jurnal'].includes(rawScope)) scope = 'kronik';
+    else if (['linkku', 'bookmark', 'link'].includes(rawScope)) scope = 'linkku';
+    else if (['cuci', 'cucimoney', 'cucimoney+', 'keuangan', 'transaksi'].includes(rawScope)) scope = 'cuci';
+    else if (['ideku', 'ide', 'wishlist'].includes(rawScope)) scope = 'ideku';
+    else if (['dailyos', 'daily', 'habit', 'todo'].includes(rawScope)) scope = 'dailyos';
+    else if (['chat', 'obrolan', 'sessions', 'sesi', 'log'].includes(rawScope)) scope = 'chat';
+    else if (['all', 'semua'].includes(rawScope)) scope = 'all';
+    if (scope) {
+      return { scope, query: parts.slice(1).join(' ').trim().slice(0, 80) };
+    }
+    return { scope: 'all', query: parts.join(' ').trim().slice(0, 80) };
+  }
+
+  function executeLocalArchiveSearch(scope, rawQuery) {
+    const q = String(rawQuery || '').trim().toLowerCase();
+    const tokens = q.split(/\s+/).filter((t) => t.length >= 2);
+    const matchesTokens = (haystack) => {
+      if (!tokens.length) return true;
+      const h = String(haystack || '').toLowerCase();
+      if (tokens.every((t) => h.includes(t))) return true;
+      return tokens.length > 1 && tokens.filter((t) => h.includes(t)).length >= Math.ceil(tokens.length / 2);
+    };
+    const fmtRpSimple = (n) => 'Rp ' + Math.round(Number(n) || 0).toLocaleString('id-ID');
+    const limitPerMod = scope === 'all' ? 4 : 10;
+    const out = [];
+
+    if (scope === 'kronik' || scope === 'all') {
+      const visible = typeof getVisibleEntries === 'function' ? getVisibleEntries(entries) : (entries || []);
+      const hits = visible.filter((j) =>
+        matchesTokens(`${j.date || ''} ${j.mood?.status || ''} ${j.title || ''} ${j.content || ''}`)
+      ).slice(0, limitPerMod);
+      if (hits.length) {
+        out.push(`Kronik (${hits.length} ditemukan):`);
+        hits.forEach((j) => {
+          const mood = j.mood?.status ? ` [${j.mood.status}]` : '';
+          const snip = String(j.content || '').replace(/\s+/g, ' ').trim().slice(0, 150);
+          out.push(`- ${j.date}${mood} ${j.title || '(tanpa judul)'}: ${snip}`);
+        });
+      }
+    }
+
+    if (scope === 'linkku' || scope === 'all') {
+      const pub = (lkLinks || []).filter((l) => !l.p);
+      const hits = pub.filter((l) => {
+        const catName = (lkCats || []).find((c) => c.id === l.cat)?.n || '';
+        const tagsStr = Array.isArray(l.tags) ? l.tags.join(' ') : '';
+        return matchesTokens(`${l.ti || ''} ${l.url || ''} ${l.note || ''} ${catName} ${tagsStr}`);
+      }).slice(0, limitPerMod);
+      if (hits.length) {
+        out.push(`LinkKu Publik (${hits.length} ditemukan):`);
+        hits.forEach((l) => {
+          const catName = (lkCats || []).find((c) => c.id === l.cat)?.n || '-';
+          const notePart = l.note ? ` — ${String(l.note).slice(0, 80)}` : '';
+          out.push(`- ${l.ti || lkGetDom(l.url)} [${catName}] (${l.url})${notePart}`);
+        });
+      }
+    }
+
+    if (scope === 'cuci' || scope === 'all') {
+      const cm = ecoDb?.cucimoney || {};
+      const books = Array.isArray(cm.books) ? cm.books : [];
+      const cats = Array.isArray(cm.categories) ? cm.categories : [];
+      const accs = Array.isArray(cm.accounts) ? cm.accounts : [];
+      const trxs = Array.isArray(cm.transactions) ? cm.transactions : [];
+      const bookMap = Object.fromEntries(books.map((b) => [b.id, b.name]));
+      const catMap = Object.fromEntries(cats.map((c) => [c.id, c.name]));
+      const accMap = Object.fromEntries(accs.map((a) => [a.id, a.name]));
+      const sorted = [...trxs].sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')) || (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+      const hits = sorted.filter((t) => {
+        const dirLabel = t.direction === 'in' ? 'masuk pemasukan' : 'keluar pengeluaran';
+        return matchesTokens(`${t.date || ''} ${t.title || ''} ${bookMap[t.bookId] || ''} ${catMap[t.categoryId] || ''} ${accMap[t.accountId] || ''} ${dirLabel} ${t.amount || 0}`);
+      });
+      if (hits.length) {
+        const nonTrf = hits.filter((t) => t.transferPair == null);
+        const sumIn = nonTrf.filter((t) => t.direction === 'in').reduce((s, t) => s + (Number(t.amount) || 0), 0);
+        const sumOut = nonTrf.filter((t) => t.direction === 'out').reduce((s, t) => s + (Number(t.amount) || 0), 0);
+        out.push(`CuciMoney+ (${hits.length} transaksi cocok; total non-transfer masuk ${fmtRpSimple(sumIn)}, keluar ${fmtRpSimple(sumOut)}):`);
+        hits.slice(0, scope === 'cuci' ? 12 : limitPerMod).forEach((t) => {
+          const sign = t.direction === 'in' ? '+' : '-';
+          out.push(`- ${t.date} [${bookMap[t.bookId] || ''}] ${t.title} (${sign}${fmtRpSimple(t.amount)}, ${catMap[t.categoryId] || ''}, ${accMap[t.accountId] || ''})`);
+        });
+      }
+    }
+
+    if (scope === 'ideku' || scope === 'all') {
+      const ideas = Array.isArray(ecoDb?.ideku?.ideas) ? ecoDb.ideku.ideas : [];
+      const hits = ideas.filter((it) =>
+        matchesTokens(`${it.type || ''} ${it.title || ''} ${it.notes || ''} ${it.category || ''} ${it.status || ''} ${it.priority || ''} ${it.jalur || ''}`)
+      ).slice(0, limitPerMod);
+      if (hits.length) {
+        out.push(`IdeKu & Wishlist (${hits.length} ditemukan):`);
+        hits.forEach((it) => {
+          const price = it.type === 'Wishlist' && Number(it.price) > 0 ? `, ${fmtRpSimple(it.price)}` : '';
+          const note = it.notes ? ` — ${String(it.notes).slice(0, 80)}` : '';
+          out.push(`- [${it.type}] ${it.title} (${it.category}, ${it.status}, ${it.priority}${price})${note}`);
+        });
+      }
+    }
+
+    if (scope === 'dailyos' || scope === 'all') {
+      const dos = ecoDb?.dailyos || {};
+      const habits = (Array.isArray(dos.habits) ? dos.habits : []).filter((h) =>
+        matchesTokens(`${h.name || ''} ${h.category || ''} ${h.archived ? 'arsip' : 'aktif'}`)
+      ).slice(0, limitPerMod);
+      const todos = (Array.isArray(dos.todos) ? dos.todos : []).filter((t) =>
+        matchesTokens(`${t.title || ''} ${t.priority || ''} ${t.deadline || ''} ${t.done ? 'selesai done' : 'pending'}`)
+      ).slice(0, limitPerMod);
+      if (habits.length || todos.length) {
+        out.push('Daily OS:');
+        habits.forEach((h) => {
+          const daysCount = Object.values(h.history || {}).filter((arr) => Array.isArray(arr) && arr.length > 0).length;
+          out.push(`- Habit "${h.name}" (${h.category || 'General'}, ${daysCount} hari tercatat${h.archived ? ', diarsipkan' : ''})`);
+        });
+        todos.forEach((t) => {
+          const st = t.done ? 'Selesai' : 'Belum';
+          const dl = t.deadline ? `, deadline ${t.deadline}` : '';
+          out.push(`- To-Do "${t.title}" [${st}, ${t.priority || 'normal'}${dl}]`);
+        });
+      }
+    }
+
+    if (scope === 'chat' || scope === 'all') {
+      const flat = [];
+      (chatSessions || []).forEach((s) => {
+        (s.messages || []).forEach((m) => {
+          flat.push({ sTitle: s.title || 'Sesi', role: m.role, content: m.content, createdAt: m.createdAt });
+        });
+      });
+      const hits = flat
+        .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+        .filter((m) => matchesTokens(`${m.sTitle} ${m.content}`))
+        .slice(0, limitPerMod);
+      if (hits.length) {
+        out.push(`Arsip Obrolan (${hits.length} pesan cocok):`);
+        hits.forEach((m) => {
+          const who = m.role === 'user' ? 'Tuan' : 'Rem';
+          const dt = formatSessionTimeShort(m.createdAt);
+          out.push(`- [${m.sTitle} · ${dt}] ${who}: ${String(m.content || '').replace(/\s+/g, ' ').slice(0, 150)}`);
+        });
+      }
+    }
+
+    return out.length
+      ? out.join('\n')
+      : `Tidak ditemukan data yang cocok di arsip ${scope} untuk kata kunci "${rawQuery}".`;
+  }
+
+  async function streamAssistantReply(sess, sourceUserMsgId, historyOverride = null) {
     resetIdleTimer();
     idleBubble.classList.remove('show');
     stopAllAudio();
@@ -3206,34 +4252,31 @@
     if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
     isThinking = true;
     sendBtn.disabled = true;
-    msgInput.value = '';
 
-    renderBubble('user', text);
-    chatHistory.push({ role: 'user', content: text });
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(chatHistory));
     setExpression('puzzle');
     statusEl.textContent = '· mengetik…';
-    const replyBubble = renderBubble('assistant', '…');
+    const replyNodes = renderBubble('assistant', '…');
 
     try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: chatHistory.slice(-10),
-          context: { systemPrompt: buildPersonalizedSystemPrompt(), expression: currentExpr },
-        }),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const recentMsgs = historyOverride || sess.messages.slice(-10).map((m) => ({ role: m.role, content: m.content }));
 
-      const reader = res.body.getReader();
-      const dec = new TextDecoder();
-      let buf = '', raw = '', finalDone = null;
+      const cleanChatFormatting = (txt) => String(txt || '')
+        .replace(/\*\*/g, '')
+        .replace(/__/g, '')
+        .replace(/\*([^*\r\n]+)\*/g, '$1')
+        .replace(/`([^`\r\n]+)`/g, '$1')
+        .replace(/^#{1,6}\s+/gm, '')
+        .replace(/(^|\n)\s*\u2014\s*/g, '$1')
+        .replace(/([.!?,:;(\[])\s*\u2014\s*/g, '$1 ')
+        .replace(/\s*\u2014\s*/g, ', ');
 
       const visibleOf = (s) => {
         let v = s
           .replace(/\[JA\][\s\S]*?(\[\/JA\]|$)/gi, '')
           .replace(/\[EXPR:[a-z]+\]/gi, '')
+          .replace(/\[(?:CHOICES|OPTIONS):[^\]\r\n]+\]/gi, '')
+          .replace(/\[SEARCH:[^\]\r\n]+\]/gi, '')
+          .replace(/\[MEMORY:[^\]\r\n]+\]/gi, '')
           .replace(/\[CUCI:[^\]\r\n]+\]/gi, '')
           .replace(/\[IDEKU:[^\]\r\n]+\]/gi, '')
           .replace(/\[DAILYOS:[^\]\r\n]+\]/gi, '')
@@ -3241,52 +4284,113 @@
           .replace(/\[LINKKU:[^\]\r\n]+\]/gi, '')
           .replace(/\[OPEN:[a-z0-9-]+\]/gi, '');
         const b = v.lastIndexOf('[');
-        return b !== -1 && !v.slice(b).includes(']') ? v.slice(0, b) : v;
+        if (b !== -1 && !v.slice(b).includes(']')) v = v.slice(0, b);
+        return cleanChatFormatting(v);
       };
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += dec.decode(value, { stream: true });
-        const events = buf.split('\n\n');
-        buf = events.pop() ?? '';
-        for (const evt of events) {
-          let ev = 'message', data = '';
-          for (const line of evt.split('\n')) {
-            if (line.startsWith('event:')) ev = line.slice(6).trim();
-            else if (line.startsWith('data:')) data += line.slice(5).trim();
-          }
-          if (!data) continue;
-          const p = JSON.parse(data);
-          if (ev === 'delta') {
-            raw += p.delta || '';
-            const vis = visibleOf(raw);
-            if (vis) { replyBubble.textContent = vis; messagesEl.scrollTop = messagesEl.scrollHeight; }
-          } else if (ev === 'done') {
-            finalDone = p;
-          } else if (ev === 'error') {
-            throw new Error(p.error || 'Stream error');
+      let accumulatedSearch = '';
+      let finalFullRaw = '';
+      let finalDoneObj = null;
+
+      for (let round = 0; round <= 2; round++) {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            messages: recentMsgs,
+            context: {
+              systemPrompt: buildPersonalizedSystemPrompt(sourceUserMsgId, accumulatedSearch, round >= 2),
+              expression: currentExpr,
+            },
+          }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        const reader = res.body.getReader();
+        const dec = new TextDecoder();
+        let buf = '', raw = '', finalDone = null;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          const events = buf.split('\n\n');
+          buf = events.pop() ?? '';
+          for (const evt of events) {
+            let ev = 'message', data = '';
+            for (const line of evt.split('\n')) {
+              if (line.startsWith('event:')) ev = line.slice(6).trim();
+              else if (line.startsWith('data:')) data += line.slice(5).trim();
+            }
+            if (!data) continue;
+            const p = JSON.parse(data);
+            if (ev === 'delta') {
+              raw += p.delta || '';
+              const vis = visibleOf(raw);
+              if (vis) { replyNodes.bubble.textContent = vis; messagesEl.scrollTop = messagesEl.scrollHeight; }
+            } else if (ev === 'done') {
+              finalDone = p;
+            } else if (ev === 'error') {
+              throw new Error(p.error || 'Stream error');
+            }
           }
         }
+
+        const roundFullRaw = finalDone?.text || raw;
+        const searchAct = parseSearchTag(roundFullRaw);
+        if (searchAct && round < 2) {
+          const qLbl = searchAct.query ? `: ${searchAct.query}` : '';
+          replyNodes.bubble.textContent = `Mencari arsip ${searchAct.scope}${qLbl}...`;
+          statusEl.textContent = `· mencari ${searchAct.scope}…`;
+          const searchResult = executeLocalArchiveSearch(searchAct.scope, searchAct.query);
+          accumulatedSearch += `### Pencarian [${searchAct.scope} | "${searchAct.query}"]\n${searchResult}\n\n`;
+          continue;
+        }
+
+        finalFullRaw = roundFullRaw;
+        finalDoneObj = finalDone;
+        break;
       }
 
-      const fullRaw = finalDone?.text || visibleOf(raw);
+      const fullRaw = finalFullRaw;
+      const finalDone = finalDoneObj;
       const exprMatch = fullRaw.match(/\[EXPR:([a-z]+)\]/i);
-      const cleanReply = fullRaw
-        .replace(/\[CUCI:[^\]\r\n]+\]/gi, '')
-        .replace(/\[IDEKU:[^\]\r\n]+\]/gi, '')
-        .replace(/\[DAILYOS:[^\]\r\n]+\]/gi, '')
-        .replace(/\[KRONIK:[^\]\r\n]+\]/gi, '')
-        .replace(/\[LINKKU:[^\]\r\n]+\]/gi, '')
-        .replace(/\[OPEN:[a-z0-9-]+\]/gi, '')
-        .replace(/\[EXPR:[a-z]+\]/gi, '')
-        .replace(/\[JA\][\s\S]*?(\[\/JA\]|$)/gi, '')
-        .trim();
-      replyBubble.textContent = cleanReply;
-      chatHistory.push({ role: 'assistant', content: cleanReply });
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(chatHistory));
+      const parsedChoices = parseChoicesFromReply(fullRaw);
+      const cleanReply = cleanChatFormatting(
+        fullRaw
+          .replace(/\[(?:CHOICES|OPTIONS):[^\]\r\n]+\]/gi, '')
+          .replace(/\[SEARCH:[^\]\r\n]+\]/gi, '')
+          .replace(/\[MEMORY:[^\]\r\n]+\]/gi, '')
+          .replace(/\[CUCI:[^\]\r\n]+\]/gi, '')
+          .replace(/\[IDEKU:[^\]\r\n]+\]/gi, '')
+          .replace(/\[DAILYOS:[^\]\r\n]+\]/gi, '')
+          .replace(/\[KRONIK:[^\]\r\n]+\]/gi, '')
+          .replace(/\[LINKKU:[^\]\r\n]+\]/gi, '')
+          .replace(/\[OPEN:[a-z0-9-]+\]/gi, '')
+          .replace(/\[EXPR:[a-z]+\]/gi, '')
+          .replace(/\[JA\][\s\S]*?(\[\/JA\]|$)/gi, '')
+      ).trim();
+
+      const replyTs = Date.now();
+      replyNodes.bubble.textContent = cleanReply;
+      const assistantEntry = {
+        id: makeMsgId(),
+        role: 'assistant',
+        content: cleanReply,
+        createdAt: replyTs,
+        ...(parsedChoices ? { choices: parsedChoices } : {}),
+      };
+      sess.messages.push(assistantEntry);
+      sess.updatedAt = replyTs;
+      saveChatSessions();
       saveEcoDb();
 
+      if (parsedChoices) {
+        appendChoicesCard(replyNodes.col, assistantEntry);
+      }
+      attachMsgActions(replyNodes.col, assistantEntry);
+
+      applyMemoryTagsFromReply(fullRaw);
       applyKronikTagsFromReply(fullRaw);
       applyLinkkuTagsFromReply(fullRaw);
       applyCuciTagsFromReply(fullRaw);
@@ -3298,9 +4402,12 @@
 
       const ttsText = (finalDone?.tts || '').trim() || cleanReply;
       playTTS(ttsText, Boolean(finalDone?.tts));
-      if (cleanReply) extractMemoriesInBackground();
+      if (cleanReply) {
+        extractMemoriesInBackground();
+        compactSessionIfNeeded(sess.id);
+      }
     } catch (err) {
-      replyBubble.parentElement.remove();
+      replyNodes.row.remove();
       setExpression('none');
       showToastMessage(`Gagal menghubungi server: ${err.message}`, false);
     } finally {
@@ -3308,6 +4415,53 @@
       sendBtn.disabled = false;
       statusEl.textContent = '· idle';
     }
+  }
+
+  async function regenerateAssistantMessage(msgId) {
+    if (isThinking) return;
+    const sess = getActiveSession();
+    const idx = sess.messages.findIndex((m) => m.id === msgId && m.role === 'assistant');
+    if (idx < 0) return;
+    const before = sess.messages.slice(0, idx);
+    const prevUser = [...before].reverse().find((m) => m.role === 'user');
+    if (!prevUser) {
+      showToastMessage('Tidak ada pesan untuk diulangi', false);
+      return;
+    }
+    sess.messages.splice(idx, 1);
+    saveChatSessions();
+    renderChatMessages();
+    await streamAssistantReply(sess, prevUser.id, before.slice(-10).map((m) => ({ role: m.role, content: m.content })));
+  }
+
+  async function sendUserMessage(overrideText = null) {
+    const isFromInput = overrideText === null;
+    const text = (isFromInput ? msgInput.value : String(overrideText || '')).trim();
+    if (!text || isThinking) return;
+    if (isFromInput) msgInput.value = '';
+
+    const sess = getActiveSession();
+    const nowTs = Date.now();
+    const userEntry = {
+      id: makeMsgId(),
+      role: 'user',
+      content: text,
+      createdAt: nowTs,
+    };
+    sess.messages.push(userEntry);
+    if (!sess.title || sess.title === 'Obrolan Baru') {
+      const cleanTitle = text.replace(/\s+/g, ' ').trim();
+      sess.title = cleanTitle.length > 42 ? cleanTitle.slice(0, 42) + '...' : (cleanTitle || 'Obrolan');
+    }
+    sess.updatedAt = nowTs;
+    saveChatSessions();
+    renderBubble('user', text, userEntry);
+
+    await streamAssistantReply(sess, userEntry.id);
+  }
+
+  function handleSend() {
+    sendUserMessage(null);
   }
 
   sendBtn.addEventListener('click', handleSend);
