@@ -3204,7 +3204,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                                 factKey = act.factKey,
                                 factValue = act.factValue,
                                 confidence = 0.95f,
-                                sourceMessageId = userMsgId
+                                sourceMessageId = sourceUserMsgId
                             )
                             memChanged = true
                             lastLabel = "Memori diperbarui"
