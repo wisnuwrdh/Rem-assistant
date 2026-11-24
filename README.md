@@ -23,7 +23,7 @@ Asisten virtual **Rem** berbasis Live2D yang terintegrasi dengan ekosistem aplik
 ### 2. Ekosistem Sub-App Terintegrasi
 Rem dapat membaca konteks dan mengeksekusi aksi langsung dari obrolan ke modul berikut:
 * **Daily OS:** Pelacak habit harian, to-do dengan prioritas (`urgent`, `soon`, `normal`), AI Coach briefing, analisis memori 30 hari, smart to-do parser, dan rekomendasi tugas (`/api/dailyos`).
-* **CuciMoney+:** Pencatatan transaksi pemasukan/pengeluaran multi-buku & multi-akun, budget bulanan, serta tabungan wishlist.
+* **CuciMoney+:** Pencatatan transaksi pemasukan/pengeluaran multi-buku & multi-akun, budget bulanan, serta tabungan wishlist. Rem membaca daftar kategori resmi (beserta pilihan chip kategori), breakdown pemasukan/pengeluaran per kategori bulan ini, sisa budget bulanan, serta progres tabungan wishlist.
 * **IdeKu:** Pengelola ide & wishlist dengan mode **Perkaya** dan **Breakdown Prompt** berbasis AI (`/api/ideku`).
 * **Kronik:** Buku jurnal pribadi 3-fase dengan deteksi mood AI (`Fokus`, `Lelah`, `Terinspirasi`, `Berat`, `Stabil`, `Semangat`, `Kabur`) via `/api/kronik/mood`.
 * **LinkKu:** Pengelola bookmark dengan auto-fetch judul/thumbnail URL & YouTube (`/api/linkku/meta`) serta Mode Privat ber-PIN (enkripsi AES-GCM).
@@ -81,6 +81,8 @@ Respons LLM dapat menyertakan tag tersembunyi (disembunyikan otomatis saat strea
 | `[KRONIK:ADD\|judul\|isi\|mood]` | Menambah entri jurnal ke Kronik |
 | `[LINKKU:ADD\|url\|judul\|catatan\|kategori\|tag1,tag2]` | Menyimpan bookmark publik ke LinkKu |
 | `[CUCI:ADD\|out/in\|nominal\|judul\|kategori\|akun]` | Mencatat transaksi ke CuciMoney+ |
+| `[CUCI:SAVE\|nama_wishlist\|nominal\|akun\|buku]` | Menyetor tabungan dari akun ke pot tabungan wishlist |
+| `[CUCI:REALIZE\|nama_wishlist\|akun\|nominal_beli\|buku]` | Mencairkan/menandai target barang wishlist sudah kebeli (`Selesai`) |
 | `[IDEKU:ADD\|Idea\|judul\|kategori\|prioritas\|catatan\|jalur]` | Menambah ide baru ke IdeKu |
 | `[IDEKU:ADD\|Wishlist\|nama\|harga\|Belanja\|prioritas\|catatan]` | Menambah wishlist ke IdeKu & CuciMoney+ |
 | `[DAILYOS:HABIT\|nama\|kategori\|ikon]` | Menambah habit baru di Daily OS |

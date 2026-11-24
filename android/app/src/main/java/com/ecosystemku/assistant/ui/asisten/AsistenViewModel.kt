@@ -284,6 +284,10 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         Jika Tuan meminta membuka LinkKu atau daftar link tersimpan, sisipkan [OPEN:linkku] sebelum [EXPR:...].
         Jika Tuan menyebut pengeluaran/pemasukan atau meminta mencatat transaksi keuangan ke CuciMoney+, sisipkan:
         [CUCI:ADD|out_atau_in|nominal_angka|judul|kategori_opsional|akun_opsional|buku_opsional|tanggal_yyyy-mm-dd_atau_kosong]
+        Jika Tuan ingin menyetor/menambah tabungan ke target barang wishlist, sisipkan:
+        [CUCI:SAVE|nama_wishlist|nominal_angka|akun_sumber_opsional|buku_opsional]
+        Jika Tuan melapor target barang wishlist sudah kebeli / ingin merealisasikan tabungannya, sisipkan:
+        [CUCI:REALIZE|nama_wishlist|akun_opsional|nominal_beli_opsional|buku_opsional]
         Jika Tuan meminta membuka CuciMoney+ / dompet / analisis keuangan, sisipkan [OPEN:cucimoney] sebelum [EXPR:...].
         Jika Tuan menyampaikan ide baru atau barang impian/wishlist untuk dicatat ke IdeKu, sisipkan:
         [IDEKU:ADD|Idea|judul_ide|kategori_opsional|Penting_Nanti_Kapan-kapan|catatan_opsional|jalur_opsional]
@@ -308,10 +312,10 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         Sisipkan sebelum [EXPR:...].
 
         ## Pilihan Interaktif (Quick Replies)
-        Jika Rem bertanya atau meminta Tuan memilih dari beberapa opsi konkret (misalnya memilih buku/akun CuciMoney+ seperti Personal atau Bisnis, memilih kategori, prioritas Daily OS, aksi IdeKu, mood Kronik, atau konfirmasi Ya/Batal), sisipkan tag tersembunyi di akhir jawaban (sebelum [EXPR:...]):
+        Jika Rem bertanya atau meminta Tuan memilih dari beberapa opsi konkret (misalnya memilih buku/akun CuciMoney+ seperti Personal atau Bisnis, memilih kategori pemasukan/pengeluaran saat belum disebut, prioritas Daily OS, aksi IdeKu, mood Kronik, atau konfirmasi Ya/Batal), sisipkan tag tersembunyi di akhir jawaban (sebelum [EXPR:...]):
         - Pilihan tunggal (tap 1 langsung terkirim): [CHOICES:single|Opsi 1|Opsi 2|Opsi 3]
         - Pilihan ganda (bisa pilih lebih dari satu): [CHOICES:multi|Opsi 1|Opsi 2|Opsi 3]
-        Aturan: maksimal 6 opsi singkat sesuai data nyata Tuan, dan gunakan HANYA jika jawaban berupa pertanyaan/tawaran memilih.
+        Aturan: maksimal 8 opsi singkat sesuai data nyata Tuan, dan gunakan HANYA jika jawaban berupa pertanyaan/tawaran memilih.
 
         ## Ekspresi Visual
         Sisipkan tepat satu tag [EXPR:...] di akhir setiap respons:
@@ -2193,6 +2197,174 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         refreshCuciPrefsIntoState()
     }
 
+    private suspend fun markMatchingIdekuWishlistDone(title: String, wishId: String) {
+        val idNum = wishId.removePrefix("wish_").toLongOrNull()
+        val ideas = idekuDao.getAll()
+        val target = (if (idNum != null) ideas.firstOrNull { it.id == idNum && it.type == "Wishlist" } else null)
+            ?: ideas.firstOrNull { it.type == "Wishlist" && it.title.equals(title, ignoreCase = true) && it.status != "Selesai" }
+            ?: ideas.firstOrNull { it.type == "Wishlist" && it.title.contains(title, ignoreCase = true) && it.status != "Selesai" }
+        if (target != null && target.status != "Selesai") {
+            idekuDao.upsert(target.copy(status = "Selesai"))
+        }
+    }
+
+    private suspend fun depositToWishlistInternal(
+        wishId: String,
+        accountId: Long,
+        amount: Long,
+        bookIdOverride: Long?
+    ): String? {
+        if (amount <= 0L) return "Nominal setoran harus lebih dari 0"
+        val wish = cuciMoneyDao.getWishlistById(wishId) ?: return "Wishlist tidak ditemukan"
+        val srcAcc = cuciMoneyDao.getAccountById(accountId) ?: return "Akun sumber tidak ditemukan"
+        var savingsAcc = cuciMoneyDao.getAllAccounts().firstOrNull { it.isSavings }
+        if (savingsAcc == null) {
+            savingsAcc = CuciAccountEntity(
+                id = CuciMoneyHelpers.generateId(),
+                name = "Tabungan",
+                type = "saving",
+                icon = "🐷",
+                balance = 0L,
+                notes = "Tabungan Wishlist",
+                useInBook = false,
+                includeAsset = true,
+                isSavings = true
+            )
+            cuciMoneyDao.upsertAccount(savingsAcc)
+        }
+        val bookId = bookIdOverride ?: _uiState.value.cuciMoneyState.currentBookId
+        val pairId = CuciMoneyHelpers.generateId()
+        val today = CuciMoneyHelpers.todayDateStr()
+        val now = System.currentTimeMillis()
+        val outTrx = CuciTransactionEntity(
+            id = pairId,
+            bookId = bookId,
+            title = "Tabungan: ${wish.title}",
+            amount = amount,
+            direction = "out",
+            categoryId = 12L,
+            accountId = srcAcc.id,
+            date = today,
+            memberId = "m1",
+            transferPair = pairId,
+            savingsPot = wish.id,
+            createdAt = now
+        )
+        val inTrx = CuciTransactionEntity(
+            id = pairId + 1L,
+            bookId = bookId,
+            title = "Tabungan: ${wish.title}",
+            amount = amount,
+            direction = "in",
+            categoryId = 12L,
+            accountId = savingsAcc.id,
+            date = today,
+            memberId = "m1",
+            transferPair = pairId,
+            savingsPot = wish.id,
+            createdAt = now + 1L
+        )
+        cuciMoneyDao.upsertTransactions(listOf(outTrx, inTrx))
+        cuciMoneyDao.adjustAccountBalance(srcAcc.id, -amount)
+        cuciMoneyDao.adjustAccountBalance(savingsAcc.id, amount)
+
+        val hist = CuciMoneyHelpers.parseWishlistHistory(wish.historyJson) + CuciSavingsHistoryDto(
+            id = pairId,
+            type = "in",
+            amount = amount,
+            date = today,
+            accountId = srcAcc.id,
+            accountName = srcAcc.name,
+            ts = now,
+            trxIds = listOf(outTrx.id, inTrx.id)
+        )
+        cuciMoneyDao.upsertWishlist(
+            wish.copy(
+                saved = wish.saved + amount,
+                historyJson = CuciMoneyHelpers.encodeWishlistHistory(hist)
+            )
+        )
+        return null
+    }
+
+    private suspend fun withdrawWishlistInternal(
+        wishId: String,
+        accountId: Long,
+        realize: Boolean,
+        markDone: Boolean,
+        bookIdOverride: Long?
+    ): String? {
+        val wish = cuciMoneyDao.getWishlistById(wishId) ?: return "Wishlist tidak ditemukan"
+        val amt = wish.saved
+        if (amt <= 0L) return "Saldo tabungan wishlist ini kosong"
+        val dstAcc = cuciMoneyDao.getAccountById(accountId) ?: return "Akun tujuan tidak ditemukan"
+        val savingsAcc = cuciMoneyDao.getAllAccounts().firstOrNull { it.isSavings }
+            ?: return "Akun Tabungan tidak ditemukan"
+
+        val bookId = bookIdOverride ?: _uiState.value.cuciMoneyState.currentBookId
+        val pairId = CuciMoneyHelpers.generateId()
+        val today = CuciMoneyHelpers.todayDateStr()
+        val now = System.currentTimeMillis()
+        val label = if (realize) "Cairkan Tabungan: ${wish.title}" else "Batal Tabungan: ${wish.title}"
+        val outTrx = CuciTransactionEntity(
+            id = pairId,
+            bookId = bookId,
+            title = label,
+            amount = amt,
+            direction = "out",
+            categoryId = 12L,
+            accountId = savingsAcc.id,
+            date = today,
+            memberId = "m1",
+            transferPair = pairId,
+            savingsPot = wish.id,
+            createdAt = now
+        )
+        val inTrx = CuciTransactionEntity(
+            id = pairId + 1L,
+            bookId = bookId,
+            title = label,
+            amount = amt,
+            direction = "in",
+            categoryId = 12L,
+            accountId = dstAcc.id,
+            date = today,
+            memberId = "m1",
+            transferPair = pairId,
+            savingsPot = wish.id,
+            createdAt = now + 1L
+        )
+        cuciMoneyDao.upsertTransactions(listOf(outTrx, inTrx))
+        cuciMoneyDao.adjustAccountBalance(savingsAcc.id, -amt)
+        cuciMoneyDao.adjustAccountBalance(dstAcc.id, amt)
+
+        val hist = CuciMoneyHelpers.parseWishlistHistory(wish.historyJson) + CuciSavingsHistoryDto(
+            id = pairId,
+            type = "out",
+            kind = if (realize) "realize" else "cancel",
+            amount = amt,
+            date = today,
+            accountId = dstAcc.id,
+            accountName = dstAcc.name,
+            ts = now,
+            trxIds = listOf(outTrx.id, inTrx.id)
+        )
+        val nextStatus = if (realize && markDone) "Selesai" else wish.status
+        cuciMoneyDao.upsertWishlist(
+            wish.copy(
+                saved = 0L,
+                status = nextStatus,
+                realizedAt = if (realize) now else wish.realizedAt,
+                realizedAmount = if (realize) amt else wish.realizedAmount,
+                historyJson = CuciMoneyHelpers.encodeWishlistHistory(hist)
+            )
+        )
+        if (realize && markDone) {
+            markMatchingIdekuWishlistDone(wish.title, wish.id)
+        }
+        return null
+    }
+
     fun createCuciMoneyActions() = CuciMoneyActions(
         onToggleVisibility = {
             val next = !_uiState.value.cuciMoneyState.visibility
@@ -2507,144 +2679,10 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
             null
         },
         onDepositWishlist = { wishId, accountId, amount ->
-            if (amount <= 0L) return@CuciMoneyActions "Nominal setoran harus lebih dari 0"
-            val wish = cuciMoneyDao.getWishlistById(wishId) ?: return@CuciMoneyActions "Wishlist tidak ditemukan"
-            val srcAcc = cuciMoneyDao.getAccountById(accountId) ?: return@CuciMoneyActions "Akun sumber tidak ditemukan"
-            var savingsAcc = cuciMoneyDao.getAllAccounts().firstOrNull { it.isSavings }
-            if (savingsAcc == null) {
-                savingsAcc = CuciAccountEntity(
-                    id = CuciMoneyHelpers.generateId(),
-                    name = "Tabungan",
-                    type = "saving",
-                    icon = "🐷",
-                    balance = 0L,
-                    notes = "Tabungan Wishlist",
-                    useInBook = false,
-                    includeAsset = true,
-                    isSavings = true
-                )
-                cuciMoneyDao.upsertAccount(savingsAcc)
-            }
-            val bookId = _uiState.value.cuciMoneyState.currentBookId
-            val pairId = CuciMoneyHelpers.generateId()
-            val today = CuciMoneyHelpers.todayDateStr()
-            val now = System.currentTimeMillis()
-            val outTrx = CuciTransactionEntity(
-                id = pairId,
-                bookId = bookId,
-                title = "Tabungan: ${wish.title}",
-                amount = amount,
-                direction = "out",
-                categoryId = 12L,
-                accountId = srcAcc.id,
-                date = today,
-                memberId = "m1",
-                transferPair = pairId,
-                savingsPot = wish.id,
-                createdAt = now
-            )
-            val inTrx = CuciTransactionEntity(
-                id = pairId + 1L,
-                bookId = bookId,
-                title = "Tabungan: ${wish.title}",
-                amount = amount,
-                direction = "in",
-                categoryId = 12L,
-                accountId = savingsAcc.id,
-                date = today,
-                memberId = "m1",
-                transferPair = pairId,
-                savingsPot = wish.id,
-                createdAt = now + 1L
-            )
-            cuciMoneyDao.upsertTransactions(listOf(outTrx, inTrx))
-            cuciMoneyDao.adjustAccountBalance(srcAcc.id, -amount)
-            cuciMoneyDao.adjustAccountBalance(savingsAcc.id, amount)
-
-            val hist = CuciMoneyHelpers.parseWishlistHistory(wish.historyJson) + CuciSavingsHistoryDto(
-                id = pairId,
-                type = "in",
-                amount = amount,
-                date = today,
-                accountId = srcAcc.id,
-                accountName = srcAcc.name,
-                ts = now,
-                trxIds = listOf(outTrx.id, inTrx.id)
-            )
-            cuciMoneyDao.upsertWishlist(
-                wish.copy(
-                    saved = wish.saved + amount,
-                    historyJson = CuciMoneyHelpers.encodeWishlistHistory(hist)
-                )
-            )
-            null
+            depositToWishlistInternal(wishId, accountId, amount, null)
         },
         onWithdrawWishlist = { wishId, accountId, realize, markDone ->
-            val wish = cuciMoneyDao.getWishlistById(wishId) ?: return@CuciMoneyActions "Wishlist tidak ditemukan"
-            val amt = wish.saved
-            if (amt <= 0L) return@CuciMoneyActions "Saldo tabungan wishlist ini kosong"
-            val dstAcc = cuciMoneyDao.getAccountById(accountId) ?: return@CuciMoneyActions "Akun tujuan tidak ditemukan"
-            val savingsAcc = cuciMoneyDao.getAllAccounts().firstOrNull { it.isSavings }
-                ?: return@CuciMoneyActions "Akun Tabungan tidak ditemukan"
-
-            val bookId = _uiState.value.cuciMoneyState.currentBookId
-            val pairId = CuciMoneyHelpers.generateId()
-            val today = CuciMoneyHelpers.todayDateStr()
-            val now = System.currentTimeMillis()
-            val label = if (realize) "Cairkan Tabungan: ${wish.title}" else "Batal Tabungan: ${wish.title}"
-            val outTrx = CuciTransactionEntity(
-                id = pairId,
-                bookId = bookId,
-                title = label,
-                amount = amt,
-                direction = "out",
-                categoryId = 12L,
-                accountId = savingsAcc.id,
-                date = today,
-                memberId = "m1",
-                transferPair = pairId,
-                savingsPot = wish.id,
-                createdAt = now
-            )
-            val inTrx = CuciTransactionEntity(
-                id = pairId + 1L,
-                bookId = bookId,
-                title = label,
-                amount = amt,
-                direction = "in",
-                categoryId = 12L,
-                accountId = dstAcc.id,
-                date = today,
-                memberId = "m1",
-                transferPair = pairId,
-                savingsPot = wish.id,
-                createdAt = now + 1L
-            )
-            cuciMoneyDao.upsertTransactions(listOf(outTrx, inTrx))
-            cuciMoneyDao.adjustAccountBalance(savingsAcc.id, -amt)
-            cuciMoneyDao.adjustAccountBalance(dstAcc.id, amt)
-
-            val hist = CuciMoneyHelpers.parseWishlistHistory(wish.historyJson) + CuciSavingsHistoryDto(
-                id = pairId,
-                type = "out",
-                kind = if (realize) "realize" else "cancel",
-                amount = amt,
-                date = today,
-                accountId = dstAcc.id,
-                accountName = dstAcc.name,
-                ts = now,
-                trxIds = listOf(outTrx.id, inTrx.id)
-            )
-            cuciMoneyDao.upsertWishlist(
-                wish.copy(
-                    saved = 0L,
-                    status = if (realize && markDone) "Selesai" else wish.status,
-                    realizedAt = if (realize) now else wish.realizedAt,
-                    realizedAmount = if (realize) amt else wish.realizedAmount,
-                    historyJson = CuciMoneyHelpers.encodeWishlistHistory(hist)
-                )
-            )
-            null
+            withdrawWishlistInternal(wishId, accountId, realize, markDone, null)
         },
         onExportCsv = {
             val state = _uiState.value.cuciMoneyState
@@ -3310,24 +3348,39 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 val today = CuciMoneyHelpers.todayDateStr()
                 val savedLabels = mutableListOf<String>()
 
+                fun resolveBook(bookName: String): Pair<Long, List<CuciAccountEntity>> {
+                    val targetBook = if (bookName.isNotBlank()) {
+                        cuciState.books.firstOrNull { it.name.equals(bookName, ignoreCase = true) }
+                            ?: cuciState.books.firstOrNull { it.name.contains(bookName, ignoreCase = true) }
+                            ?: activeBook
+                    } else {
+                        activeBook
+                    }
+                    val targetBookId = targetBook?.id ?: cuciState.currentBookId
+                    return targetBookId to CuciMoneyHelpers.bookAccounts(cuciState, targetBookId)
+                }
+
+                fun resolveAccount(targetBookId: Long, targetBookAccs: List<CuciAccountEntity>, accountName: String): Long {
+                    val fallbackAccId = cuciState.lastAccByBook[targetBookId]
+                        ?.takeIf { id -> targetBookAccs.any { it.id == id } }
+                        ?: targetBookAccs.firstOrNull { !it.isSavings }?.id
+                        ?: cuciState.accounts.firstOrNull { !it.isSavings }?.id
+                        ?: 1L
+                    return if (accountName.isNotBlank()) {
+                        targetBookAccs.firstOrNull { !it.isSavings && it.name.contains(accountName, ignoreCase = true) }?.id
+                            ?: cuciState.accounts.firstOrNull { !it.isSavings && it.name.contains(accountName, ignoreCase = true) }?.id
+                            ?: fallbackAccId
+                    } else {
+                        fallbackAccId
+                    }
+                }
+
                 parsed.cuciActions.forEach { act ->
                     when (act) {
                         is SseTagParser.CuciChatAction.AddTransaction -> {
                             val dir = if (act.direction == "in") "in" else "out"
-                            val targetBook = if (act.bookName.isNotBlank()) {
-                                cuciState.books.firstOrNull { it.name.equals(act.bookName, ignoreCase = true) }
-                                    ?: cuciState.books.firstOrNull { it.name.contains(act.bookName, ignoreCase = true) }
-                                    ?: activeBook
-                            } else {
-                                activeBook
-                            }
-                            val targetBookId = targetBook?.id ?: cuciState.currentBookId
-                            val targetBookAccs = CuciMoneyHelpers.bookAccounts(cuciState, targetBookId)
-                            val fallbackAccId = cuciState.lastAccByBook[targetBookId]
-                                ?.takeIf { id -> targetBookAccs.any { it.id == id } }
-                                ?: targetBookAccs.firstOrNull()?.id
-                                ?: cuciState.accounts.firstOrNull { !it.isSavings }?.id
-                                ?: 1L
+                            val (targetBookId, targetBookAccs) = resolveBook(act.bookName)
+                            val matchedAccId = resolveAccount(targetBookId, targetBookAccs, act.accountName)
 
                             val matchedCat = cuciState.categories.firstOrNull { c ->
                                 act.categoryName.isNotBlank() &&
@@ -3336,14 +3389,6 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                             } ?: cuciState.categories.firstOrNull { c ->
                                 (dir == "in" && c.type == "income") || (dir == "out" && c.type == "expense")
                             } ?: cuciState.categories.firstOrNull()
-
-                            val matchedAccId = if (act.accountName.isNotBlank()) {
-                                targetBookAccs.firstOrNull { it.name.contains(act.accountName, ignoreCase = true) }?.id
-                                    ?: cuciState.accounts.firstOrNull { !it.isSavings && it.name.contains(act.accountName, ignoreCase = true) }?.id
-                                    ?: fallbackAccId
-                            } else {
-                                fallbackAccId
-                            }
 
                             val trxDate = act.date.ifBlank { today }
                             val trx = CuciTransactionEntity(
@@ -3364,11 +3409,92 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                             saveLastAccForBook(targetBookId, matchedAccId)
                             savedLabels.add("${act.title} (${CuciMoneyHelpers.formatRp(act.amount)})")
                         }
+                        is SseTagParser.CuciChatAction.SaveWishlist -> {
+                            val (targetBookId, targetBookAccs) = resolveBook(act.bookName)
+                            val srcAccId = resolveAccount(targetBookId, targetBookAccs, act.accountName)
+                            val allWishes = cuciMoneyDao.getAllWishlists()
+                            var targetWish = allWishes.firstOrNull {
+                                it.status != "Selesai" && it.title.equals(act.wishlistQuery, ignoreCase = true)
+                            } ?: allWishes.firstOrNull {
+                                it.status != "Selesai" && it.title.contains(act.wishlistQuery, ignoreCase = true)
+                            }
+                            if (targetWish == null) {
+                                val newId = "wish_${CuciMoneyHelpers.generateId()}"
+                                targetWish = CuciWishlistEntity(
+                                    id = newId,
+                                    title = act.wishlistQuery,
+                                    price = act.amount,
+                                    priority = "Nanti",
+                                    image = "bag",
+                                    status = "Belum"
+                                )
+                                cuciMoneyDao.upsertWishlist(targetWish)
+                            }
+                            val err = depositToWishlistInternal(targetWish.id, srcAccId, act.amount, targetBookId)
+                            if (err == null) {
+                                saveLastAccForBook(targetBookId, srcAccId)
+                                savedLabels.add("Tabungan ${targetWish.title} (+${CuciMoneyHelpers.formatRp(act.amount)})")
+                            }
+                        }
+                        is SseTagParser.CuciChatAction.RealizeWishlist -> {
+                            val (targetBookId, targetBookAccs) = resolveBook(act.bookName)
+                            val dstAccId = resolveAccount(targetBookId, targetBookAccs, act.accountName)
+                            val allWishes = cuciMoneyDao.getAllWishlists()
+                            val wish = allWishes.firstOrNull {
+                                it.status != "Selesai" && it.title.equals(act.wishlistQuery, ignoreCase = true)
+                            } ?: allWishes.firstOrNull {
+                                it.status != "Selesai" && it.title.contains(act.wishlistQuery, ignoreCase = true)
+                            } ?: allWishes.firstOrNull {
+                                it.title.contains(act.wishlistQuery, ignoreCase = true)
+                            }
+                            val nowTs = System.currentTimeMillis()
+                            val wishTitle = wish?.title ?: act.wishlistQuery
+                            val hadSaved = (wish?.saved ?: 0L) > 0L
+                            if (wish != null) {
+                                if (hadSaved) {
+                                    withdrawWishlistInternal(wish.id, dstAccId, realize = true, markDone = true, bookIdOverride = targetBookId)
+                                } else {
+                                    val rAmt = if (act.paidAmount > 0L) act.paidAmount else wish.price
+                                    cuciMoneyDao.upsertWishlist(
+                                        wish.copy(
+                                            status = "Selesai",
+                                            realizedAt = nowTs,
+                                            realizedAmount = rAmt
+                                        )
+                                    )
+                                    markMatchingIdekuWishlistDone(wish.title, wish.id)
+                                }
+                            } else {
+                                markMatchingIdekuWishlistDone(act.wishlistQuery, "")
+                            }
+                            if (!hadSaved && act.paidAmount > 0L) {
+                                val buyCat = cuciState.categories.firstOrNull {
+                                    it.name.equals("Belanja", ignoreCase = true)
+                                } ?: cuciState.categories.firstOrNull { it.type == "expense" }
+                                val trx = CuciTransactionEntity(
+                                    id = CuciMoneyHelpers.generateId(),
+                                    bookId = targetBookId,
+                                    title = "Beli Wishlist: $wishTitle",
+                                    amount = act.paidAmount,
+                                    direction = "out",
+                                    categoryId = buyCat?.id ?: 4L,
+                                    accountId = dstAccId,
+                                    date = today,
+                                    memberId = cuciState.members.firstOrNull()?.id ?: "m1",
+                                    transferPair = null,
+                                    createdAt = nowTs
+                                )
+                                cuciMoneyDao.upsertTransaction(trx)
+                                cuciMoneyDao.adjustAccountBalance(dstAccId, -act.paidAmount)
+                                saveLastAccForBook(targetBookId, dstAccId)
+                            }
+                            savedLabels.add("Wishlist Selesai: $wishTitle")
+                        }
                     }
                 }
                 if (savedLabels.isNotEmpty()) {
                     _uiState.update {
-                        it.copy(kronikBannerMessage = "CuciMoney+: Tercatat ${savedLabels.first()}")
+                        it.copy(kronikBannerMessage = "CuciMoney+: ${savedLabels.first()}")
                     }
                     viewModelScope.launch {
                         delay(4_000L)
@@ -3702,7 +3828,11 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
 
             append(
                 "\nGunakan memori, Kronik, LinkKu, CuciMoney+, IdeKu, & Daily OS di atas secara natural agar terasa mengenal Tuan, tanpa menyebut kata 'database' atau 'SQLite'. Angka yang tertera adalah data AKURAT — jangan menghitung ulang atau menambah dari ingatan." +
-                    "\n\nATURAN PENTING KEUANGAN: Jika Tuan meminta ringkasan, total, analisis, atau informasi keuangan tetapi belum menyebut nama buku, tanyakan dulu buku mana yang dimaksud sambil menyertakan tag [CHOICES:single|...] berisi nama-nama buku CuciMoney+ yang tersedia, dan jangan berikan angka keuangan apa pun sebelum Tuan memilih. Jika nama buku sudah disebut, gunakan hanya bagian KEUANGAN BUKU dengan nama yang cocok persis; jangan pernah menggabungkan angka antar-buku. Jika nama buku tidak cocok atau ambigu, tanyakan klarifikasi disertai [CHOICES:single|...]. Jika Tuan sudah menyebut buku dan tujuan dengan jelas, jangan mengulang pertanyaan yang sudah terjawab."
+                    "\n\nATURAN PENTING KEUANGAN: " +
+                    "1) Jika Tuan meminta ringkasan, total, analisis, atau informasi keuangan tetapi belum menyebut nama buku, tanyakan dulu buku mana yang dimaksud sambil menyertakan tag [CHOICES:single|...] berisi nama-nama buku CuciMoney+ yang tersedia, dan jangan berikan angka keuangan apa pun sebelum Tuan memilih. " +
+                    "2) Jika nama buku sudah disebut, gunakan hanya bagian KEUANGAN BUKU dengan nama yang cocok persis; jangan pernah menggabungkan angka antar-buku. Jika nama buku tidak cocok atau ambigu, tanyakan klarifikasi disertai [CHOICES:single|...]. Jika Tuan sudah menyebut buku dan tujuan dengan jelas, jangan mengulang pertanyaan yang sudah terjawab. " +
+                    "3) Jika Tuan menanyakan daftar kategori keuangan, sebutkan kategori sesuai daftar Kategori Pengeluaran/Pemasukan tersedia di atas dan sertakan [CHOICES:single|...] berisi kategori relevan (maksimal 8). Jika Tuan ingin mencatat transaksi baru tetapi jenis/kategorinya masih belum jelas atau ambigu, tawarkan pilihan chip [CHOICES:single|...] berisi kategori relevan; namun jika kategori sudah jelas dari konteks kalimat Tuan (mis. beli kopi -> Minuman/Makanan), langsung cocokkan kategori tersebut tanpa memunculkan chip. " +
+                    "4) Jika Tuan ingin menabung ke wishlist ([CUCI:SAVE|...]) atau melapor barang wishlist sudah kebeli ([CUCI:REALIZE|...]), tetapi nama wishlist atau akun sumber/tujuan belum jelas, tanyakan klarifikasi disertai [CHOICES:single|...] berisi daftar wishlist aktif atau akun yang tersedia."
             )
         }
     }
@@ -3718,7 +3848,19 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
             a.type == "credit" || a.type == "debt" || a.type == "hutang"
         }
 
+        val sortedCats = cuciState.categories.sortedBy { it.sortOrder }
+        val expenseCats = sortedCats.filter { it.type == "expense" || it.type == "both" }.map { it.name }
+        val incomeCats = sortedCats.filter { it.type == "income" || it.type == "both" }.map { it.name }
+        val catById = sortedCats.associateBy { it.id }
+
         sb.append("\n## Ringkasan Keuangan CuciMoney+ (Buku aktif di app: ${activeBook?.name ?: "-"})\n")
+        if (expenseCats.isNotEmpty()) {
+            sb.append("- Kategori Pengeluaran tersedia: ${expenseCats.joinToString(", ")}\n")
+        }
+        if (incomeCats.isNotEmpty()) {
+            sb.append("- Kategori Pemasukan tersedia: ${incomeCats.joinToString(", ")}\n")
+        }
+
         cuciState.books.forEach { book ->
             val nonTransfer = cuciState.transactions.filter { it.bookId == book.id && it.transferPair == null }
             val monthTrx = nonTransfer.filter { it.date.startsWith(monthPrefix) }
@@ -3739,6 +3881,51 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
             )
             if (transferCount > 0) {
                 sb.append("  Catatan buku \"${book.name}\": $transferCount transfer antar akun bulan ini tidak dihitung sebagai pemasukan/pengeluaran.\n")
+            }
+
+            val topExpenseCats = monthTrx.filter { it.direction == "out" }
+                .groupBy { catById[it.categoryId]?.name ?: "Lainnya" }
+                .mapValues { (_, list) -> list.sumOf { it.amount } }
+                .entries
+                .sortedByDescending { it.value }
+                .take(6)
+            if (topExpenseCats.isNotEmpty()) {
+                sb.append("  Breakdown Pengeluaran bulan ini (${book.name}): ")
+                sb.append(topExpenseCats.joinToString(", ") { "${it.key} ${CuciMoneyHelpers.formatRp(it.value)}" })
+                sb.append("\n")
+            }
+
+            val topIncomeCats = monthTrx.filter { it.direction == "in" }
+                .groupBy { catById[it.categoryId]?.name ?: "Lainnya" }
+                .mapValues { (_, list) -> list.sumOf { it.amount } }
+                .entries
+                .sortedByDescending { it.value }
+                .take(5)
+            if (topIncomeCats.isNotEmpty()) {
+                sb.append("  Breakdown Pemasukan bulan ini (${book.name}): ")
+                sb.append(topIncomeCats.joinToString(", ") { "${it.key} ${CuciMoneyHelpers.formatRp(it.value)}" })
+                sb.append("\n")
+            }
+
+            val mb = cuciState.masterBudgets.firstOrNull {
+                it.bookId == book.id && it.month == curMonth && it.year == curYear
+            }
+            if (mb != null && mb.limitAmount > 0L) {
+                val spentInBudget = if (mb.startDate.isNotBlank() && mb.endDate.isNotBlank()) {
+                    nonTransfer.filter { it.direction == "out" && it.date >= mb.startDate && it.date <= mb.endDate }
+                        .sumOf { it.amount }
+                } else moOut
+                val pct = ((spentInBudget * 100L) / mb.limitAmount).toInt()
+                val diff = mb.limitAmount - spentInBudget
+                val remLabel = if (diff >= 0L) {
+                    "sisa ${CuciMoneyHelpers.formatRp(diff)}"
+                } else {
+                    "melebihi batas ${CuciMoneyHelpers.formatRp(-diff)}"
+                }
+                sb.append(
+                    "  Budget bulan ini (${book.name}): batas ${CuciMoneyHelpers.formatRp(mb.limitAmount)}, " +
+                        "terpakai ${CuciMoneyHelpers.formatRp(spentInBudget)} ($pct%), $remLabel.\n"
+                )
             }
 
             val accIds = CuciMoneyHelpers.parseAccountIds(book.accountIdsJson).toSet()
@@ -3771,6 +3958,19 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                     })
                     sb.append("\n")
                 }
+            }
+        }
+
+        val savingsTotal = cuciState.accounts.filter { it.isSavings }.sumOf { it.balance }
+        val activeWishes = cuciState.wishlists.filter { it.status != "Selesai" }
+        if (savingsTotal > 0L || activeWishes.isNotEmpty()) {
+            sb.append("- Tabungan Wishlist (Total saldo pot tabungan: ${CuciMoneyHelpers.formatRp(savingsTotal)}):\n")
+            activeWishes.take(10).forEach { w ->
+                val remaining = (w.price - w.saved).coerceAtLeast(0L)
+                sb.append(
+                    "  • \"${w.title}\": terkumpul ${CuciMoneyHelpers.formatRp(w.saved)} / " +
+                        "target ${CuciMoneyHelpers.formatRp(w.price)} (kurang ${CuciMoneyHelpers.formatRp(remaining)}) [${w.priority}]\n"
+                )
             }
         }
     }

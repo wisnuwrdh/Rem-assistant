@@ -1662,20 +1662,88 @@
     },
     buildContextForAssistant() {
       const s = cm();
-      const book = activeBook(s);
-      const accs = bookAccounts(s, book.id);
-      const balance = accs.reduce((a, b) => a + (Number(b.balance) || 0), 0);
+      const actBook = activeBook(s);
       const today = todayStr();
-      const pref = `${nowD.getFullYear()}-${pad2(nowD.getMonth() + 1)}`;
-      const todayExp = s.transactions.filter((t) => t.bookId === book.id && t.date === today && t.direction === 'out' && t.transferPair == null).reduce((a, b) => a + b.amount, 0);
-      const mIn = s.transactions.filter((t) => t.bookId === book.id && String(t.date || '').startsWith(pref) && t.direction === 'in' && t.transferPair == null).reduce((a, b) => a + b.amount, 0);
-      const mOut = s.transactions.filter((t) => t.bookId === book.id && String(t.date || '').startsWith(pref) && t.direction === 'out' && t.transferPair == null).reduce((a, b) => a + b.amount, 0);
-      const allBookNames = s.books.map((b) => b.name).join(', ');
-      const accNames = accs.filter((a) => !a.isSavings).map((a) => a.name).join(', ');
-      let blk = `\n\n## Keuangan CuciMoney+ (Buku aktif: ${book.name})\n- Buku tersedia: ${allBookNames || book.name}\n- Akun di buku ini: ${accNames || '-'}\n- Total Saldo: ${fmtRp(balance, true)}\n- Pengeluaran Hari Ini: ${fmtRp(todayExp, true)}\n- Bulan Ini: Masuk ${fmtRp(mIn, true)}, Keluar ${fmtRp(mOut, true)}\n`;
-      const rec = s.transactions.filter((t) => t.bookId === book.id).slice(0, 3);
-      if (rec.length) {
-        blk += '- Transaksi terakhir: ' + rec.map((t) => `${t.title} (${t.direction === 'in' ? '+' : '-'}${fmtRp(t.amount, true)}, ${t.date})`).join('; ') + '\n';
+      const curYear = nowD.getFullYear();
+      const curMonth = nowD.getMonth();
+      const pref = `${curYear}-${pad2(curMonth + 1)}`;
+
+      const cats = Array.isArray(s.categories) ? s.categories : [];
+      const expenseCats = cats.filter((c) => c.type === 'expense' || c.type === 'both').map((c) => c.name);
+      const incomeCats = cats.filter((c) => c.type === 'income' || c.type === 'both').map((c) => c.name);
+      const catById = new Map(cats.map((c) => [c.id, c.name]));
+
+      let blk = `\n\n## Ringkasan Keuangan CuciMoney+ (Buku aktif di app: ${actBook.name})\n`;
+      if (expenseCats.length) blk += `- Kategori Pengeluaran tersedia: ${expenseCats.join(', ')}\n`;
+      if (incomeCats.length) blk += `- Kategori Pemasukan tersedia: ${incomeCats.join(', ')}\n`;
+
+      s.books.forEach((book) => {
+        const nonTrf = s.transactions.filter((t) => t.bookId === book.id && t.transferPair == null);
+        const monthTrx = nonTrf.filter((t) => String(t.date || '').startsWith(pref));
+        const todayExp = nonTrf.filter((t) => t.date === today && t.direction === 'out').reduce((a, b) => a + b.amount, 0);
+        const mIn = monthTrx.filter((t) => t.direction === 'in').reduce((a, b) => a + b.amount, 0);
+        const mOut = monthTrx.filter((t) => t.direction === 'out').reduce((a, b) => a + b.amount, 0);
+        const allIn = nonTrf.filter((t) => t.direction === 'in').reduce((a, b) => a + b.amount, 0);
+        const allOut = nonTrf.filter((t) => t.direction === 'out').reduce((a, b) => a + b.amount, 0);
+
+        blk += `- KEUANGAN BUKU "${book.name}" (bookId=${book.id}): hari ini keluar ${fmtRp(todayExp, true)}; bulan ini pemasukan ${fmtRp(mIn, true)}, pengeluaran ${fmtRp(mOut, true)} (${monthTrx.length} transaksi); sepanjang waktu pemasukan ${fmtRp(allIn, true)}, pengeluaran ${fmtRp(allOut, true)}.\n`;
+
+        const expMap = new Map();
+        const incMap = new Map();
+        monthTrx.forEach((t) => {
+          const cName = catById.get(t.categoryId) || 'Lainnya';
+          const targetMap = t.direction === 'in' ? incMap : expMap;
+          targetMap.set(cName, (targetMap.get(cName) || 0) + (Number(t.amount) || 0));
+        });
+        const topExp = [...expMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
+        if (topExp.length) {
+          blk += `  Breakdown Pengeluaran bulan ini (${book.name}): ${topExp.map(([k, v]) => `${k} ${fmtRp(v, true)}`).join(', ')}\n`;
+        }
+        const topInc = [...incMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+        if (topInc.length) {
+          blk += `  Breakdown Pemasukan bulan ini (${book.name}): ${topInc.map(([k, v]) => `${k} ${fmtRp(v, true)}`).join(', ')}\n`;
+        }
+
+        const mb = (s.masterBudgets || []).find((b) => b.bookId === book.id && b.month === curMonth && b.year === curYear);
+        if (mb && Number(mb.limit) > 0) {
+          const spent = (mb.startDate && mb.endDate)
+            ? nonTrf.filter((t) => t.direction === 'out' && t.date >= mb.startDate && t.date <= mb.endDate).reduce((a, b) => a + b.amount, 0)
+            : mOut;
+          const pct = Math.round((spent / mb.limit) * 100);
+          const diff = mb.limit - spent;
+          const remTxt = diff >= 0 ? `sisa ${fmtRp(diff, true)}` : `melebihi batas ${fmtRp(-diff, true)}`;
+          blk += `  Budget bulan ini (${book.name}): batas ${fmtRp(mb.limit, true)}, terpakai ${fmtRp(spent, true)} (${pct}%), ${remTxt}.\n`;
+        }
+
+        const accs = bookAccounts(s, book.id).filter((a) => !a.isSavings);
+        if (accs.length) {
+          const assets = accs.filter((a) => a.type !== 'credit');
+          const debts = accs.filter((a) => a.type === 'credit');
+          const totAsset = assets.reduce((a, b) => a + (Number(b.balance) || 0), 0);
+          const totDebt = debts.reduce((a, b) => a + Math.abs(Number(b.balance) || 0), 0);
+          const names = assets.map((a) => `${a.name} ${fmtRp(a.balance, true)}`).join(', ');
+          const debtInfo = totDebt > 0 ? ` (aset ${fmtRp(totAsset, true)}, hutang ${fmtRp(totDebt, true)})` : '';
+          blk += `  Akun buku "${book.name}": ${names || 'tidak ada aset'}; aset bersih ${fmtRp(totAsset - totDebt, true)}${debtInfo}.\n`;
+        }
+
+        if (book.id === actBook.id) {
+          const rec = s.transactions.filter((t) => t.bookId === book.id).slice(0, 3);
+          if (rec.length) {
+            blk += `  Transaksi terakhir (${book.name}): ` + rec.map((t) => `${t.title} (${t.direction === 'in' ? '+' : '-'}${fmtRp(t.amount, true)}, ${t.date})`).join('; ') + '\n';
+          }
+        }
+      });
+
+      const savTotal = s.accounts.filter((a) => a.isSavings).reduce((a, b) => a + (Number(b.balance) || 0), 0);
+      const activeWishes = (s.wishlists || []).filter((w) => w.status !== 'Selesai');
+      if (savTotal > 0 || activeWishes.length) {
+        blk += `- Tabungan Wishlist (Total saldo pot tabungan: ${fmtRp(savTotal, true)}):\n`;
+        activeWishes.slice(0, 10).forEach((w) => {
+          const savedAmt = Number(w.saved) || 0;
+          const priceAmt = Number(w.price) || 0;
+          const remAmt = Math.max(0, priceAmt - savedAmt);
+          blk += `  • "${w.title}": terkumpul ${fmtRp(savedAmt, true)} / target ${fmtRp(priceAmt, true)} (kurang ${fmtRp(remAmt, true)}) [${w.priority || 'Nanti'}]\n`;
+        });
       }
       return blk;
     },
@@ -1712,6 +1780,118 @@
       saveCm(next);
       if (root?.classList.contains('open')) renderAll();
       return `${title} (${fmtRp(amt, true)})`;
+    },
+    applyTagSave(parts) {
+      const p0 = String(parts[0] || '').trim();
+      const p1 = String(parts[1] || '').trim();
+      const p0Digits = p0.replace(/[^0-9]/g, '');
+      const p1Digits = p1.replace(/[^0-9]/g, '');
+      const flipped = Boolean(p0Digits) && /^[0-9.,\s]+$/.test(p0) && /[a-zA-Z]/.test(p1);
+      const wishQuery = (flipped ? p1 : p0).trim();
+      const amt = parseInt(flipped ? p0Digits : p1Digits, 10);
+      if (!wishQuery || !amt || amt <= 0) return null;
+
+      const accName = String(parts[2] || '').trim().toLowerCase();
+      const bookName = String(parts[3] || '').trim().toLowerCase();
+      const next = cm();
+      const book = (bookName && (next.books.find((b) => b.name.toLowerCase() === bookName) || next.books.find((b) => b.name.toLowerCase().includes(bookName))))
+        || activeBook(next);
+      const bookAccs = bookAccounts(next, book.id).filter((a) => !a.isSavings);
+      const acc = (accName && (bookAccs.find((a) => a.name.toLowerCase().includes(accName)) || next.accounts.find((a) => !a.isSavings && a.name.toLowerCase().includes(accName))))
+        || bookAccs.find((a) => a.id === next.prefs.lastAccByBook?.[book.id])
+        || bookAccs[0]
+        || next.accounts.find((a) => !a.isSavings);
+      const svAcc = savingsAcc(next);
+      if (!acc || !svAcc) return null;
+
+      const qLow = wishQuery.toLowerCase();
+      let wish = next.wishlists.find((w) => w.status !== 'Selesai' && w.title.toLowerCase() === qLow)
+        || next.wishlists.find((w) => w.status !== 'Selesai' && w.title.toLowerCase().includes(qLow));
+      if (!wish) {
+        wish = {
+          id: `wish_${genId()}`, title: wishQuery, price: amt, priority: 'Nanti',
+          image: 'bag', status: 'Belum', saved: 0, realizedAt: null, realizedAmount: 0, history: [], createdAt: Date.now(),
+        };
+        next.wishlists.unshift(wish);
+      }
+
+      const pair = genId();
+      const today = todayStr();
+      next.transactions.unshift(
+        { id: pair, bookId: book.id, title: `Nabung: ${wish.title}`, amount: amt, direction: 'out', categoryId: 12, accountId: acc.id, date: today, memberId: 'm1', transferPair: pair, savingsPot: wish.id, createdAt: Date.now() },
+        { id: pair + 1, bookId: book.id, title: `Nabung: ${wish.title}`, amount: amt, direction: 'in', categoryId: 12, accountId: svAcc.id, date: today, memberId: 'm1', transferPair: pair, savingsPot: wish.id, createdAt: Date.now() + 1 }
+      );
+      adjBal(next, acc.id, -amt);
+      adjBal(next, svAcc.id, amt);
+      wish.saved = (Number(wish.saved) || 0) + amt;
+      wish.history = [...(wish.history || []), { id: genId(), type: 'in', amount: amt, date: today, accountId: acc.id, accountName: acc.name, ts: Date.now() }];
+      next.prefs.lastAccByBook[book.id] = acc.id;
+      saveCm(next);
+      if (root?.classList.contains('open')) renderAll();
+      return `Tabungan ${wish.title} (+${fmtRp(amt, true)})`;
+    },
+    applyTagRealize(parts) {
+      const wishQuery = String(parts[0] || '').trim();
+      if (!wishQuery) return null;
+      const p1 = String(parts[1] || '').trim();
+      const p2 = String(parts[2] || '').trim();
+      const p1IsNum = Boolean(p1) && /^[0-9.,\s]+$/.test(p1);
+      const accName = (p1IsNum ? p2 : p1).toLowerCase();
+      const paidAmt = parseInt((p1IsNum ? p1 : p2).replace(/[^0-9]/g, ''), 10) || 0;
+      const bookName = String(parts[3] || '').trim().toLowerCase();
+
+      const next = cm();
+      const book = (bookName && (next.books.find((b) => b.name.toLowerCase() === bookName) || next.books.find((b) => b.name.toLowerCase().includes(bookName))))
+        || activeBook(next);
+      const bookAccs = bookAccounts(next, book.id).filter((a) => !a.isSavings);
+      const dst = (accName && (bookAccs.find((a) => a.name.toLowerCase().includes(accName)) || next.accounts.find((a) => !a.isSavings && a.name.toLowerCase().includes(accName))))
+        || bookAccs.find((a) => a.id === next.prefs.lastAccByBook?.[book.id])
+        || bookAccs[0]
+        || next.accounts.find((a) => !a.isSavings);
+      const svAcc = savingsAcc(next);
+
+      const qLow = wishQuery.toLowerCase();
+      const wish = next.wishlists.find((w) => w.status !== 'Selesai' && w.title.toLowerCase() === qLow)
+        || next.wishlists.find((w) => w.status !== 'Selesai' && w.title.toLowerCase().includes(qLow))
+        || next.wishlists.find((w) => w.title.toLowerCase().includes(qLow));
+
+      const today = todayStr();
+      const wishTitle = wish?.title || wishQuery;
+      const savedAmt = Number(wish?.saved) || 0;
+      if (wish) {
+        if (savedAmt > 0 && dst && svAcc) {
+          const pair = genId();
+          next.transactions.unshift(
+            { id: pair, bookId: book.id, title: `Realisasi: ${wish.title}`, amount: savedAmt, direction: 'out', categoryId: 12, accountId: svAcc.id, date: today, memberId: 'm1', transferPair: pair, savingsPot: wish.id, createdAt: Date.now() },
+            { id: pair + 1, bookId: book.id, title: `Realisasi: ${wish.title}`, amount: savedAmt, direction: 'in', categoryId: 12, accountId: dst.id, date: today, memberId: 'm1', transferPair: pair, savingsPot: wish.id, createdAt: Date.now() + 1 }
+          );
+          adjBal(next, svAcc.id, -savedAmt);
+          adjBal(next, dst.id, savedAmt);
+          wish.saved = 0;
+          wish.status = 'Selesai';
+          wish.realizedAt = Date.now();
+          wish.realizedAmount = savedAmt;
+          wish.history = [...(wish.history || []), { id: genId(), type: 'out', kind: 'realize', amount: savedAmt, date: today, accountId: dst.id, accountName: dst.name, ts: Date.now() }];
+        } else {
+          wish.status = 'Selesai';
+          wish.realizedAt = Date.now();
+          wish.realizedAmount = paidAmt > 0 ? paidAmt : (Number(wish.price) || 0);
+        }
+      }
+      if (savedAmt <= 0 && paidAmt > 0 && dst) {
+        const buyCat = next.categories.find((c) => c.name.toLowerCase() === 'belanja')
+          || next.categories.find((c) => c.type === 'expense')
+          || next.categories[0];
+        next.transactions.unshift({
+          id: genId(), bookId: book.id, title: `Beli Wishlist: ${wishTitle}`, amount: paidAmt, direction: 'out',
+          categoryId: buyCat?.id || 4, accountId: dst.id, date: today, memberId: next.members[0]?.id || 'm1', transferPair: null, createdAt: Date.now(),
+        });
+        adjBal(next, dst.id, -paidAmt);
+        next.prefs.lastAccByBook[book.id] = dst.id;
+      }
+      saveCm(next);
+      if (root?.classList.contains('open')) renderAll();
+      return { label: `Wishlist Selesai: ${wishTitle}`, wishTitle, wishId: wish?.id || '' };
     },
   };
 })();

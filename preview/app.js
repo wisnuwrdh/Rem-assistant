@@ -1571,6 +1571,10 @@
       '  [CUCI:ADD|out_atau_in|nominal_angka|judul_singkat|kategori_opsional|akun_opsional]\n' +
       '  Contoh keluar: [CUCI:ADD|out|25000|Kopi Susu|Makan & Minum|Tunai]\n' +
       '  Contoh masuk: [CUCI:ADD|in|500000|Bonus Proyek|Bonus|]\n' +
+      '- Jika Tuan ingin menyetor/menambah tabungan ke target barang wishlist, sisipkan:\n' +
+      '  [CUCI:SAVE|nama_wishlist|nominal_angka|akun_sumber_opsional|buku_opsional]\n' +
+      '- Jika Tuan melapor target barang wishlist sudah kebeli / ingin merealisasikan tabungannya, sisipkan:\n' +
+      '  [CUCI:REALIZE|nama_wishlist|akun_opsional|nominal_beli_opsional|buku_opsional]\n' +
       '- Jika Tuan meminta membuka CuciMoney+ / dompet / catatan keuangannya, sisipkan: [OPEN:cucimoney]';
 
     const idekuRules =
@@ -1606,10 +1610,10 @@
 
     const choicesRules =
       '\n\n## Pilihan Interaktif (Quick Replies)\n' +
-      'Jika Rem bertanya atau meminta Tuan memilih dari beberapa opsi konkret (misalnya memilih buku/akun CuciMoney+ seperti Personal atau Bisnis, kategori, prioritas Daily OS, aksi IdeKu, mood Kronik, atau konfirmasi), sisipkan tag tersembunyi di akhir jawaban (sebelum [EXPR:...]):\n' +
+      'Jika Rem bertanya atau meminta Tuan memilih dari beberapa opsi konkret (misalnya memilih buku/akun CuciMoney+ seperti Personal atau Bisnis, memilih kategori pemasukan/pengeluaran saat belum disebut, prioritas Daily OS, aksi IdeKu, mood Kronik, atau konfirmasi), sisipkan tag tersembunyi di akhir jawaban (sebelum [EXPR:...]):\n' +
       '- Pilihan tunggal (tap 1 langsung terkirim): [CHOICES:single|Opsi 1|Opsi 2|Opsi 3]\n' +
       '- Pilihan ganda (bisa pilih lebih dari satu): [CHOICES:multi|Opsi 1|Opsi 2|Opsi 3]\n' +
-      'Gunakan hanya saat memang ada pertanyaan pilihan konkret (maksimal 6 opsi singkat, sesuai data nyata Tuan).';
+      'Gunakan hanya saat memang ada pertanyaan pilihan konkret (maksimal 8 opsi singkat, sesuai data nyata Tuan).';
 
     let block = remSystemPrompt + buildTimeAndGapContext(currentUserMsgId) + kronikRules + linkkuRules + cuciRules + idekuRules + dailyosRules + searchRules + memoryRules + choicesRules;
     if (Array.isArray(memoryProfile.sections) && memoryProfile.sections.length) {
@@ -1639,7 +1643,12 @@
         ? 'Batas pencarian tercapai. Jangan memanggil [SEARCH:...] lagi; langsung jawab Tuan berdasarkan data di atas.'
         : 'Gunakan data akurat di atas untuk menjawab pesan Tuan. Jangan memanggil [SEARCH:...] lagi untuk pencarian yang sama.';
     }
-    block += '\nGunakan memori & konteks Kronik / LinkKu / CuciMoney+ / IdeKu / Daily OS di atas secara natural tanpa menyebut kata database atau log.';
+    block += '\nGunakan memori & konteks Kronik / LinkKu / CuciMoney+ / IdeKu / Daily OS di atas secara natural tanpa menyebut kata database atau log. Angka yang tertera adalah data AKURAT.' +
+      '\n\nATURAN PENTING KEUANGAN: ' +
+      '1) Jika Tuan meminta ringkasan, total, analisis, atau informasi keuangan tetapi belum menyebut nama buku, tanyakan dulu buku mana yang dimaksud sambil menyertakan tag [CHOICES:single|...] berisi nama-nama buku CuciMoney+ yang tersedia, dan jangan berikan angka keuangan apa pun sebelum Tuan memilih. ' +
+      '2) Jika nama buku sudah disebut, gunakan hanya bagian KEUANGAN BUKU dengan nama yang cocok persis; jangan pernah menggabungkan angka antar-buku. ' +
+      '3) Jika Tuan menanyakan daftar kategori keuangan, sebutkan kategori sesuai daftar Kategori Pengeluaran/Pemasukan tersedia di atas dan sertakan [CHOICES:single|...] berisi kategori relevan (maksimal 8). Jika Tuan ingin mencatat transaksi baru tetapi kategorinya belum jelas atau ambigu, tawarkan chip [CHOICES:single|...] berisi kategori relevan; jika sudah jelas dari kalimat Tuan, langsung cocokkan tanpa memunculkan chip. ' +
+      '4) Jika Tuan ingin menabung ke wishlist ([CUCI:SAVE|...]) atau melapor barang wishlist sudah kebeli ([CUCI:REALIZE|...]), tetapi nama wishlist atau akun sumber/tujuan belum jelas, tanyakan klarifikasi disertai [CHOICES:single|...] berisi daftar wishlist aktif atau akun yang tersedia.';
     return block;
   }
 
@@ -3931,15 +3940,50 @@
   function applyCuciTagsFromReply(rawText) {
     if (!window.CuciMoneyModule) return;
     const shouldOpen = /\[OPEN:cucimoney\]/i.test(rawText);
-    const addRegex = /\[CUCI:ADD\|([^\]\r\n]+)\]/gi;
+    const cuciRegex = /\[CUCI:(ADD|SAVE|NABUNG|DEPOSIT|TABUNG|REALIZE|BELI|DONE|SELESAI|CAIRKAN)\|([^\]\r\n]+)\]/gi;
     let m;
     let changed = false;
-    while ((m = addRegex.exec(rawText)) !== null) {
-      const parts = String(m[1] || '').split('|').map((s) => s.trim());
-      const resLabel = window.CuciMoneyModule.applyTagAdd(parts);
-      if (resLabel) {
-        changed = true;
-        showToastMessage(`CuciMoney+: Tercatat "${resLabel}"`, true);
+    while ((m = cuciRegex.exec(rawText)) !== null) {
+      const action = String(m[1] || '').toUpperCase();
+      const parts = String(m[2] || '').split('|').map((s) => s.trim());
+      if (action === 'ADD') {
+        const resLabel = window.CuciMoneyModule.applyTagAdd(parts);
+        if (resLabel) {
+          changed = true;
+          showToastMessage(`CuciMoney+: Tercatat "${resLabel}"`, true);
+        }
+      } else if (action === 'SAVE' || action === 'NABUNG' || action === 'DEPOSIT' || action === 'TABUNG') {
+        const resLabel = window.CuciMoneyModule.applyTagSave?.(parts);
+        if (resLabel) {
+          changed = true;
+          showToastMessage(`CuciMoney+: "${resLabel}"`, true);
+        }
+      } else {
+        const res = window.CuciMoneyModule.applyTagRealize?.(parts);
+        if (res?.label) {
+          changed = true;
+          const targetTitle = String(res.wishTitle || '').trim().toLowerCase();
+          if (targetTitle && Array.isArray(ecoDb?.ideku?.ideas)) {
+            let idekuUpdated = false;
+            ecoDb.ideku.ideas.forEach((idea) => {
+              const title = String(idea?.title || '').trim().toLowerCase();
+              if (
+                idea?.type === 'Wishlist' &&
+                idea?.status !== 'Selesai' &&
+                title &&
+                (title === targetTitle || title.includes(targetTitle) || targetTitle.includes(title))
+              ) {
+                idea.status = 'Selesai';
+                idekuUpdated = true;
+              }
+            });
+            if (idekuUpdated) {
+              saveEcoDb();
+              window.IdekuModule?.render?.();
+            }
+          }
+          showToastMessage(`CuciMoney+: "${res.label}"`, true);
+        }
       }
     }
     if (changed) {

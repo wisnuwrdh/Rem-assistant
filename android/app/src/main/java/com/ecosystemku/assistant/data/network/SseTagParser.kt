@@ -66,6 +66,20 @@ object SseTagParser {
             val bookName: String = "",
             val date: String = ""
         ) : CuciChatAction()
+
+        data class SaveWishlist(
+            val wishlistQuery: String,
+            val amount: Long,
+            val accountName: String = "",
+            val bookName: String = ""
+        ) : CuciChatAction()
+
+        data class RealizeWishlist(
+            val wishlistQuery: String,
+            val accountName: String = "",
+            val paidAmount: Long = 0L,
+            val bookName: String = ""
+        ) : CuciChatAction()
     }
 
     sealed class IdekuChatAction {
@@ -362,6 +376,44 @@ object SseTagParser {
                     accountName = accountName,
                     bookName = bookName,
                     date = date
+                )
+            }
+            "SAVE", "NABUNG", "DEPOSIT", "TABUNG" -> {
+                // [CUCI:SAVE|nama_wishlist|nominal|akun_sumber_opsional|buku_opsional]
+                val p1 = parts.getOrNull(1).orEmpty()
+                val p2 = parts.getOrNull(2).orEmpty()
+                val p1Digits = p1.replace(Regex("""[^0-9]"""), "")
+                val p2Digits = p2.replace(Regex("""[^0-9]"""), "")
+                val flipped = p1Digits.isNotEmpty() && p1.all { it.isDigit() || it == '.' || it == ',' } && p2.any { it.isLetter() }
+                val wishName = (if (flipped) p2 else p1).trim()
+                val amtRaw = if (flipped) p1Digits else p2Digits
+                val amount = amtRaw.toLongOrNull() ?: return null
+                if (wishName.isBlank() || amount <= 0L) return null
+                val accName = parts.getOrNull(3).orEmpty().trim()
+                val bookName = parts.getOrNull(4).orEmpty().trim()
+                CuciChatAction.SaveWishlist(
+                    wishlistQuery = wishName,
+                    amount = amount,
+                    accountName = accName,
+                    bookName = bookName
+                )
+            }
+            "REALIZE", "BELI", "DONE", "SELESAI", "CAIRKAN" -> {
+                // [CUCI:REALIZE|nama_wishlist|akun_opsional|nominal_beli_opsional|buku_opsional]
+                val wishName = parts.getOrNull(1).orEmpty().trim()
+                if (wishName.isBlank()) return null
+                val p2 = parts.getOrNull(2).orEmpty().trim()
+                val p3 = parts.getOrNull(3).orEmpty().trim()
+                val p2IsNum = p2.isNotEmpty() && p2.all { it.isDigit() || it == '.' || it == ',' }
+                val accountName = if (p2IsNum) p3 else p2
+                val amtRaw = (if (p2IsNum) p2 else p3).replace(Regex("""[^0-9]"""), "")
+                val paidAmount = amtRaw.toLongOrNull()?.coerceAtLeast(0L) ?: 0L
+                val bookName = parts.getOrNull(4).orEmpty().trim()
+                CuciChatAction.RealizeWishlist(
+                    wishlistQuery = wishName,
+                    accountName = accountName,
+                    paidAmount = paidAmount,
+                    bookName = bookName
                 )
             }
             else -> null
