@@ -1822,16 +1822,49 @@
     };
   }
 
+  function resolveTodoTarget(todos, target) {
+    const clean = String(target || '').trim();
+    if (!clean) return null;
+    const byId = todos.find((t) => String(t.id).toLowerCase() === clean.toLowerCase());
+    if (byId) return byId;
+    const q = clean.toLowerCase();
+    const exact = todos.filter((t) => String(t.title || '').toLowerCase() === q);
+    if (exact.length === 1) return exact[0];
+    if (exact.length > 1) return null;
+    const partial = todos.filter((t) => String(t.title || '').toLowerCase().includes(q));
+    return partial.length === 1 ? partial[0] : null;
+  }
+
   function buildContextForAssistant() {
     const s = state();
     const active = s.habits.filter((h) => !h.archived);
     if (!active.length && !s.todos.length) return '';
+    const today = getToday();
     const prog = calcTodayProgress(s.habits);
     const streak = calcOverallStreak(s.habits);
     const pending = s.todos.filter((t) => !t.done);
-    const lines = [`\n\n## Konteks Daily OS (${prog.completedHabits}/${prog.scheduledHabits} habit selesai [${prog.pct}%], Streak ${streak}h)`];
+    const recentDone = s.todos.filter((t) => t.done).slice(-3);
+    const lines = [`\n\n## Daily OS Hari Ini (${prog.completedHabits}/${prog.scheduledHabits} habit selesai [${prog.pct}%], Overall Streak ${streak}h)`];
+    if (active.length) {
+      lines.push(`- Habit aktif (${active.length}):`);
+      active.slice(0, 15).forEach((h) => {
+        const hStreak = calcHabitStreak(h);
+        const hist = h.history || {};
+        const totalDays = Object.values(hist).filter((arr) => Array.isArray(arr) && arr.length > 0).length;
+        const schedToday = isHabitScheduled(h, today);
+        const doneToday = Array.isArray(hist[today]) && hist[today].length > 0;
+        const todayStatus = doneToday ? 'selesai hari ini' : (!schedToday ? 'tidak terjadwal hari ini' : 'belum hari ini');
+        lines.push(`  • [id=${h.id}] ${h.name} (${h.category || 'General'}): streak ${hStreak} hari berturut-turut, ${todayStatus}, total ${totalDays} hari`);
+      });
+    }
     if (pending.length) {
-      lines.push(`To-Do Pending (${pending.length}): ` + pending.slice(0, 4).map((t) => `${t.title} [${t.priority}]`).join('; '));
+      lines.push(`- To-Do Pending (${pending.length} task): ` + pending.slice(0, 6).map((t) => {
+        const dl = t.deadline ? `, dl ${t.deadline}` : '';
+        return `[id=${t.id}] ${t.title} [${t.priority}${dl}]`;
+      }).join('; '));
+    }
+    if (recentDone.length) {
+      lines.push('- To-Do Selesai Terbaru: ' + recentDone.map((t) => `[id=${t.id}] ${t.title}`).join('; '));
     }
     return lines.join('\n');
   }
@@ -1884,9 +1917,12 @@
       return `To-Do "${title}"`;
     }
     if (cmd === 'CHECK' || cmd === 'DONE' || cmd === 'COMPLETE') {
-      const q = String(parts[1] || '').trim().toLowerCase();
+      const raw = String(parts[1] || '').trim();
+      const q = raw.toLowerCase();
       if (!q) return null;
-      const hab = s.habits.find((h) => !h.archived && h.name.toLowerCase().includes(q));
+      const hab = s.habits.find((h) => !h.archived && String(h.id).toLowerCase() === q)
+        || s.habits.find((h) => !h.archived && h.name.toLowerCase() === q)
+        || s.habits.find((h) => !h.archived && h.name.toLowerCase().includes(q));
       if (hab) {
         const sid = hab.subTasks[0]?.id || 'main';
         const txt = hab.subTasks[0]?.text || hab.name;
@@ -1900,13 +1936,90 @@
         }
         return null;
       }
-      const td = s.todos.find((t) => !t.done && t.title.toLowerCase().includes(q));
+      const td = s.todos.find((t) => !t.done && String(t.id).toLowerCase() === q)
+        || s.todos.find((t) => !t.done && t.title.toLowerCase() === q)
+        || s.todos.find((t) => !t.done && t.title.toLowerCase().includes(q));
       if (td) {
         td.done = true;
         td.completedAt = new Date().toISOString();
         persist();
         if (root?.classList.contains('open')) render();
         return `Selesai "${td.title}"`;
+      }
+    }
+    if (cmd === 'UNCHECK' || cmd === 'REOPEN' || cmd === 'BATAL') {
+      const q = String(parts[1] || '').trim().toLowerCase();
+      if (!q) return null;
+      const hab = s.habits.find((h) => !h.archived && String(h.id).toLowerCase() === q)
+        || s.habits.find((h) => !h.archived && h.name.toLowerCase() === q)
+        || s.habits.find((h) => !h.archived && h.name.toLowerCase().includes(q));
+      if (hab) {
+        if (hab.history && Array.isArray(hab.history[today]) && hab.history[today].length > 0) {
+          delete hab.history[today];
+          persist();
+          if (root?.classList.contains('open')) render();
+          return `Batal centang "${hab.name}"`;
+        }
+        return null;
+      }
+      const td = s.todos.find((t) => t.done && String(t.id).toLowerCase() === q)
+        || s.todos.find((t) => t.done && t.title.toLowerCase() === q)
+        || s.todos.find((t) => t.done && t.title.toLowerCase().includes(q));
+      if (td) {
+        td.done = false;
+        td.completedAt = null;
+        persist();
+        if (root?.classList.contains('open')) render();
+        return `Dibuka lagi "${td.title}"`;
+      }
+    }
+    if (cmd === 'EDIT_TODO' || cmd === 'UPDATE_TODO' || cmd === 'EDIT' || cmd === 'UPDATE') {
+      const target = String(parts[1] || '').trim();
+      const td = resolveTodoTarget(s.todos, target);
+      if (!td) return null;
+      const nextTitle = String(parts[2] || '').trim();
+      const priRaw = String(parts[3] || '').trim().toLowerCase();
+      const nextPri = ['urgent', 'soon', 'normal'].includes(priRaw)
+        ? priRaw
+        : (priRaw === 'hari ini' || priRaw === 'high' ? 'urgent' : (priRaw === 'minggu ini' || priRaw === 'medium' ? 'soon' : (priRaw === 'nanti' || priRaw === 'low' ? 'normal' : '')));
+      const dlRaw = String(parts[4] || '').trim();
+      const clearDl = ['-', 'none', 'hapus', 'clear'].includes(dlRaw.toLowerCase());
+      const nextDl = /^\d{4}-\d{2}-\d{2}$/.test(dlRaw) ? dlRaw : '';
+      if (!nextTitle && !nextPri && !clearDl && !nextDl) return null;
+      if (nextTitle) td.title = nextTitle;
+      if (nextPri) td.priority = nextPri;
+      if (clearDl) td.deadline = '';
+      else if (nextDl) td.deadline = nextDl;
+      persist();
+      if (root?.classList.contains('open')) render();
+      return `Diubah "${td.title}"`;
+    }
+    if (cmd === 'DEL_TODO' || cmd === 'DELETE_TODO' || cmd === 'REMOVE_TODO' || cmd === 'DEL' || cmd === 'DELETE' || cmd === 'HAPUS') {
+      const td = resolveTodoTarget(s.todos, parts[1]);
+      if (!td) return null;
+      s.todos = s.todos.filter((t) => t.id !== td.id);
+      persist();
+      if (root?.classList.contains('open')) render();
+      return `Dihapus "${td.title}"`;
+    }
+    if (cmd === 'ARCHIVE_HABIT' || cmd === 'DEL_HABIT' || cmd === 'DELETE_HABIT') {
+      const q = String(parts[1] || '').trim().toLowerCase();
+      if (!q) return null;
+      const hab = s.habits.find((h) => String(h.id).toLowerCase() === q)
+        || s.habits.find((h) => !h.archived && h.name.toLowerCase() === q)
+        || s.habits.find((h) => !h.archived && h.name.toLowerCase().includes(q))
+        || s.habits.find((h) => h.name.toLowerCase().includes(q));
+      if (!hab) return null;
+      if (cmd === 'DEL_HABIT' || cmd === 'DELETE_HABIT') {
+        s.habits = s.habits.filter((h) => h.id !== hab.id);
+        persist();
+        if (root?.classList.contains('open')) render();
+        return `Habit dihapus "${hab.name}"`;
+      } else {
+        hab.archived = true;
+        persist();
+        if (root?.classList.contains('open')) render();
+        return `Habit diarsipkan "${hab.name}"`;
       }
     }
     return null;
@@ -1923,5 +2036,7 @@
     getSummary,
     buildContextForAssistant,
     applyTagAction,
+    calcHabitStreak,
+    isHabitScheduled,
   };
 })();

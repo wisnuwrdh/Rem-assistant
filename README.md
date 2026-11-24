@@ -3,7 +3,7 @@
 **EcosystemKu (Rem Assistant)** adalah aplikasi asisten virtual pribadi berbasis karakter **Live2D (Cubism 4 — Rem)** yang terintegrasi penuh dengan **5 modul produktivitas lokal**: **Daily OS**, **CuciMoney+**, **IdeKu**, **Kronik**, dan **LinkKu**.
 
 Proyek ini dibangun dengan arsitektur **Dual-Client (Feature-Parity)** yang saling mencerminkan:
-1. **Android Native App (`android/`)**: Kotlin + Jetpack Compose + Material 3 + Room SQLite (v13) + WebView Live2D + ExoPlayer (Media3) — berjalan **100% standalone (BYOK / Bring Your Own Key)** langsung dari perangkat ke penyedia LLM & TTS.
+1. **Android Native App (`android/`)**: Kotlin + Jetpack Compose + Material 3 + Room SQLite (v14) + WebView Live2D + ExoPlayer (Media3) — berjalan **100% standalone (BYOK / Bring Your Own Key)** langsung dari perangkat ke penyedia LLM & TTS.
 2. **Web Preview & API Proxy (`preview/` + `server.js` + `api/`)**: Express 5 + Vanilla JS UI 3-tab (`Asisten`, `Apps`, `Setelan`) + `localStorage` untuk pengujian cepat di browser dengan proxy endpoint `/api/*`.
 
 ---
@@ -14,7 +14,7 @@ Proyek ini dibangun dengan arsitektur **Dual-Client (Feature-Parity)** yang sali
 - [2. Live2D Stage, Lip-Sync, & Sistem Audio Anti-Bentrok](#2-live2d-stage-lip-sync--sistem-audio-anti-bentrok)
 - [3. Protokol Tag Chat Rem](#3-protokol-tag-chat-rem)
 - [4. Ekosistem 5 Sub-App Terintegrasi & Setelan](#4-ekosistem-5-sub-app-terintegrasi--setelan)
-- [5. Skema Database Android (Room v13)](#5-skema-database-android-room-v13)
+- [5. Skema Database Android (Room v14)](#5-skema-database-android-room-v14)
 - [6. Endpoint Backend Web Preview (`/api/*`)](#6-endpoint-backend-web-preview-api)
 - [7. Struktur Proyek](#7-struktur-proyek)
 - [8. Tech Stack, Menjalankan Lokal, & CI/CD](#8-tech-stack-menjalankan-lokal--cicd)
@@ -31,7 +31,7 @@ flowchart LR
     subgraph Android["Android Native (Standalone BYOK)"]
         UI["Jetpack Compose UI\n(Asisten · Apps · Setelan)"]
         VM["AsistenViewModel\n(State, Prompt, Tag Executor)"]
-        DB[("Room SQLite v13\n17 Entities")]
+        DB[("Room SQLite v14\n18 Entities")]
         KS["ApiKeyStore\n(Android Keystore AES-256-GCM)"]
         WV["WebView Live2D\n(stage.html + stage.js + Cubism 4)"]
         EXO["TtsAudioManager\n(ExoPlayer + TeeAudioProcessor RMS)"]
@@ -85,15 +85,15 @@ Sebelum memanggil LLM, klien menyuntikkan konteks nyata secara berurutan:
    * **Ringkasan Sesi Lalu (`conversation_summaries`):** 3 ringkasan sesi terdahulu.
    * **Rolling Context Compaction (`rollingSummary` di `chat_sessions`):** Saat pesan dalam satu sesi melebihi 10 pesan, pesan lama dipadatkan secara inkremental agar percakapan panjang tetap nyambung tanpa membengkakkan token.
 4. **Ringkasan Live 5 Sub-App:**
-   * **Daily OS:** Status habit hari ini, daftar to-do aktif/prioritas.
-   * **CuciMoney+:** Daftar buku, akun beserta saldo saat ini, daftar kategori pemasukan & pengeluaran resmi (agar LLM memilih/menawarkan opsi kategori valid), breakdown pemasukan & pengeluaran bulan berjalan per kategori, status Master Budget bulanan, dan daftar tabungan Wishlist beserta progres nominalnya.
-   * **IdeKu:** Daftar ide & wishlist aktif.
+   * **Daily OS:** Status habit hari ini, streak berturut-turut per-habit (`calculateHabitStreak`) & overall streak, daftar to-do aktif/prioritas & selesai terbaru (beserta ID).
+   * **CuciMoney+:** Daftar buku, akun beserta saldo saat ini, daftar kategori pemasukan & pengeluaran resmi, seluruh breakdown pemasukan & pengeluaran bulan berjalan per kategori, 5 transaksi terakhir (beserta ID), status Master Budget bulanan, dan daftar tabungan Wishlist beserta progres nominalnya.
+   * **IdeKu:** Daftar ide & wishlist aktif beserta ID dan statusnya.
    * **Kronik:** 3 entri jurnal terbaru yang tidak diarsipkan.
    * **LinkKu:** 4 bookmark publik terbaru (bookmark privat tidak disuntikkan ke prompt).
 
 ### B. Eksekusi Multi-Putaran & On-Demand Archive Search (2-Tahap)
 1. **Round 0..2 Loop (`streamAssistantReply`):** Klien mengirim maksimal 10 pesan terakhir + `personalizedPrompt` via SSE (`/chat/completions` dengan `stream = true`). Selama streaming, `SseTagParser.visibleTextDuringStream` menyembunyikan tag internal (`[...]`, `[JA]...[/JA]`) dari UI.
-2. **Pencarian Arsip Lokal (`[SEARCH:scope|query]`):** Jika jawaban membutuhkan data lama yang tidak ada di ringkasan prompt (mis. transaksi bulan tertentu, jurnal lama, ide, bookmark publik, Daily OS, atau isi chat sesi lalu), Rem mengeluarkan `[SEARCH:scope|query]`. Klien mengeksekusi query lokal (`executeLocalArchiveSearch`), memutar klip tunggu `ack_2.mp3`, lalu menjalankan putaran LLM berikutnya dengan hasil pencarian tersebut (maksimal 2 putaran search per giliran).
+2. **Pencarian Arsip Lokal (`[SEARCH:scope|query]`):** Jika jawaban membutuhkan data lama atau filter khusus yang tidak ada di ringkasan prompt (mis. transaksi bulan/kategori tertentu via `book=...;month=...;cat=...;dir=...`, riwayat tanggal & streak habit, jurnal lama, ide, bookmark publik, atau isi chat sesi lalu), Rem mengeluarkan `[SEARCH:scope|query]`. Klien mengeksekusi query lokal (`executeLocalArchiveSearch`), memutar klip tunggu `ack_2.mp3`, lalu menjalankan putaran LLM berikutnya dengan hasil pencarian tersebut (maksimal 2 putaran search per giliran).
 3. **Finalisasi Tag & Pembaruan Modul:** `SseTagParser.parseFinal` memisahkan teks bersih, `[EXPR:...]`, `[CHOICES:...]`, `[OPEN:...]`, tag aksi modul (`MEMORY`, `KRONIK`, `LINKKU`, `CUCI`, `IDEKU`, `DAILYOS`), dan `[JA]...[/JA]`.
 4. **Post-Reply Background Tasks:** Jika `autoLearnMemory` aktif, `extractAndPersistMemories` mengekstrak fakta baru ke SQLite dan memperbarui `MemoryProfileData`; lalu `compactSessionIfNeeded` memadatkan riwayat lama bila pesan sesi > 10.
 
@@ -133,23 +133,39 @@ Respons LLM dapat menyertakan tag tersembunyi berikut (dibersihkan dari bubble c
 
 | Tag | Fungsi & Keterangan |
 | --- | --- |
-| `[SEARCH:scope\|kata_kunci]` | Pencarian on-demand 2-tahap ke arsip lokal (`kronik`, `linkku`, `cuci`, `ideku`, `dailyos`, `chat`, `all`) |
+| `[SEARCH:scope\|kata_kunci]` | Pencarian on-demand 2-tahap ke arsip lokal & info perangkat (`kronik`, `linkku`, `cuci`, `ideku`, `dailyos`, `device`, `chat`, `all`); scope `cuci` mendukung filter terstruktur `book=...;month=...;from=...;to=...;cat=...;acc=...;dir=...;q=...`; scope `device` mendukung `battery`, `calendar [YYYY-MM-DD]`, `location`, `reminders` |
 | `[CHOICES:single\|Opsi 1\|Opsi 2]` | Menampilkan chip pilihan tunggal di bawah pesan Rem (tap langsung kirim) |
 | `[CHOICES:multi\|Opsi 1\|Opsi 2]` | Menampilkan daftar checkbox pilihan ganda + tombol **Kirim** |
 | `[MEMORY:SET\|kategori\|fact_key\|nilai]` | Menyimpan atau memperbarui fakta memori personal dari obrolan |
 | `[MEMORY:DEL\|fact_key_atau_kata_kunci]` | Menghapus/melupakan fakta memori personal |
 | `[EXPR:nama]` | Mengubah ekspresi & motion Live2D (`happy`, `smile`, `shame`, `sad`, `cry`, `angry`, `surprise`, `serious`, `proud`, `doubt`, `puzzle`, `upset`, `appeal`, `navi`, `none`) |
 | `[OPEN:app]` | Membuka overlay modul (`kronik`, `linkku`, `cucimoney`, `ideku`, `dailyos`) |
+| `[DEVICE:ALARM\|HH:mm\|label]` | Memasang alarm sistem Android lewat `AlarmClock.ACTION_SET_ALARM` (alias: `SET_ALARM`) |
+| `[DEVICE:REMINDER\|tgl\|HH:mm\|pesan]` | Menjadwalkan pengingat notifikasi lokal sekali jalan (persisten di `RemReminderEntity`, alias: `SET_REMINDER`, `INGATKAN`) |
+| `[DEVICE:DEL_REMINDER\|id_atau_query]` | Membatalkan pengingat terjadwal Rem (alias: `CANCEL_REMINDER`, `HAPUS_REMINDER`) |
+| `[DEVICE:TIMER\|durasi\|label]` | Memasang timer sistem / Pomodoro (`25m`, `90s`, `1h`) lewat `AlarmClock.ACTION_SET_TIMER` (alias: `SET_TIMER`, `POMODORO`) |
+| `[DEVICE:CAL_ADD\|judul\|tgl\|mulai\|selesai\|lokasi\|catatan]` | Membuka form tambah jadwal kalender perangkat lewat `Intent.ACTION_INSERT` (`CalendarContract`, alias: `CALENDAR_ADD`, `ADD_EVENT`) |
+| `[DEVICE:OPEN_URL\|https://...]` | Membuka URL `http`/`https` di browser perangkat (alias: `URL`, `BROWSE`) |
+| `[DEVICE:SHARE\|teks]` | Membuka Android Share Sheet (`Intent.ACTION_SEND`) / Web Share API (alias: `SHARE_TEXT`, `BAGIKAN`) |
 | `[KRONIK:ADD\|judul\|isi\|mood]` | Menambah entri jurnal baru ke Kronik |
 | `[LINKKU:ADD\|url\|judul\|catatan\|kategori\|tag1,tag2]` | Menyimpan bookmark publik ke LinkKu + auto-fetch metadata URL |
 | `[CUCI:ADD\|out/in\|nominal\|judul\|kategori\|akun]` | Mencatat transaksi pengeluaran/pemasukan ke CuciMoney+ (dukungan multi-buku & kategori resmi) |
+| `[CUCI:EDIT\|id_atau_query\|nominal\|judul\|kategori\|akun\|tgl]` | Mengubah transaksi CuciMoney+ yang ada beserta koreksi saldo otomatis (alias: `UPDATE`, `FIX`; mengecualikan `savingsPot` & `transferPair`) |
+| `[CUCI:DEL\|id_atau_query]` | Menghapus transaksi CuciMoney+ & membalik saldo akun terkait (alias: `DELETE`, `REMOVE`, `HAPUS`; mengecualikan `savingsPot`) |
 | `[CUCI:SAVE\|nama_wishlist\|nominal\|akun_ops\|buku_ops]` | Menyetor tabungan ke pot tabungan wishlist (alias: `NABUNG`, `DEPOSIT`, `TABUNG`) |
 | `[CUCI:REALIZE\|nama_wishlist\|akun_ops\|nominal_beli_ops\|buku_ops]` | Mencairkan tabungan / menandai wishlist sudah kebeli & sinkron status `"Selesai"` di IdeKu (alias: `BELI`, `DONE`, `SELESAI`, `CAIRKAN`) |
 | `[IDEKU:ADD\|Idea\|judul\|kategori\|prioritas\|catatan\|jalur]` | Menambah ide baru ke IdeKu |
 | `[IDEKU:ADD\|Wishlist\|nama\|harga\|Belanja\|prioritas\|catatan]` | Menambah wishlist ke IdeKu dan menyinkronkannya ke CuciMoney+ |
+| `[IDEKU:STATUS\|id_atau_query\|status]` | Mengubah status ide/wishlist (`Belum`, `Proses`, `Parkir`, `Selesai`) + sinkron wishlist ke CuciMoney+ (alias: `DONE`, `SELESAI`, `SET_STATUS`) |
+| `[IDEKU:EDIT\|id_atau_query\|judul\|kategori\|prioritas\|catatan\|jalur\|harga]` | Memperbarui detail ide/wishlist di IdeKu (alias: `UPDATE`) |
+| `[IDEKU:DEL\|id_atau_query]` | Menghapus ide/wishlist dari IdeKu (alias: `DELETE`, `REMOVE`, `HAPUS`) |
 | `[DAILYOS:HABIT\|nama\|kategori\|ikon]` | Menambah habit baru di Daily OS |
 | `[DAILYOS:TODO\|judul\|priority\|YYYY-MM-DD]` | Menambah tugas to-do di Daily OS (`urgent`, `soon`, `normal`) |
-| `[DAILYOS:CHECK\|kata_kunci]` | Menandai habit atau to-do selesai hari ini |
+| `[DAILYOS:CHECK\|id_atau_query]` | Menandai habit atau to-do selesai hari ini |
+| `[DAILYOS:UNCHECK\|id_atau_query]` | Membatalkan centang habit hari ini atau membuka kembali to-do selesai (alias: `REOPEN`, `BATAL`) |
+| `[DAILYOS:EDIT_TODO\|id_atau_query\|judul\|priority\|deadline]` | Mengubah judul, prioritas, atau deadline to-do (`-` untuk menghapus deadline) (alias: `UPDATE_TODO`) |
+| `[DAILYOS:DEL_TODO\|id_atau_query]` | Menghapus to-do dari Daily OS (alias: `DELETE_TODO`, `REMOVE_TODO`) |
+| `[DAILYOS:ARCHIVE_HABIT\|id_atau_query]` / `[DAILYOS:DEL_HABIT\|id_atau_query]` | Mengarsipkan atau menghapus permanen habit dari Daily OS |
 | `[JA]...[/JA]` | Teks bahasa Jepang khusus untuk sintesis suara Fish Audio TTS |
 
 ---
@@ -177,14 +193,15 @@ Respons LLM dapat menyertakan tag tersembunyi berikut (dibersihkan dari bubble c
 ### 6. Setelan & Backup Ecosystem ZIP v3 (`SetelanScreen.kt`)
 * **Profil & Konfigurasi AI:** Nama panggilan pengguna, input & uji koneksi LLM + Fish Audio TTS (disimpan terenkripsi di `ApiKeyStore`).
 * **Manajemen Memori:** Lihat, tambah/ubah/hapus `user_memories`, aktifkan/matikan *auto-learn memory*, serta perbarui/hapus **Ringkasan Memori** naratif.
+* **Notifikasi & Akses Perangkat:** Pengaturan jadwal harian Daily OS + izin runtime **Baca Kalender (`READ_CALENDAR`)** dan toggle opt-in **Lokasi Perkiraan (`ACCESS_COARSE_LOCATION`)**.
 * **Tampilan & Stage:** Mode tema (`system` / `light` / `dark`), pemilihan gambar **Wallpaper Rem** dari galeri + slider *dim* latar belakang, dan reset stage.
 * **Export / Import ZIP v3 (`EcosystemManifestDto`):** Ekspor seluruh data (chat sessions, memori, Daily OS, CuciMoney+, IdeKu, Kronik, LinkKu) ke satu arsip `.zip` dan impor kembali dengan mode **Merge** atau **Replace** (termasuk dialog dekripsi PIN untuk tautan privat LinkKu). *(Catatan: tombol `Cloud Backup (Google Drive)` saat ini masih berupa placeholder `Segera Hadir (v1.1)`).*
 
 ---
 
-## 5. Skema Database Android (Room v13)
+## 5. Skema Database Android (Room v14)
 
-`AssistantDatabase` (`version = 13`, `exportSchema = false`) mengelola **17 Entity** dalam satu SQLite lokal dengan migrasi eksplisit `MIGRATION_1_2` hingga `MIGRATION_12_13`:
+`AssistantDatabase` (`version = 14`, `exportSchema = false`) mengelola **18 Entity** dalam satu SQLite lokal dengan migrasi eksplisit `MIGRATION_1_2` hingga `MIGRATION_13_14`:
 
 | Domain | Entity | Peran Utama |
 | --- | --- | --- |
@@ -192,6 +209,7 @@ Respons LLM dapat menyertakan tag tersembunyi berikut (dibersihkan dari bubble c
 | | `ChatMessageEntity` | Pesan per sesi (`role`, `content`, `expressionTag`, `choicesJson`, `createdAt`) |
 | | `UserMemoryEntity` | Fakta personal unik berdasarkan `factKey`, kategori, dan `confidence` |
 | | `ConversationSummaryEntity` | Ringkasan sesi percakapan terdahulu |
+| **Perangkat & Pengingat** | `RemReminderEntity` | Pengingat notifikasi lokal sekali jalan (`id`, `title`, `triggerAtMs`, `fired`, `createdAt`) |
 | **Kronik** | `KronikEntryEntity` | Entri jurnal, pin, arsip, `moodStatus`, `moodSvgKey`, `habitsLogJson` |
 | **LinkKu** | `LinkkuLinkEntity` | URL, judul, catatan, kategori, `tagsJson`, `isPrivate`, `thumb` |
 | | `LinkkuCategoryEntity` | Kategori publik & privat LinkKu |
@@ -257,8 +275,9 @@ Digunakan oleh **Web Preview** (`server.js` pada port `3000` atau `process.env.P
 │           └── java/com/ecosystemku/assistant/
 │               ├── EcosystemKuApp.kt & MainActivity.kt & CrashActivity.kt
 │               ├── data/audio/        # TtsAudioManager (ExoPlayer + RMS lip-sync + mute terpisah)
-│               ├── data/local/        # AssistantDatabase (v13), ApiKeyStore, Entities & DAOs
+│               ├── data/local/        # AssistantDatabase (v14), ApiKeyStore, Entities & DAOs
 │               ├── data/network/      # ChatSseClient, DirectLlmClient, SseTagParser, & *Client modul
+│               ├── device/            # AndroidDeviceBridge (Alarm, Timer, Calendar, URL, Share, Battery, Location)
 │               ├── live2d/            # Live2DStageController (JS <-> Kotlin bridge)
 │               ├── notifications/     # DailyOsNotificationHelper
 │               └── ui/

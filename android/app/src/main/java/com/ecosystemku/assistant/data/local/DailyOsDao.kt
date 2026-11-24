@@ -42,6 +42,9 @@ interface DailyOsDao {
     @Query("DELETE FROM dailyos_todos WHERE id = :id")
     suspend fun deleteTodoById(id: String)
 
+    @Query("DELETE FROM dailyos_habits WHERE id = :id")
+    suspend fun deleteHabitById(id: String)
+
     @Query("DELETE FROM dailyos_habits")
     suspend fun clearHabits()
 

@@ -1605,6 +1605,11 @@
       '  [CUCI:ADD|out_atau_in|nominal_angka|judul_singkat|kategori_opsional|akun_opsional]\n' +
       '  Contoh keluar: [CUCI:ADD|out|25000|Kopi Susu|Makan & Minum|Tunai]\n' +
       '  Contoh masuk: [CUCI:ADD|in|500000|Bonus Proyek|Bonus|]\n' +
+      '- Jika Tuan mengoreksi transaksi yang sudah tercatat (nominal/judul/kategori/akun/tanggal), gunakan id jika ada atau kata kunci unik:\n' +
+      '  [CUCI:EDIT|id_atau_kata_kunci|nominal_baru_atau_kosong|judul_baru_atau_kosong|kategori_baru_atau_kosong|akun_baru_atau_kosong|tanggal_yyyy-mm-dd_atau_kosong]\n' +
+      '- Jika Tuan meminta menghapus transaksi tertentu, sisipkan:\n' +
+      '  [CUCI:DEL|id_atau_kata_kunci]\n' +
+      '  Aturan edit/hapus: jika target transaksi belum muncul di ringkasan atau ada beberapa transaksi mirip, jalankan [SEARCH:cuci|...] dulu untuk mendapatkan id pasti atau tawarkan pilihan [CHOICES:single|...] sebelum mengubah/menghapus. Jangan mengubah transaksi tabungan wishlist lewat tag ini.\n' +
       '- Jika Tuan ingin menyetor/menambah tabungan ke target barang wishlist, sisipkan:\n' +
       '  [CUCI:SAVE|nama_wishlist|nominal_angka|akun_sumber_opsional|buku_opsional]\n' +
       '- Jika Tuan melapor target barang wishlist sudah kebeli / ingin merealisasikan tabungannya, sisipkan:\n' +
@@ -1618,6 +1623,12 @@
       '  [IDEKU:ADD|Idea|judul_ide|kategori|Penting_atau_Nanti_atau_Kapan-kapan|catatan_singkat|jalur_opsional]\n' +
       '- Jika Tuan menyebut barang impian/ingin beli suatu barang nanti (wishlist), sisipkan:\n' +
       '  [IDEKU:ADD|Wishlist|nama_barang|harga_angka|Belanja|Penting_atau_Nanti_atau_Kapan-kapan|catatan_singkat]\n' +
+      '- Jika Tuan ingin menandai ide/wishlist selesai atau mengubah statusnya (Belum, Proses, Parkir, Selesai), sisipkan:\n' +
+      '  [IDEKU:STATUS|id_atau_kata_kunci|Selesai_atau_Proses_atau_Parkir_atau_Belum]\n' +
+      '- Jika Tuan mengoreksi detail ide/wishlist (judul/kategori/prioritas/catatan/jalur/harga), sisipkan:\n' +
+      '  [IDEKU:EDIT|id_atau_kata_kunci|judul_baru_atau_kosong|kategori_baru_atau_kosong|prioritas_baru_atau_kosong|catatan_baru_atau_kosong|jalur_baru_atau_kosong|harga_baru_atau_kosong]\n' +
+      '- Jika Tuan meminta menghapus ide/wishlist tertentu, sisipkan:\n' +
+      '  [IDEKU:DEL|id_atau_kata_kunci]\n' +
       '- Jika Tuan meminta membuka IdeKu atau melihat daftar ide/wishlistnya, sisipkan: [OPEN:ideku]';
 
     const dailyosRules =
@@ -1628,12 +1639,30 @@
       '- Jika Tuan meminta menambah to-do / tugas baru, sisipkan:\n' +
       '  [DAILYOS:TODO|judul_tugas|urgent_atau_soon_atau_normal|YYYY-MM-DD_opsional]\n' +
       '- Jika Tuan melapor sudah menyelesaikan habit atau to-do tertentu, sisipkan:\n' +
-      '  [DAILYOS:CHECK|kata_kunci_nama_habit_atau_tugas]\n' +
+      '  [DAILYOS:CHECK|id_atau_kata_kunci]\n' +
+      '- Jika Tuan membatalkan/mengoreksi centang habit hari ini atau status selesai to-do, sisipkan:\n' +
+      '  [DAILYOS:UNCHECK|id_atau_kata_kunci]\n' +
+      '- Jika Tuan mengubah judul, prioritas, atau deadline to-do (isi \'-\' untuk hapus deadline), sisipkan:\n' +
+      '  [DAILYOS:EDIT_TODO|id_atau_kata_kunci|judul_baru_atau_kosong|urgent_soon_normal_atau_kosong|YYYY-MM-DD_atau_-_atau_kosong]\n' +
+      '- Jika Tuan meminta menghapus to-do, sisipkan:\n' +
+      '  [DAILYOS:DEL_TODO|id_atau_kata_kunci]\n' +
+      '- Jika Tuan meminta mengarsipkan atau menghapus habit, sisipkan [DAILYOS:ARCHIVE_HABIT|id_atau_kata_kunci] atau [DAILYOS:DEL_HABIT|id_atau_kata_kunci].\n' +
       '- Jika Tuan meminta membuka Daily OS / melihat habit atau to-do nya, sisipkan: [OPEN:dailyos]';
 
+    const deviceRules =
+      '\n\n## Fungsi Perangkat\n' +
+      'Kamu dapat membantu Tuan mengoperasikan fungsi perangkat lewat tag tersembunyi (sebelum [EXPR:...]):\n' +
+      '- Pasang alarm jam sistem: [DEVICE:ALARM|HH:mm|label_opsional]\n' +
+      '- Pengingat sekali jalan (mis. "ingatkan aku jam 5"): [DEVICE:REMINDER|YYYY-MM-DD_atau_hari_ini_atau_besok|HH:mm|pesan]\n' +
+      '- Batalkan pengingat: [DEVICE:DEL_REMINDER|id_atau_kata_kunci]\n' +
+      '- Pasang timer / Pomodoro (mis. 25m atau 1500s): [DEVICE:TIMER|durasi_seperti_25m_atau_90s|label_opsional]\n' +
+      '- Tambah acara ke aplikasi Kalender: [DEVICE:CAL_ADD|judul|YYYY-MM-DD|HH:mm_mulai|HH:mm_selesai_opsional|lokasi_opsional|catatan_opsional]\n' +
+      '- Buka tautan URL http/https di browser: [DEVICE:OPEN_URL|https://...]\n' +
+      '- Bagikan teks lewat menu Share: [DEVICE:SHARE|teks]';
+
     const searchRules =
-      '\n\n## Pencarian Arsip Lokal (On-Demand Search)\n' +
-      'Ringkasan modul di prompt hanya menampilkan item terbaru. Jika Tuan menanyakan arsip lama, transaksi bulan/tanggal tertentu (mis. 2026-10), jurnal lama, ide/bookmark yang tidak muncul di ringkasan, atau obrolan dari sesi lalu, JANGAN menebak. Keluarkan tag pencarian HANYA satu baris: [SEARCH:scope|kata_kunci] (scope valid: kronik, linkku, cuci, ideku, dailyos, chat, all; kata_kunci boleh kosong untuk daftar arsip lebih lengkap). Sistem akan langsung mengambil data akurat dari database lokal agar Rem bisa menjawab dengan tepat.';
+      '\n\n## Pencarian Arsip Lokal & Info Perangkat (On-Demand Search)\n' +
+      'Ringkasan modul di prompt hanya menampilkan item terbaru. Jika Tuan menanyakan arsip lama, transaksi bulan/tanggal/kategori tertentu (mis. 2026-10), jurnal lama, ide/bookmark yang tidak muncul di ringkasan, riwayat habit, obrolan dari sesi lalu, atau kondisi perangkat (baterai, jadwal kalender, lokasi perkiraan, pengingat aktif), JANGAN menebak. Keluarkan tag pencarian HANYA satu baris: [SEARCH:scope|kata_kunci] (scope valid: kronik, linkku, cuci, ideku, dailyos, device, chat, all; untuk scope device, isi query dengan battery, calendar, location, atau reminders). Khusus scope cuci, untuk query terstruktur gunakan format key=value dipisah titik koma, misalnya [SEARCH:cuci|book=Personal;month=2026-10;cat=Makan;dir=out] (parameter tersedia: book, month, from, to, cat, acc, dir, q). Sistem akan mengambil & menghitung data akurat dari database/perangkat agar Rem bisa menjawab dengan tepat.';
 
     const memoryRules =
       '\n\n## Memori Personal\n' +
@@ -1649,7 +1678,7 @@
       '- Pilihan ganda (bisa pilih lebih dari satu): [CHOICES:multi|Opsi 1|Opsi 2|Opsi 3]\n' +
       'Gunakan hanya saat memang ada pertanyaan pilihan konkret (maksimal 8 opsi singkat, sesuai data nyata Tuan).';
 
-    let block = remSystemPrompt + buildTimeAndGapContext(currentUserMsgId) + kronikRules + linkkuRules + cuciRules + idekuRules + dailyosRules + searchRules + memoryRules + choicesRules;
+    let block = remSystemPrompt + buildTimeAndGapContext(currentUserMsgId) + kronikRules + linkkuRules + cuciRules + idekuRules + dailyosRules + deviceRules + searchRules + memoryRules + choicesRules;
     if (Array.isArray(memoryProfile.sections) && memoryProfile.sections.length) {
       block += '\n\n## Ringkasan Memori Tentang Tuan\n' +
         memoryProfile.sections.map((s) => `[${s.title}] ${s.body}`).join('\n');
@@ -3974,7 +4003,7 @@
   function applyCuciTagsFromReply(rawText) {
     if (!window.CuciMoneyModule) return;
     const shouldOpen = /\[OPEN:cucimoney\]/i.test(rawText);
-    const cuciRegex = /\[CUCI:(ADD|SAVE|NABUNG|DEPOSIT|TABUNG|REALIZE|BELI|DONE|SELESAI|CAIRKAN)\|([^\]\r\n]+)\]/gi;
+    const cuciRegex = /\[CUCI:(ADD|SAVE|NABUNG|DEPOSIT|TABUNG|REALIZE|BELI|DONE|SELESAI|CAIRKAN|EDIT|UPDATE|FIX|DEL|DELETE|REMOVE|HAPUS)\|([^\]\r\n]+)\]/gi;
     let m;
     let changed = false;
     while ((m = cuciRegex.exec(rawText)) !== null) {
@@ -3991,6 +4020,18 @@
         if (resLabel) {
           changed = true;
           showToastMessage(`CuciMoney+: "${resLabel}"`, true);
+        }
+      } else if (action === 'EDIT' || action === 'UPDATE' || action === 'FIX') {
+        const resLabel = window.CuciMoneyModule.applyTagEdit?.(parts);
+        if (resLabel) {
+          changed = true;
+          showToastMessage(`CuciMoney+: ${resLabel}`, true);
+        }
+      } else if (action === 'DEL' || action === 'DELETE' || action === 'REMOVE' || action === 'HAPUS') {
+        const resLabel = window.CuciMoneyModule.applyTagDelete?.(parts);
+        if (resLabel) {
+          changed = true;
+          showToastMessage(`CuciMoney+: ${resLabel}`, true);
         }
       } else {
         const res = window.CuciMoneyModule.applyTagRealize?.(parts);
@@ -4075,16 +4116,27 @@
   function applyIdekuTagsFromReply(rawText) {
     if (!window.IdekuModule) return;
     const shouldOpen = /\[OPEN:ideku\]/i.test(rawText);
-    const addRegex = /\[IDEKU:ADD\|([^\]\r\n]+)\]/gi;
+    const idekuRegex = /\[IDEKU:(ADD|NEW|SAVE|STATUS|SET_STATUS|DONE|SELESAI|EDIT|UPDATE|DEL|DELETE|REMOVE|HAPUS)\|([^\]\r\n]+)\]/gi;
     let m;
     let changed = false;
-    while ((m = addRegex.exec(rawText)) !== null) {
-      const parts = String(m[1] || '').split('|').map((s) => s.trim());
-      const resLabel = window.IdekuModule.applyTagAdd(parts);
-      if (resLabel) {
-        changed = true;
-        showToastMessage(`IdeKu: Ditambahkan "${resLabel}"`, true);
+    while ((m = idekuRegex.exec(rawText)) !== null) {
+      const cmd = String(m[1] || '').toUpperCase();
+      const parts = String(m[2] || '').split('|').map((s) => s.trim());
+      let resLabel = null;
+      if (cmd === 'ADD' || cmd === 'NEW' || cmd === 'SAVE') {
+        resLabel = window.IdekuModule.applyTagAdd(parts);
+        if (resLabel) showToastMessage(`IdeKu: Ditambahkan "${resLabel}"`, true);
+      } else if (cmd === 'STATUS' || cmd === 'SET_STATUS' || cmd === 'DONE' || cmd === 'SELESAI') {
+        resLabel = window.IdekuModule.applyTagStatus?.(cmd, parts);
+        if (resLabel) showToastMessage(`IdeKu: ${resLabel}`, true);
+      } else if (cmd === 'EDIT' || cmd === 'UPDATE') {
+        resLabel = window.IdekuModule.applyTagEdit?.(parts);
+        if (resLabel) showToastMessage(`IdeKu: ${resLabel}`, true);
+      } else {
+        resLabel = window.IdekuModule.applyTagDelete?.(parts);
+        if (resLabel) showToastMessage(`IdeKu: ${resLabel}`, true);
       }
+      if (resLabel) changed = true;
     }
     if (changed) {
       renderIdekuAppsSummary();
@@ -4164,6 +4216,89 @@
     if (shouldOpen) openDailyOsOverlay();
   }
 
+  function applyDeviceTagsFromReply(rawText) {
+    const devRegex = /\[DEVICE:([^\]\r\n]+)\]/gi;
+    let m;
+    while ((m = devRegex.exec(rawText)) !== null) {
+      const parts = String(m[1] || '').split('|').map((s) => s.trim());
+      const cmd = String(parts[0] || '').toUpperCase();
+      if (cmd === 'OPEN_URL' || cmd === 'URL' || cmd === 'BROWSE') {
+        const raw = String(parts[1] || '').trim();
+        if (!raw) continue;
+        const hasScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(raw);
+        if (hasScheme && !/^https?:\/\//i.test(raw)) continue;
+        const url = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+        window.open(url, '_blank', 'noopener,noreferrer');
+        showToastMessage(`Membuka ${url}`, true);
+      } else if (cmd === 'SHARE' || cmd === 'SHARE_TEXT' || cmd === 'BAGIKAN') {
+        const txt = parts.slice(1).join(' | ').trim();
+        if (!txt) continue;
+        if (navigator.share) {
+          navigator.share({ text: txt }).catch(() => {});
+        } else if (navigator.clipboard?.writeText) {
+          navigator.clipboard.writeText(txt).then(() => {
+            showToastMessage('Teks disalin untuk dibagikan', true);
+          }).catch(() => {});
+        }
+      } else if (cmd === 'TIMER' || cmd === 'SET_TIMER' || cmd === 'POMODORO') {
+        const rawDur = String(parts[1] || '').trim().toLowerCase();
+        const dm = rawDur.match(/^(\d+)\s*(s|sec|detik|m|min|menit|h|jam)?$/);
+        if (!dm) continue;
+        const n = parseInt(dm[1], 10);
+        if (!n || n <= 0) continue;
+        const unit = dm[2] || '';
+        const secs = unit.startsWith('s') || unit === 'detik'
+          ? n
+          : (unit.startsWith('h') || unit === 'jam' ? n * 3600 : (unit ? n * 60 : (n <= 180 ? n * 60 : n)));
+        const lbl = String(parts[2] || '').trim() || (cmd === 'POMODORO' ? 'Pomodoro' : 'Timer Rem');
+        showToastMessage(`Timer ${lbl} (${Math.round(secs / 60) || secs} ${secs >= 60 ? 'menit' : 'detik'}) dimulai`, true);
+        setTimeout(() => {
+          showToastMessage(`⏰ Timer selesai: ${lbl}`, true);
+          playClip('action_done_1.mp3', true);
+        }, Math.min(secs, 86400) * 1000);
+      } else if (cmd === 'REMINDER' || cmd === 'SET_REMINDER' || cmd === 'INGATKAN') {
+        const p1 = String(parts[1] || '').trim();
+        const p2 = String(parts[2] || '').trim();
+        const parseHm = (s) => {
+          const hm = s.match(/^(\d{1,2})[:.](\d{2})$/);
+          if (!hm) return null;
+          const h = Number(hm[1]), min = Number(hm[2]);
+          return (h >= 0 && h <= 23 && min >= 0 && min <= 59) ? [h, min] : null;
+        };
+        const hm1 = parseHm(p1);
+        const hm = hm1 || parseHm(p2);
+        if (!hm) continue;
+        const msg = (hm1 ? parts.slice(2) : parts.slice(3)).join(' ').trim() || 'Pengingat dari Rem';
+        const target = new Date();
+        target.setHours(hm[0], hm[1], 0, 0);
+        if (target.getTime() <= Date.now()) target.setDate(target.getDate() + 1);
+        if (!Array.isArray(ecoDb.remReminders)) ecoDb.remReminders = [];
+        ecoDb.remReminders.push({ id: Date.now(), title: msg, triggerAtMs: target.getTime() });
+        saveEcoDb();
+        const delayMs = Math.max(1000, target.getTime() - Date.now());
+        if (delayMs <= 2147483647) {
+          setTimeout(() => {
+            showToastMessage(`🔔 Pengingat: ${msg}`, true);
+            playClip('action_done_1.mp3', true);
+          }, delayMs);
+        }
+        showToastMessage(`Pengingat ${String(hm[0]).padStart(2, '0')}:${String(hm[1]).padStart(2, '0')}: ${msg}`, true);
+      } else if (cmd === 'DEL_REMINDER' || cmd === 'CANCEL_REMINDER' || cmd === 'HAPUS_REMINDER') {
+        const q = String(parts[1] || '').trim().toLowerCase();
+        if (q && Array.isArray(ecoDb.remReminders)) {
+          const before = ecoDb.remReminders.length;
+          ecoDb.remReminders = ecoDb.remReminders.filter((r) => String(r.id) !== q && !String(r.title || '').toLowerCase().includes(q));
+          if (ecoDb.remReminders.length !== before) {
+            saveEcoDb();
+            showToastMessage('Pengingat dibatalkan', true);
+          }
+        }
+      } else if (cmd === 'ALARM' || cmd === 'SET_ALARM' || cmd === 'CAL_ADD' || cmd === 'CALENDAR_ADD' || cmd === 'ADD_EVENT') {
+        showToastMessage('Alarm & Kalender sistem hanya tersedia di aplikasi Android Native', false);
+      }
+    }
+  }
+
   // ── Send Message (/api/chat SSE) ─────────────────────────────────────
   let isThinking = false;
   let remSystemPrompt = 'Kamu adalah Rem — asisten virtual sopan dan perhatian. Sisipkan [EXPR:happy/smile/shame/sad/surprise/none] di akhir jawaban.';
@@ -4180,15 +4315,68 @@
     else if (['cuci', 'cucimoney', 'cucimoney+', 'keuangan', 'transaksi'].includes(rawScope)) scope = 'cuci';
     else if (['ideku', 'ide', 'wishlist'].includes(rawScope)) scope = 'ideku';
     else if (['dailyos', 'daily', 'habit', 'todo'].includes(rawScope)) scope = 'dailyos';
+    else if (['device', 'perangkat', 'hp', 'android', 'calendar', 'kalender', 'battery', 'baterai', 'location', 'lokasi', 'reminder', 'reminders', 'pengingat'].includes(rawScope)) scope = 'device';
     else if (['chat', 'obrolan', 'sessions', 'sesi', 'log'].includes(rawScope)) scope = 'chat';
     else if (['all', 'semua'].includes(rawScope)) scope = 'all';
     if (scope) {
-      return { scope, query: parts.slice(1).join(' ').trim().slice(0, 80) };
+      const tail = parts.slice(1).join('|').trim().slice(0, 160);
+      const q = (scope === 'device' && ['calendar', 'kalender', 'battery', 'baterai', 'location', 'lokasi', 'reminder', 'reminders', 'pengingat'].includes(rawScope))
+        ? [rawScope, tail].filter(Boolean).join(' ').slice(0, 160)
+        : tail;
+      return { scope, query: q };
     }
-    return { scope: 'all', query: parts.join(' ').trim().slice(0, 80) };
+    return { scope: 'all', query: parts.join(' ').trim().slice(0, 160) };
   }
 
-  function executeLocalArchiveSearch(scope, rawQuery) {
+  function parseCuciSearchQuery(rawQuery) {
+    const trimmed = String(rawQuery || '').trim();
+    if (!trimmed) return { isStructured: false, query: '' };
+    if (!/(?:^|[;|\s])(book|buku|month|bulan|from|dari|to|sampai|cat|kategori|acc|akun|dir|arah|q|query)=/i.test(trimmed)) {
+      return { isStructured: false, query: trimmed };
+    }
+    const res = {
+      isStructured: true,
+      book: '',
+      month: '',
+      fromDate: '',
+      toDate: '',
+      category: '',
+      account: '',
+      direction: '',
+      query: '',
+    };
+    const free = [];
+    const normDate = (raw) => {
+      const c = String(raw || '').trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(c)) return c;
+      const dmy = c.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+      if (dmy) return `${dmy[3]}-${String(dmy[2]).padStart(2, '0')}-${String(dmy[1]).padStart(2, '0')}`;
+      return '';
+    };
+    trimmed.split(/[;|]/).map((s) => s.trim()).filter(Boolean).forEach((seg) => {
+      const idx = seg.indexOf('=');
+      if (idx <= 0) { free.push(seg); return; }
+      const k = seg.slice(0, idx).trim().toLowerCase();
+      const v = seg.slice(idx + 1).trim();
+      if (!v) return;
+      if (k === 'book' || k === 'buku') res.book = v;
+      else if ((k === 'month' || k === 'bulan') && /^\d{4}-\d{2}$/.test(v)) res.month = v;
+      else if (k === 'from' || k === 'dari') res.fromDate = normDate(v);
+      else if (k === 'to' || k === 'sampai') res.toDate = normDate(v);
+      else if (k === 'cat' || k === 'kategori') res.category = v;
+      else if (k === 'acc' || k === 'akun') res.account = v;
+      else if (k === 'dir' || k === 'arah') {
+        const vl = v.toLowerCase();
+        if (['in', 'income', 'masuk', 'pemasukan'].includes(vl)) res.direction = 'in';
+        else if (['out', 'expense', 'keluar', 'pengeluaran'].includes(vl)) res.direction = 'out';
+      } else if (k === 'q' || k === 'query') free.push(v);
+      else free.push(seg);
+    });
+    res.query = free.join(' ').trim();
+    return res;
+  }
+
+  async function executeLocalArchiveSearch(scope, rawQuery) {
     const q = String(rawQuery || '').trim().toLowerCase();
     const tokens = q.split(/\s+/).filter((t) => t.length >= 2);
     const matchesTokens = (haystack) => {
@@ -4242,19 +4430,56 @@
       const bookMap = Object.fromEntries(books.map((b) => [b.id, b.name]));
       const catMap = Object.fromEntries(cats.map((c) => [c.id, c.name]));
       const accMap = Object.fromEntries(accs.map((a) => [a.id, a.name]));
-      const sorted = [...trxs].sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')) || (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
-      const hits = sorted.filter((t) => {
-        const dirLabel = t.direction === 'in' ? 'masuk pemasukan' : 'keluar pengeluaran';
-        return matchesTokens(`${t.date || ''} ${t.title || ''} ${bookMap[t.bookId] || ''} ${catMap[t.categoryId] || ''} ${accMap[t.accountId] || ''} ${dirLabel} ${t.amount || 0}`);
-      });
+      const sorted = [...trxs].sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')) || (Number(b.id) || 0) - (Number(a.id) || 0));
+      const filter = parseCuciSearchQuery(rawQuery);
+      const hits = filter.isStructured
+        ? (() => {
+            const qTokens = filter.query.toLowerCase().split(/\s+/).filter((t) => t.length >= 2);
+            return sorted.filter((t) => {
+              const bName = bookMap[t.bookId] || '';
+              const cName = catMap[t.categoryId] || '';
+              const aName = accMap[t.accountId] || '';
+              const bookOk = !filter.book || bName.toLowerCase().includes(filter.book.toLowerCase());
+              const monthOk = !filter.month || String(t.date || '').startsWith(filter.month);
+              const fromOk = !filter.fromDate || String(t.date || '') >= filter.fromDate;
+              const toOk = !filter.toDate || String(t.date || '') <= filter.toDate;
+              const catOk = !filter.category || cName.toLowerCase().includes(filter.category.toLowerCase());
+              const accOk = !filter.account || aName.toLowerCase().includes(filter.account.toLowerCase());
+              const dirOk = !filter.direction || t.direction === filter.direction;
+              const hay = `${t.title || ''} ${bName} ${cName} ${aName} ${t.date || ''} ${t.amount || 0}`.toLowerCase();
+              const qOk = !qTokens.length || qTokens.every((tk) => hay.includes(tk));
+              return bookOk && monthOk && fromOk && toOk && catOk && accOk && dirOk && qOk;
+            });
+          })()
+        : (() => {
+            const dateRegex = /^\d{4}-\d{2}(-\d{2})?$/;
+            const dateTokens = tokens.filter((tk) => dateRegex.test(tk));
+            const textTokens = tokens.filter((tk) => !dateRegex.test(tk));
+            return sorted.filter((t) => {
+              const dirLabel = t.direction === 'in' ? 'masuk pemasukan' : 'keluar pengeluaran';
+              const hay = `${t.date || ''} ${t.title || ''} ${bookMap[t.bookId] || ''} ${catMap[t.categoryId] || ''} ${accMap[t.accountId] || ''} ${dirLabel} ${t.amount || 0}`.toLowerCase();
+              const datesOk = dateTokens.every((dt) => String(t.date || '').startsWith(dt));
+              const textsOk = dateTokens.length ? textTokens.every((tk) => hay.includes(tk)) : matchesTokens(hay);
+              return datesOk && textsOk;
+            });
+          })();
       if (hits.length) {
         const nonTrf = hits.filter((t) => t.transferPair == null);
         const sumIn = nonTrf.filter((t) => t.direction === 'in').reduce((s, t) => s + (Number(t.amount) || 0), 0);
         const sumOut = nonTrf.filter((t) => t.direction === 'out').reduce((s, t) => s + (Number(t.amount) || 0), 0);
         out.push(`CuciMoney+ (${hits.length} transaksi cocok; total non-transfer masuk ${fmtRpSimple(sumIn)}, keluar ${fmtRpSimple(sumOut)}):`);
-        hits.slice(0, scope === 'cuci' ? 12 : limitPerMod).forEach((t) => {
+        const catTotals = new Map();
+        nonTrf.filter((t) => t.direction === 'out').forEach((t) => {
+          const cName = catMap[t.categoryId] || 'Lainnya';
+          catTotals.set(cName, (catTotals.get(cName) || 0) + (Number(t.amount) || 0));
+        });
+        const catEntries = [...catTotals.entries()].sort((a, b) => b[1] - a[1]);
+        if (catEntries.length) {
+          out.push(`  Breakdown keluar: ${catEntries.map(([k, v]) => `${k} ${fmtRpSimple(v)}`).join(', ')}`);
+        }
+        hits.slice(0, scope === 'cuci' ? 15 : limitPerMod).forEach((t) => {
           const sign = t.direction === 'in' ? '+' : '-';
-          out.push(`- ${t.date} [${bookMap[t.bookId] || ''}] ${t.title} (${sign}${fmtRpSimple(t.amount)}, ${catMap[t.categoryId] || ''}, ${accMap[t.accountId] || ''})`);
+          out.push(`- [id=${t.id}] ${t.date} [${bookMap[t.bookId] || ''}] ${t.title} (${sign}${fmtRpSimple(t.amount)}, ${catMap[t.categoryId] || ''}, ${accMap[t.accountId] || ''})`);
         });
       }
     }
@@ -4262,36 +4487,48 @@
     if (scope === 'ideku' || scope === 'all') {
       const ideas = Array.isArray(ecoDb?.ideku?.ideas) ? ecoDb.ideku.ideas : [];
       const hits = ideas.filter((it) =>
-        matchesTokens(`${it.type || ''} ${it.title || ''} ${it.notes || ''} ${it.category || ''} ${it.status || ''} ${it.priority || ''} ${it.jalur || ''}`)
+        matchesTokens(`${it.id || ''} ${it.type || ''} ${it.title || ''} ${it.notes || ''} ${it.category || ''} ${it.status || ''} ${it.priority || ''} ${it.jalur || ''}`)
       ).slice(0, limitPerMod);
       if (hits.length) {
         out.push(`IdeKu & Wishlist (${hits.length} ditemukan):`);
         hits.forEach((it) => {
           const price = it.type === 'Wishlist' && Number(it.price) > 0 ? `, ${fmtRpSimple(it.price)}` : '';
           const note = it.notes ? ` — ${String(it.notes).slice(0, 80)}` : '';
-          out.push(`- [${it.type}] ${it.title} (${it.category}, ${it.status}, ${it.priority}${price})${note}`);
+          out.push(`- [id=${it.id}] [${it.type}] ${it.title} (${it.category}, ${it.status}, ${it.priority}${price})${note}`);
         });
       }
     }
 
     if (scope === 'dailyos' || scope === 'all') {
       const dos = ecoDb?.dailyos || {};
+      const nowD = new Date();
+      const today = `${nowD.getFullYear()}-${String(nowD.getMonth() + 1).padStart(2, '0')}-${String(nowD.getDate()).padStart(2, '0')}`;
       const habits = (Array.isArray(dos.habits) ? dos.habits : []).filter((h) =>
-        matchesTokens(`${h.name || ''} ${h.category || ''} ${h.archived ? 'arsip' : 'aktif'}`)
+        matchesTokens(`${h.id || ''} ${h.name || ''} ${h.category || ''} ${h.archived ? 'arsip' : 'aktif'}`)
       ).slice(0, limitPerMod);
       const todos = (Array.isArray(dos.todos) ? dos.todos : []).filter((t) =>
-        matchesTokens(`${t.title || ''} ${t.priority || ''} ${t.deadline || ''} ${t.done ? 'selesai done' : 'pending'}`)
+        matchesTokens(`${t.id || ''} ${t.title || ''} ${t.priority || ''} ${t.deadline || ''} ${t.done ? 'selesai done' : 'pending'}`)
       ).slice(0, limitPerMod);
       if (habits.length || todos.length) {
         out.push('Daily OS:');
         habits.forEach((h) => {
-          const daysCount = Object.values(h.history || {}).filter((arr) => Array.isArray(arr) && arr.length > 0).length;
-          out.push(`- Habit "${h.name}" (${h.category || 'General'}, ${daysCount} hari tercatat${h.archived ? ', diarsipkan' : ''})`);
+          const hist = h.history || {};
+          const nonEmptyDates = Object.entries(hist)
+            .filter(([, arr]) => Array.isArray(arr) && arr.length > 0)
+            .map(([ds]) => ds)
+            .sort((a, b) => b.localeCompare(a));
+          const daysCount = nonEmptyDates.length;
+          const hStreak = window.DailyOsModule?.calcHabitStreak ? window.DailyOsModule.calcHabitStreak(h) : 0;
+          const schedToday = window.DailyOsModule?.isHabitScheduled ? window.DailyOsModule.isHabitScheduled(h, today) : true;
+          const doneToday = Array.isArray(hist[today]) && hist[today].length > 0;
+          const todayInfo = doneToday ? 'hari ini selesai' : (!schedToday ? 'hari ini tidak terjadwal' : 'hari ini belum');
+          const recentInfo = nonEmptyDates.length ? `, terakhir: ${nonEmptyDates.slice(0, 5).join(', ')}` : '';
+          out.push(`- [id=${h.id}] Habit "${h.name}" (${h.category || 'General'}, streak ${hStreak} hari berturut-turut, ${todayInfo}, total ${daysCount} hari${recentInfo}${h.archived ? ', diarsipkan' : ''})`);
         });
         todos.forEach((t) => {
           const st = t.done ? 'Selesai' : 'Belum';
           const dl = t.deadline ? `, deadline ${t.deadline}` : '';
-          out.push(`- To-Do "${t.title}" [${st}, ${t.priority || 'normal'}${dl}]`);
+          out.push(`- [id=${t.id}] To-Do "${t.title}" [${st}, ${t.priority || 'normal'}${dl}]`);
         });
       }
     }
@@ -4314,6 +4551,46 @@
           const dt = formatSessionTimeShort(m.createdAt);
           out.push(`- [${m.sTitle} · ${dt}] ${who}: ${String(m.content || '').replace(/\s+/g, ' ').slice(0, 150)}`);
         });
+      }
+    }
+
+    if (scope === 'device') {
+      const wantBattery = q.includes('baterai') || q.includes('battery');
+      const wantCalendar = q.includes('kalender') || q.includes('calendar') || q.includes('jadwal') || q.includes('agenda');
+      const wantLocation = q.includes('lokasi') || q.includes('location') || q.includes('dimana') || q.includes('di mana');
+      const wantReminders = q.includes('reminder') || q.includes('pengingat');
+      const generic = !wantBattery && !wantCalendar && !wantLocation && !wantReminders;
+
+      if (wantBattery || generic) {
+        if (typeof navigator !== 'undefined' && typeof navigator.getBattery === 'function') {
+          try {
+            const bat = await navigator.getBattery();
+            const pct = Math.round((bat.level || 0) * 100);
+            out.push(`Baterai perangkat: ${pct}% (${bat.charging ? 'Sedang diisi' : 'Tidak sedang diisi'}).`);
+          } catch (_) {
+            out.push('Info baterai tidak dapat dibaca di browser ini.');
+          }
+        } else if (wantBattery) {
+          out.push('Info baterai browser tidak didukung di peramban ini (tersedia di Android Native).');
+        }
+      }
+      if (wantReminders || generic) {
+        const nowMs = Date.now();
+        const active = (Array.isArray(ecoDb?.remReminders) ? ecoDb.remReminders : []).filter((r) => r.triggerAtMs >= nowMs);
+        if (active.length) {
+          out.push(`Pengingat Terjadwal Rem (${active.length}):`);
+          active.slice(0, 10).forEach((r) => {
+            out.push(`- [id=${r.id}] ${formatSessionTimeShort(r.triggerAtMs)}: ${r.title}`);
+          });
+        } else if (wantReminders) {
+          out.push('Tidak ada pengingat terjadwal aktif saat ini.');
+        }
+      }
+      if (wantCalendar) {
+        out.push('Kalender sistem perangkat hanya dapat dibaca di aplikasi Android Native.');
+      }
+      if (wantLocation) {
+        out.push('Lokasi perangkat hanya tersedia di aplikasi Android Native (dengan opt-in di Setelan).');
       }
     }
 
@@ -4360,6 +4637,7 @@
           .replace(/\[DAILYOS:[^\]\r\n]+\]/gi, '')
           .replace(/\[KRONIK:[^\]\r\n]+\]/gi, '')
           .replace(/\[LINKKU:[^\]\r\n]+\]/gi, '')
+          .replace(/\[DEVICE:[^\]\r\n]+\]/gi, '')
           .replace(/\[OPEN:[a-z0-9-]+\]/gi, '');
         const b = v.lastIndexOf('[');
         if (b !== -1 && !v.slice(b).includes(']')) v = v.slice(0, b);
@@ -4421,7 +4699,7 @@
           replyNodes.bubble.textContent = `Mencari arsip ${searchAct.scope}${qLbl}...`;
           statusEl.textContent = `· mencari ${searchAct.scope}…`;
           playClip('ack_2.mp3', true);
-          const searchResult = executeLocalArchiveSearch(searchAct.scope, searchAct.query);
+          const searchResult = await executeLocalArchiveSearch(searchAct.scope, searchAct.query);
           accumulatedSearch += `### Pencarian [${searchAct.scope} | "${searchAct.query}"]\n${searchResult}\n\n`;
           continue;
         }
@@ -4446,6 +4724,7 @@
           .replace(/\[DAILYOS:[^\]\r\n]+\]/gi, '')
           .replace(/\[KRONIK:[^\]\r\n]+\]/gi, '')
           .replace(/\[LINKKU:[^\]\r\n]+\]/gi, '')
+          .replace(/\[DEVICE:[^\]\r\n]+\]/gi, '')
           .replace(/\[OPEN:[a-z0-9-]+\]/gi, '')
           .replace(/\[EXPR:[a-z]+\]/gi, '')
           .replace(/\[JA\][\s\S]*?(\[\/JA\]|$)/gi, '')
@@ -4476,13 +4755,14 @@
       applyCuciTagsFromReply(fullRaw);
       applyIdekuTagsFromReply(fullRaw);
       applyDailyOsTagsFromReply(fullRaw);
+      applyDeviceTagsFromReply(fullRaw);
 
       setExpression(exprName);
 
       const userTurns = sess.messages.filter((m) => m.role === 'user');
       const lastUserMsg = userTurns[userTurns.length - 1]?.content || '';
       const didRealizeWishlist = /\[CUCI:(?:REALIZE|BELI|DONE|SELESAI|CAIRKAN)\|/i.test(fullRaw);
-      const didMutateAction = /\[(?:MEMORY:(?:SET|DEL)|KRONIK:ADD|LINKKU:ADD|CUCI:(?:ADD|SAVE|NABUNG|DEPOSIT|TABUNG)|IDEKU:ADD|DAILYOS:(?:HABIT|TODO|CHECK))\|/i.test(fullRaw);
+      const didMutateAction = /\[(?:MEMORY:(?:SET|DEL)|KRONIK:ADD|LINKKU:ADD|DEVICE:(?:OPEN_URL|URL|BROWSE|SHARE|SHARE_TEXT|BAGIKAN|ALARM|SET_ALARM|TIMER|SET_TIMER|POMODORO|REMINDER|SET_REMINDER|INGATKAN|DEL_REMINDER|CANCEL_REMINDER|HAPUS_REMINDER|CAL_ADD|CALENDAR_ADD|ADD_EVENT)|CUCI:(?:ADD|SAVE|NABUNG|DEPOSIT|TABUNG|EDIT|UPDATE|FIX|DEL|DELETE|REMOVE|HAPUS)|IDEKU:(?:ADD|NEW|SAVE|STATUS|SET_STATUS|DONE|SELESAI|EDIT|UPDATE|DEL|DELETE|REMOVE|HAPUS)|DAILYOS:(?:HABIT|TODO|TASK|CHECK|DONE|COMPLETE|UNCHECK|REOPEN|BATAL|EDIT_TODO|UPDATE_TODO|EDIT|UPDATE|DEL_TODO|DELETE_TODO|REMOVE_TODO|DEL|DELETE|HAPUS|ARCHIVE_HABIT|DEL_HABIT|DELETE_HABIT))\|/i.test(fullRaw);
       const didOpenApp = /\[OPEN:(?:kronik|linkku|cucimoney|ideku|dailyos)\]/i.test(fullRaw);
       const fallbackClip = selectChatVoiceClip({
         userMessage: lastUserMsg,

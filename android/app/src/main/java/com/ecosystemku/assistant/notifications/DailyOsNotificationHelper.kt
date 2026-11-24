@@ -161,6 +161,57 @@ object DailyOsNotificationHelper {
             )
         }
     }
+
+    fun scheduleOneTimeReminder(
+        context: Context,
+        reminderId: Long,
+        triggerAtMs: Long,
+        title: String,
+        body: String
+    ): Boolean {
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return false
+        ensureChannel(context)
+        val reqCode = 20_000 + ((reminderId.coerceAtLeast(1L) % 100_000L).toInt())
+        val intent = Intent(context, DailyOsAlarmReceiver::class.java).apply {
+            putExtra("notif_id", reqCode)
+            putExtra("reminder_id", reminderId)
+            putExtra("title", title)
+            putExtra("body", body)
+        }
+        val pending = PendingIntent.getBroadcast(
+            context,
+            reqCode,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        return runCatching {
+            val canExact = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                alarmManager.canScheduleExactAlarms()
+            } else {
+                true
+            }
+            if (canExact) {
+                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMs, pending)
+            } else {
+                alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMs, pending)
+            }
+            true
+        }.getOrDefault(false)
+    }
+
+    fun cancelOneTimeReminder(context: Context, reminderId: Long) {
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+        val reqCode = 20_000 + ((reminderId.coerceAtLeast(1L) % 100_000L).toInt())
+        val intent = Intent(context, DailyOsAlarmReceiver::class.java)
+        val pending = PendingIntent.getBroadcast(
+            context,
+            reqCode,
+            intent,
+            PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
+        ) ?: return
+        alarmManager.cancel(pending)
+        pending.cancel()
+    }
 }
 
 class DailyOsAlarmReceiver : BroadcastReceiver() {

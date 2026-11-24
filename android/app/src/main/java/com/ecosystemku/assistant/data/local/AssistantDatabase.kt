@@ -25,9 +25,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         CuciWishlistEntity::class,
         IdekuIdeaEntity::class,
         DailyOsHabitEntity::class,
-        DailyOsTodoEntity::class
+        DailyOsTodoEntity::class,
+        RemReminderEntity::class
     ],
-    version = 13,
+    version = 14,
     exportSchema = false
 )
 abstract class AssistantDatabase : RoomDatabase() {
@@ -38,6 +39,7 @@ abstract class AssistantDatabase : RoomDatabase() {
     abstract fun cuciMoneyDao(): CuciMoneyDao
     abstract fun idekuDao(): IdekuDao
     abstract fun dailyOsDao(): DailyOsDao
+    abstract fun remReminderDao(): RemReminderDao
 
     companion object {
         @Volatile
@@ -353,6 +355,22 @@ abstract class AssistantDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `rem_reminders` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `title` TEXT NOT NULL,
+                        `triggerAtMs` INTEGER NOT NULL,
+                        `fired` INTEGER NOT NULL,
+                        `createdAt` INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
         fun getInstance(context: Context): AssistantDatabase {
             return instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
@@ -372,7 +390,8 @@ abstract class AssistantDatabase : RoomDatabase() {
                         MIGRATION_9_10,
                         MIGRATION_10_11,
                         MIGRATION_11_12,
-                        MIGRATION_12_13
+                        MIGRATION_12_13,
+                        MIGRATION_13_14
                     )
                     .fallbackToDestructiveMigrationOnDowngrade()
                     .build()

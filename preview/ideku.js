@@ -1840,17 +1840,48 @@
     const lines = ['\n\n## Konteks IdeKu (Ide & Wishlist Tuan)'];
     if (fokus.length) {
       lines.push('Fokus aktif:');
-      fokus.forEach((f) => lines.push(`- [Fokus] ${f.title}${f.next ? ` (next: ${f.next})` : ''}`));
+      fokus.forEach((f) => lines.push(`- [id=${f.id}] [Fokus] ${f.title}${f.next ? ` (next: ${f.next})` : ''}`));
     }
     if (latestIdeas.length) {
       lines.push('Ide terbaru:');
-      latestIdeas.forEach((i) => lines.push(`- ${i.title} [${i.category} · ${i.priority} · ${i.status}]`));
+      latestIdeas.forEach((i) => lines.push(`- [id=${i.id}] ${i.title} [${i.category} · ${i.priority} · ${i.status}]`));
     }
     if (wishlists.length) {
       lines.push('Wishlist:');
-      wishlists.forEach((w) => lines.push(`- ${w.title} (Rp ${Number(w.price || 0).toLocaleString('id-ID')} · ${w.status})`));
+      wishlists.forEach((w) => lines.push(`- [id=${w.id}] ${w.title} (Rp ${Number(w.price || 0).toLocaleString('id-ID')} · ${w.status})`));
     }
     return lines.join('\n');
+  }
+
+  function resolveIdekuTarget(ideas, target) {
+    const clean = String(target || '').trim();
+    if (!clean) return null;
+    if (/^\d+$/.test(clean)) {
+      return ideas.find((i) => String(i.id) === clean) || null;
+    }
+    const q = clean.toLowerCase();
+    const exact = ideas.filter((i) => String(i.title || '').toLowerCase() === q);
+    if (exact.length === 1) return exact[0];
+    if (exact.length > 1) return null;
+    const partial = ideas.filter((i) => String(i.title || '').toLowerCase().includes(q));
+    return partial.length === 1 ? partial[0] : null;
+  }
+
+  function normalizeIdekuStatus(raw) {
+    const v = String(raw || '').trim().toLowerCase();
+    if (['selesai', 'done', 'finish', 'finished', 'complete', 'completed'].includes(v)) return 'Selesai';
+    if (['proses', 'process', 'aktif', 'fokus', 'in progress'].includes(v)) return 'Proses';
+    if (['parkir', 'park', 'hold', 'tunda'].includes(v)) return 'Parkir';
+    if (['belum', 'todo', 'pending', 'open'].includes(v)) return 'Belum';
+    return '';
+  }
+
+  function normalizeIdekuPriority(raw) {
+    const v = String(raw || '').trim().toLowerCase();
+    if (['penting', 'tinggi', 'urgent', 'high'].includes(v)) return 'Penting';
+    if (['kapan-kapan', 'kapan2', 'rendah', 'low'].includes(v)) return 'Kapan-kapan';
+    if (['nanti', 'sedang', 'medium', 'normal'].includes(v)) return 'Nanti';
+    return '';
   }
 
   function applyTagAdd(parts) {
@@ -1913,6 +1944,59 @@
     }
   }
 
+  function applyTagStatus(cmd, parts) {
+    const s = state();
+    const item = resolveIdekuTarget(s.ideas, parts[0]);
+    if (!item) return null;
+    const rawSt = String(parts[1] || '').trim();
+    const nextStatus = (!rawSt && (cmd === 'DONE' || cmd === 'SELESAI'))
+      ? 'Selesai'
+      : normalizeIdekuStatus(rawSt);
+    if (!nextStatus) return null;
+    item.status = nextStatus;
+    if (item.type === 'Wishlist') syncWishlistToCuciMoney(item);
+    persist();
+    if (root?.classList.contains('open')) render();
+    return `${item.title} -> ${item.status}`;
+  }
+
+  function applyTagEdit(parts) {
+    const s = state();
+    const item = resolveIdekuTarget(s.ideas, parts[0]);
+    if (!item) return null;
+    const nextTitle = String(parts[1] || '').trim();
+    const nextCat = String(parts[2] || '').trim();
+    const nextPri = normalizeIdekuPriority(parts[3]);
+    const nextNotes = String(parts[4] || '').trim();
+    const nextJalur = String(parts[5] || '').trim();
+    const rawPrice = String(parts[6] || '').trim();
+    const nextPrice = rawPrice ? Math.max(0, Number(rawPrice.replace(/\D/g, '')) || 0) : null;
+    if (!nextTitle && !nextCat && !nextPri && !nextNotes && !nextJalur && nextPrice == null) return null;
+    if (nextTitle) item.title = nextTitle;
+    if (nextCat) {
+      item.category = nextCat;
+      if (!s.categories.includes(nextCat)) s.categories.push(nextCat);
+    }
+    if (nextPri) item.priority = nextPri;
+    if (nextNotes) item.notes = nextNotes;
+    if (nextJalur && item.type !== 'Wishlist') item.jalur = nextJalur;
+    if (nextPrice != null && item.type === 'Wishlist') item.price = nextPrice;
+    if (item.type === 'Wishlist') syncWishlistToCuciMoney(item);
+    persist();
+    if (root?.classList.contains('open')) render();
+    return `Diubah "${item.title}"`;
+  }
+
+  function applyTagDelete(parts) {
+    const s = state();
+    const item = resolveIdekuTarget(s.ideas, parts[0]);
+    if (!item) return null;
+    s.ideas = s.ideas.filter((i) => i.id !== item.id);
+    persist();
+    if (root?.classList.contains('open')) render();
+    return `Dihapus "${item.title}"`;
+  }
+
   window.IdekuModule = {
     defaultState,
     normalizeState,
@@ -1924,5 +2008,8 @@
     getSummary,
     buildContextForAssistant,
     applyTagAdd,
+    applyTagStatus,
+    applyTagEdit,
+    applyTagDelete,
   };
 })();

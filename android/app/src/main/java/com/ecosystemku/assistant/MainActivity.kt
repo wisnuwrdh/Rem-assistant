@@ -3,8 +3,10 @@ package com.ecosystemku.assistant
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -22,6 +24,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.Lifecycle
@@ -29,6 +32,8 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.ecosystemku.assistant.device.AndroidDeviceBridge
+import com.ecosystemku.assistant.device.DeviceActionEvent
 import com.ecosystemku.assistant.ui.apps.AppsHubScreen
 import com.ecosystemku.assistant.ui.apps.cucimoney.CuciMoneyScreen
 import com.ecosystemku.assistant.ui.apps.dailyos.DailyOsScreen
@@ -67,6 +72,19 @@ fun EcosystemKuShell(
     var showIdeku by rememberSaveable { mutableStateOf(false) }
     var showDailyOs by rememberSaveable { mutableStateOf(false) }
     val asistenState by asistenViewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    var pendingPermissionLabel by remember { mutableStateOf("") }
+    val devicePermLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val lbl = pendingPermissionLabel.ifBlank { "Perangkat" }
+        pendingPermissionLabel = ""
+        if (granted) {
+            asistenViewModel.showBannerMessage("Izin $lbl aktif, silakan tanya Rem lagi")
+        } else {
+            asistenViewModel.showBannerMessage("Izin $lbl ditolak di perangkat")
+        }
+    }
 
     EcosystemKuTheme(themeMode = asistenState.themeMode) {
         val kronikActions = remember(asistenViewModel) { asistenViewModel.createKronikActions() }
@@ -95,6 +113,20 @@ fun EcosystemKuShell(
             asistenViewModel.setAsistenTabActive(
                 selectedTab == AppTab.ASISTEN && !showKronik && !showLinkku && !showCuciMoney && !showIdeku && !showDailyOs
             )
+        }
+
+        LaunchedEffect(asistenViewModel) {
+            asistenViewModel.deviceEvents.collect { event ->
+                if (event is DeviceActionEvent.RequestPermission) {
+                    pendingPermissionLabel = event.reasonLabel
+                    devicePermLauncher.launch(event.permission)
+                } else {
+                    val err = AndroidDeviceBridge.executeAction(context, event)
+                    if (!err.isNullOrBlank()) {
+                        asistenViewModel.showBannerMessage(err)
+                    }
+                }
+            }
         }
 
         LaunchedEffect(asistenState.pendingOpenApp) {
@@ -231,6 +263,7 @@ fun EcosystemKuShell(
                                 isSynthesizingMemoryProfile = asistenState.isSynthesizingMemoryProfile,
                                 autoLearnMemory = asistenState.autoLearnMemory,
                                 isLearningMemory = asistenState.isLearningMemory,
+                                deviceLocationOptIn = asistenState.deviceLocationOptIn,
                                 onUpdateProfileName = asistenViewModel::setProfileName,
                                 onSetThemeMode = asistenViewModel::setThemeMode,
                                 onPickStageWallpaper = asistenViewModel::setStageWallpaper,
@@ -244,6 +277,7 @@ fun EcosystemKuShell(
                                 onSetNotifTimes = asistenViewModel::setNotifTimes,
                                 onTestNotification = asistenViewModel::triggerTestNotification,
                                 onToggleAutoLearn = asistenViewModel::setAutoLearnMemory,
+                                onSetDeviceLocationOptIn = asistenViewModel::setDeviceLocationOptIn,
                                 onAddManualMemory = asistenViewModel::addManualMemory,
                                 onDeleteMemory = asistenViewModel::deleteMemory,
                                 onDeleteSummary = asistenViewModel::deleteSummary,

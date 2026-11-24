@@ -1695,11 +1695,11 @@
           const targetMap = t.direction === 'in' ? incMap : expMap;
           targetMap.set(cName, (targetMap.get(cName) || 0) + (Number(t.amount) || 0));
         });
-        const topExp = [...expMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
+        const topExp = [...expMap.entries()].sort((a, b) => b[1] - a[1]);
         if (topExp.length) {
           blk += `  Breakdown Pengeluaran bulan ini (${book.name}): ${topExp.map(([k, v]) => `${k} ${fmtRp(v, true)}`).join(', ')}\n`;
         }
-        const topInc = [...incMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+        const topInc = [...incMap.entries()].sort((a, b) => b[1] - a[1]);
         if (topInc.length) {
           blk += `  Breakdown Pemasukan bulan ini (${book.name}): ${topInc.map(([k, v]) => `${k} ${fmtRp(v, true)}`).join(', ')}\n`;
         }
@@ -1727,9 +1727,17 @@
         }
 
         if (book.id === actBook.id) {
-          const rec = s.transactions.filter((t) => t.bookId === book.id).slice(0, 3);
+          const accById = new Map((s.accounts || []).map((a) => [a.id, a.name]));
+          const rec = [...s.transactions]
+            .filter((t) => t.bookId === book.id)
+            .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')) || (Number(b.id) || 0) - (Number(a.id) || 0))
+            .slice(0, 5);
           if (rec.length) {
-            blk += `  Transaksi terakhir (${book.name}): ` + rec.map((t) => `${t.title} (${t.direction === 'in' ? '+' : '-'}${fmtRp(t.amount, true)}, ${t.date})`).join('; ') + '\n';
+            blk += `  Transaksi terakhir (${book.name}): ` + rec.map((t) => {
+              const cName = catById.get(t.categoryId) || '-';
+              const aName = accById.get(t.accountId) || '-';
+              return `[id=${t.id}] ${t.title} (${t.direction === 'in' ? '+' : '-'}${fmtRp(t.amount, true)}, ${cName}, ${aName}, ${t.date})`;
+            }).join('; ') + '\n';
           }
         }
       });
@@ -1892,6 +1900,120 @@
       saveCm(next);
       if (root?.classList.contains('open')) renderAll();
       return { label: `Wishlist Selesai: ${wishTitle}`, wishTitle, wishId: wish?.id || '' };
+    },
+    applyTagEdit(parts) {
+      const target = String(parts[0] || '').trim();
+      if (!target) return null;
+      const rawAmt = String(parts[1] || '').trim();
+      const parsedAmt = rawAmt ? parseInt(rawAmt.replace(/[^0-9]/g, ''), 10) : 0;
+      const nextAmt = parsedAmt > 0 ? parsedAmt : null;
+      const nextTitle = String(parts[2] || '').trim();
+      const nextCatName = String(parts[3] || '').trim().toLowerCase();
+      const nextAccName = String(parts[4] || '').trim().toLowerCase();
+      const rawDate = String(parts[5] || '').trim();
+      const nextDate = (() => {
+        if (!rawDate) return '';
+        const low = rawDate.toLowerCase();
+        if (low === 'hari ini' || low === 'today') return todayStr();
+        if (low === 'kemarin' || low === 'yesterday') {
+          const d = new Date(nowD); d.setDate(d.getDate() - 1);
+          return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+        }
+        if (/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) return rawDate;
+        const m = rawDate.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+        if (m) return `${m[3]}-${pad2(Number(m[2]))}-${pad2(Number(m[1]))}`;
+        return '';
+      })();
+      if (nextAmt == null && !nextTitle && !nextCatName && !nextAccName && !nextDate) return null;
+
+      const next = cm();
+      const actBook = activeBook(next);
+      const today = todayStr();
+      let trx = null;
+      if (/^\d+$/.test(target)) {
+        trx = next.transactions.find((t) => String(t.id) === target) || null;
+      } else {
+        const editable = next.transactions.filter((t) => t.savingsPot == null);
+        const q = target.toLowerCase();
+        const tiers = [
+          editable.filter((t) => t.bookId === actBook.id && t.date === today && String(t.title || '').toLowerCase() === q),
+          editable.filter((t) => t.bookId === actBook.id && t.date === today && String(t.title || '').toLowerCase().includes(q)),
+          editable.filter((t) => t.bookId === actBook.id && String(t.title || '').toLowerCase() === q),
+          editable.filter((t) => t.bookId === actBook.id && String(t.title || '').toLowerCase().includes(q)),
+          editable.filter((t) => String(t.title || '').toLowerCase() === q),
+          editable.filter((t) => String(t.title || '').toLowerCase().includes(q)),
+        ];
+        for (const tier of tiers) {
+          if (tier.length === 1) { trx = tier[0]; break; }
+          if (tier.length > 1) return null;
+        }
+      }
+      if (!trx || trx.savingsPot != null || trx.transferPair != null) return null;
+
+      const dir = trx.direction === 'in' ? 'in' : 'out';
+      const finalAmt = nextAmt ?? trx.amount;
+      const finalTitle = nextTitle || trx.title;
+      const finalDate = nextDate || trx.date;
+      const finalCatId = nextCatName
+        ? (next.categories.find((c) => c.name.toLowerCase() === nextCatName && (c.type === 'both' || (dir === 'in' ? c.type === 'income' : c.type === 'expense')))?.id ?? trx.categoryId)
+        : trx.categoryId;
+      const finalAccId = nextAccName
+        ? (bookAccounts(next, trx.bookId).find((a) => !a.isSavings && a.name.toLowerCase().includes(nextAccName))?.id
+            ?? next.accounts.find((a) => !a.isSavings && a.name.toLowerCase().includes(nextAccName))?.id
+            ?? trx.accountId)
+        : trx.accountId;
+
+      adjBal(next, trx.accountId, dir === 'in' ? -trx.amount : trx.amount);
+      trx.title = finalTitle;
+      trx.amount = finalAmt;
+      trx.categoryId = finalCatId;
+      trx.accountId = finalAccId;
+      trx.date = finalDate;
+      adjBal(next, finalAccId, dir === 'in' ? finalAmt : -finalAmt);
+      saveCm(next);
+      if (root?.classList.contains('open')) renderAll();
+      return `Diubah: ${finalTitle} (${fmtRp(finalAmt, true)})`;
+    },
+    applyTagDelete(parts) {
+      const target = String(parts[0] || '').trim();
+      if (!target) return null;
+      const next = cm();
+      const actBook = activeBook(next);
+      const today = todayStr();
+      let trx = null;
+      if (/^\d+$/.test(target)) {
+        trx = next.transactions.find((t) => String(t.id) === target) || null;
+      } else {
+        const editable = next.transactions.filter((t) => t.savingsPot == null);
+        const q = target.toLowerCase();
+        const tiers = [
+          editable.filter((t) => t.bookId === actBook.id && t.date === today && String(t.title || '').toLowerCase() === q),
+          editable.filter((t) => t.bookId === actBook.id && t.date === today && String(t.title || '').toLowerCase().includes(q)),
+          editable.filter((t) => t.bookId === actBook.id && String(t.title || '').toLowerCase() === q),
+          editable.filter((t) => t.bookId === actBook.id && String(t.title || '').toLowerCase().includes(q)),
+          editable.filter((t) => String(t.title || '').toLowerCase() === q),
+          editable.filter((t) => String(t.title || '').toLowerCase().includes(q)),
+        ];
+        for (const tier of tiers) {
+          if (tier.length === 1) { trx = tier[0]; break; }
+          if (tier.length > 1) return null;
+        }
+      }
+      if (!trx || trx.savingsPot != null) return null;
+
+      if (trx.transferPair != null) {
+        const pairId = trx.transferPair;
+        next.transactions.filter((p) => p.transferPair === pairId).forEach((p) => {
+          adjBal(next, p.accountId, p.direction === 'in' ? -p.amount : p.amount);
+        });
+        next.transactions = next.transactions.filter((p) => p.transferPair !== pairId);
+      } else {
+        adjBal(next, trx.accountId, trx.direction === 'in' ? -trx.amount : trx.amount);
+        next.transactions = next.transactions.filter((p) => p.id !== trx.id);
+      }
+      saveCm(next);
+      if (root?.classList.contains('open')) renderAll();
+      return `Dihapus: ${trx.title}`;
     },
   };
 })();

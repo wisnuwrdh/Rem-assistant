@@ -14,6 +14,7 @@ object SseTagParser {
     private val CUCI_REGEX = Regex("""\[CUCI:([^\]\r\n]+)]""", RegexOption.IGNORE_CASE)
     private val IDEKU_REGEX = Regex("""\[IDEKU:([^\]\r\n]+)]""", RegexOption.IGNORE_CASE)
     private val DAILYOS_REGEX = Regex("""\[DAILYOS:([^\]\r\n]+)]""", RegexOption.IGNORE_CASE)
+    private val DEVICE_REGEX = Regex("""\[DEVICE:([^\]\r\n]+)]""", RegexOption.IGNORE_CASE)
 
     private val VALID_EXPRS = setOf(
         "happy", "smile", "shame", "sad", "cry", "angry",
@@ -80,6 +81,19 @@ object SseTagParser {
             val paidAmount: Long = 0L,
             val bookName: String = ""
         ) : CuciChatAction()
+
+        data class EditTransaction(
+            val target: String,
+            val amount: Long? = null,
+            val title: String = "",
+            val categoryName: String = "",
+            val accountName: String = "",
+            val date: String = ""
+        ) : CuciChatAction()
+
+        data class DeleteTransaction(
+            val target: String
+        ) : CuciChatAction()
     }
 
     sealed class IdekuChatAction {
@@ -91,6 +105,25 @@ object SseTagParser {
             val notes: String = "",
             val jalur: String = "",
             val price: Long = 0L
+        ) : IdekuChatAction()
+
+        data class SetStatus(
+            val target: String,
+            val status: String
+        ) : IdekuChatAction()
+
+        data class EditItem(
+            val target: String,
+            val title: String = "",
+            val category: String = "",
+            val priority: String = "",
+            val notes: String = "",
+            val jalur: String = "",
+            val price: Long? = null
+        ) : IdekuChatAction()
+
+        data class DeleteItem(
+            val target: String
         ) : IdekuChatAction()
     }
 
@@ -110,6 +143,50 @@ object SseTagParser {
         data class CheckItem(
             val query: String
         ) : DailyOsChatAction()
+
+        data class UncheckItem(
+            val query: String
+        ) : DailyOsChatAction()
+
+        data class EditTodo(
+            val target: String,
+            val title: String = "",
+            val priority: String = "",
+            val deadline: String = "" // "" = keep, "__CLEAR__" = clear, "YYYY-MM-DD" = set
+        ) : DailyOsChatAction()
+
+        data class DeleteTodo(
+            val target: String
+        ) : DailyOsChatAction()
+
+        data class ArchiveHabit(
+            val target: String,
+            val deletePermanently: Boolean = false
+        ) : DailyOsChatAction()
+    }
+
+    sealed class DeviceChatAction {
+        data class OpenUrl(val url: String) : DeviceChatAction()
+        data class ShareText(val text: String) : DeviceChatAction()
+        data class SetAlarm(val hour: Int, val minute: Int, val label: String = "") : DeviceChatAction()
+        data class SetTimer(val seconds: Int, val label: String = "") : DeviceChatAction()
+        data class SetReminder(
+            val dateStr: String,
+            val hour: Int,
+            val minute: Int,
+            val message: String
+        ) : DeviceChatAction()
+        data class CancelReminder(val target: String) : DeviceChatAction()
+        data class AddCalendarEvent(
+            val title: String,
+            val dateStr: String,
+            val startHour: Int,
+            val startMinute: Int,
+            val endHour: Int? = null,
+            val endMinute: Int? = null,
+            val location: String = "",
+            val description: String = ""
+        ) : DeviceChatAction()
     }
 
     private val ITALIC_STAR_REGEX = Regex("""\*([^*\r\n]+)\*""")
@@ -144,6 +221,7 @@ object SseTagParser {
             .replace(CUCI_REGEX, "")
             .replace(IDEKU_REGEX, "")
             .replace(DAILYOS_REGEX, "")
+            .replace(DEVICE_REGEX, "")
         val openBracket = v.lastIndexOf('[')
         if (openBracket != -1 && !v.substring(openBracket).contains(']')) {
             v = v.substring(0, openBracket)
@@ -162,7 +240,8 @@ object SseTagParser {
         val linkkuActions: List<LinkkuChatAction> = emptyList(),
         val cuciActions: List<CuciChatAction> = emptyList(),
         val idekuActions: List<IdekuChatAction> = emptyList(),
-        val dailyOsActions: List<DailyOsChatAction> = emptyList()
+        val dailyOsActions: List<DailyOsChatAction> = emptyList(),
+        val deviceActions: List<DeviceChatAction> = emptyList()
     )
 
     fun parseFinal(rawText: String): ParsedFinal {
@@ -191,6 +270,9 @@ object SseTagParser {
         val dailyOsActions = DAILYOS_REGEX.findAll(rawText).mapNotNull { match ->
             parseDailyOsPayload(match.groupValues.getOrNull(1).orEmpty())
         }.toList()
+        val deviceActions = DEVICE_REGEX.findAll(rawText).mapNotNull { match ->
+            parseDevicePayload(match.groupValues.getOrNull(1).orEmpty())
+        }.toList()
 
         val clean = cleanChatFormatting(
             rawText
@@ -205,6 +287,7 @@ object SseTagParser {
                 .replace(CUCI_REGEX, "")
                 .replace(IDEKU_REGEX, "")
                 .replace(DAILYOS_REGEX, "")
+                .replace(DEVICE_REGEX, "")
         ).trim()
 
         return ParsedFinal(
@@ -218,7 +301,8 @@ object SseTagParser {
             linkkuActions = linkkuActions,
             cuciActions = cuciActions,
             idekuActions = idekuActions,
-            dailyOsActions = dailyOsActions
+            dailyOsActions = dailyOsActions,
+            deviceActions = deviceActions
         )
     }
 
@@ -232,15 +316,21 @@ object SseTagParser {
             "cuci", "cucimoney", "cucimoney+", "keuangan", "transaksi" -> "cuci"
             "ideku", "ide", "wishlist" -> "ideku"
             "dailyos", "daily", "habit", "todo" -> "dailyos"
+            "device", "perangkat", "hp", "android", "calendar", "kalender", "battery", "baterai", "location", "lokasi", "reminder", "reminders", "pengingat" -> "device"
             "chat", "obrolan", "sessions", "sesi", "log" -> "chat"
             "all", "semua" -> "all"
             else -> null
         }
         return if (normalizedScope != null) {
-            val q = parts.drop(1).joinToString(" ").trim().take(80)
+            val tail = parts.drop(1).joinToString("|").trim().take(160)
+            val q = if (normalizedScope == "device" && rawScope in setOf("calendar", "kalender", "battery", "baterai", "location", "lokasi", "reminder", "reminders", "pengingat")) {
+                listOf(rawScope, tail).filter { it.isNotBlank() }.joinToString(" ").take(160)
+            } else {
+                tail
+            }
             SearchQueryAction(scope = normalizedScope, query = q)
         } else {
-            SearchQueryAction(scope = "all", query = parts.joinToString(" ").trim().take(80))
+            SearchQueryAction(scope = "all", query = parts.joinToString(" ").trim().take(160))
         }
     }
 
@@ -416,6 +506,34 @@ object SseTagParser {
                     bookName = bookName
                 )
             }
+            "EDIT", "UPDATE", "FIX" -> {
+                // [CUCI:EDIT|id_atau_query|nominal_baru_atau_kosong|judul_baru_atau_kosong|kategori_baru_atau_kosong|akun_baru_atau_kosong|tanggal_yyyy-mm-dd_atau_kosong]
+                val target = parts.getOrNull(1).orEmpty().trim()
+                if (target.isBlank()) return null
+                val rawAmt = parts.getOrNull(2).orEmpty().trim()
+                val parsedAmt = if (rawAmt.isNotBlank()) {
+                    rawAmt.replace(Regex("""[^0-9]"""), "").toLongOrNull()?.takeIf { it > 0L }
+                } else null
+                val newTitle = parts.getOrNull(3).orEmpty().trim()
+                val newCategory = parts.getOrNull(4).orEmpty().trim()
+                val newAccount = parts.getOrNull(5).orEmpty().trim()
+                val newDate = normalizeCuciDate(parts.getOrNull(6).orEmpty())
+                if (parsedAmt == null && newTitle.isBlank() && newCategory.isBlank() && newAccount.isBlank() && newDate.isBlank()) {
+                    return null
+                }
+                CuciChatAction.EditTransaction(
+                    target = target,
+                    amount = parsedAmt,
+                    title = newTitle,
+                    categoryName = newCategory,
+                    accountName = newAccount,
+                    date = newDate
+                )
+            }
+            "DEL", "DELETE", "REMOVE", "HAPUS" -> {
+                val target = parts.getOrNull(1).orEmpty().trim()
+                if (target.isBlank()) null else CuciChatAction.DeleteTransaction(target = target)
+            }
             else -> null
         }
     }
@@ -481,6 +599,58 @@ object SseTagParser {
                     IdekuChatAction.AddItem(type = "Idea", title = p1, category = cat, priority = pri, notes = notes)
                 }
             }
+            "STATUS", "SET_STATUS", "DONE", "SELESAI" -> {
+                val target = parts.getOrNull(1).orEmpty().trim()
+                if (target.isBlank()) return null
+                val rawStatus = parts.getOrNull(2).orEmpty().trim()
+                val status = if (rawStatus.isBlank() && (cmd == "DONE" || cmd == "SELESAI")) {
+                    "Selesai"
+                } else {
+                    normalizeIdekuStatus(rawStatus) ?: return null
+                }
+                IdekuChatAction.SetStatus(target = target, status = status)
+            }
+            "EDIT", "UPDATE" -> {
+                // [IDEKU:EDIT|id_atau_query|judul_baru|kategori_baru|prioritas_baru|catatan_baru|jalur_baru|harga_baru_wishlist]
+                val target = parts.getOrNull(1).orEmpty().trim()
+                if (target.isBlank()) return null
+                val title = parts.getOrNull(2).orEmpty().trim()
+                val cat = parts.getOrNull(3).orEmpty().trim()
+                val priRaw = parts.getOrNull(4).orEmpty().trim()
+                val pri = if (priRaw.isNotBlank()) normalizeIdekuPriority(priRaw) else ""
+                val notes = parts.getOrNull(5).orEmpty().trim()
+                val jalur = parts.getOrNull(6).orEmpty().trim()
+                val priceRaw = parts.getOrNull(7).orEmpty().trim()
+                val price = if (priceRaw.isNotBlank()) {
+                    priceRaw.replace(Regex("""[^0-9]"""), "").toLongOrNull()
+                } else null
+                if (title.isBlank() && cat.isBlank() && pri.isBlank() && notes.isBlank() && jalur.isBlank() && price == null) {
+                    return null
+                }
+                IdekuChatAction.EditItem(
+                    target = target,
+                    title = title,
+                    category = cat,
+                    priority = pri,
+                    notes = notes,
+                    jalur = jalur,
+                    price = price
+                )
+            }
+            "DEL", "DELETE", "REMOVE", "HAPUS" -> {
+                val target = parts.getOrNull(1).orEmpty().trim()
+                if (target.isBlank()) null else IdekuChatAction.DeleteItem(target = target)
+            }
+            else -> null
+        }
+    }
+
+    private fun normalizeIdekuStatus(raw: String): String? {
+        return when (raw.trim().lowercase()) {
+            "selesai", "done", "finish", "finished", "complete", "completed" -> "Selesai"
+            "proses", "process", "aktif", "fokus", "in progress" -> "Proses"
+            "parkir", "park", "hold", "tunda" -> "Parkir"
+            "belum", "todo", "pending", "open" -> "Belum"
             else -> null
         }
     }
@@ -496,7 +666,7 @@ object SseTagParser {
     private fun parseDailyOsPayload(payload: String): DailyOsChatAction? {
         val parts = payload.split("|").map { it.trim() }
         if (parts.isEmpty()) return null
-        return when (parts[0].uppercase()) {
+        return when (val cmd = parts[0].uppercase()) {
             "HABIT" -> {
                 val name = parts.getOrNull(1).orEmpty()
                 if (name.isBlank()) null
@@ -526,7 +696,235 @@ object SseTagParser {
                 val q = parts.getOrNull(1).orEmpty()
                 if (q.isBlank()) null else DailyOsChatAction.CheckItem(query = q)
             }
+            "UNCHECK", "REOPEN", "BATAL" -> {
+                val q = parts.getOrNull(1).orEmpty()
+                if (q.isBlank()) null else DailyOsChatAction.UncheckItem(query = q)
+            }
+            "EDIT_TODO", "UPDATE_TODO", "EDIT", "UPDATE" -> {
+                // [DAILYOS:EDIT_TODO|id_atau_query|judul_baru|priority_baru|deadline_baru]
+                val target = parts.getOrNull(1).orEmpty().trim()
+                if (target.isBlank()) return null
+                val title = parts.getOrNull(2).orEmpty().trim()
+                val priRaw = parts.getOrNull(3).orEmpty().trim().lowercase()
+                val pri = when (priRaw) {
+                    "urgent", "hari ini", "today", "high" -> "urgent"
+                    "soon", "minggu ini", "week", "medium" -> "soon"
+                    "normal", "nanti", "later", "low" -> "normal"
+                    else -> ""
+                }
+                val dlRaw = parts.getOrNull(4).orEmpty().trim()
+                val dl = when {
+                    dlRaw.lowercase() in setOf("-", "none", "hapus", "clear") -> "__CLEAR__"
+                    Regex("""^\d{4}-\d{2}-\d{2}$""").matches(dlRaw) -> dlRaw
+                    else -> ""
+                }
+                if (title.isBlank() && pri.isBlank() && dl.isBlank()) return null
+                DailyOsChatAction.EditTodo(target = target, title = title, priority = pri, deadline = dl)
+            }
+            "DEL_TODO", "DELETE_TODO", "REMOVE_TODO", "DEL", "DELETE", "HAPUS" -> {
+                val target = parts.getOrNull(1).orEmpty().trim()
+                if (target.isBlank()) null else DailyOsChatAction.DeleteTodo(target = target)
+            }
+            "ARCHIVE_HABIT", "DEL_HABIT", "DELETE_HABIT" -> {
+                val target = parts.getOrNull(1).orEmpty().trim()
+                if (target.isBlank()) null
+                else DailyOsChatAction.ArchiveHabit(
+                    target = target,
+                    deletePermanently = cmd == "DEL_HABIT" || cmd == "DELETE_HABIT"
+                )
+            }
             else -> null
+        }
+    }
+
+    data class CuciSearchFilter(
+        val book: String = "",
+        val month: String = "",
+        val fromDate: String = "",
+        val toDate: String = "",
+        val category: String = "",
+        val account: String = "",
+        val direction: String = "", // "in" | "out" | ""
+        val query: String = "",
+        val isStructured: Boolean = false
+    )
+
+    fun parseCuciSearchQuery(rawQuery: String): CuciSearchFilter {
+        val trimmed = rawQuery.trim()
+        if (trimmed.isEmpty()) return CuciSearchFilter()
+        val keyRegex = Regex("""(?:^|[;|\s])(book|buku|month|bulan|from|dari|to|sampai|cat|kategori|acc|akun|dir|arah|q|query)=""", RegexOption.IGNORE_CASE)
+        if (!keyRegex.containsMatchIn(trimmed)) {
+            return CuciSearchFilter(query = trimmed, isStructured = false)
+        }
+        var book = ""
+        var month = ""
+        var fromDate = ""
+        var toDate = ""
+        var category = ""
+        var account = ""
+        var direction = ""
+        val freeQueries = mutableListOf<String>()
+
+        val segments = trimmed.split(Regex("""[;|]""")).map { it.trim() }.filter { it.isNotEmpty() }
+        for (seg in segments) {
+            val eqIdx = seg.indexOf('=')
+            if (eqIdx <= 0) {
+                freeQueries.add(seg)
+                continue
+            }
+            val k = seg.substring(0, eqIdx).trim().lowercase()
+            val v = seg.substring(eqIdx + 1).trim()
+            if (v.isEmpty()) continue
+            when (k) {
+                "book", "buku" -> book = v
+                "month", "bulan" -> if (Regex("""^\d{4}-\d{2}$""").matches(v)) month = v
+                "from", "dari" -> fromDate = normalizeCuciDate(v)
+                "to", "sampai" -> toDate = normalizeCuciDate(v)
+                "cat", "kategori" -> category = v
+                "acc", "akun" -> account = v
+                "dir", "arah" -> {
+                    val vl = v.lowercase()
+                    direction = when {
+                        vl in setOf("in", "income", "masuk", "pemasukan") -> "in"
+                        vl in setOf("out", "expense", "keluar", "pengeluaran") -> "out"
+                        else -> ""
+                    }
+                }
+                "q", "query" -> freeQueries.add(v)
+                else -> freeQueries.add(seg)
+            }
+        }
+        return CuciSearchFilter(
+            book = book,
+            month = month,
+            fromDate = fromDate,
+            toDate = toDate,
+            category = category,
+            account = account,
+            direction = direction,
+            query = freeQueries.joinToString(" ").trim(),
+            isStructured = true
+        )
+    }
+
+    private fun parseDevicePayload(payload: String): DeviceChatAction? {
+        val parts = payload.split("|").map { it.trim() }
+        if (parts.isEmpty()) return null
+        return when (val cmd = parts[0].uppercase()) {
+            "OPEN_URL", "URL", "BROWSE" -> {
+                val raw = parts.getOrNull(1).orEmpty().trim()
+                if (raw.isBlank()) return null
+                val hasScheme = Regex("""^[a-zA-Z][a-zA-Z0-9+.-]*:""").containsMatchIn(raw)
+                val url = when {
+                    raw.startsWith("http://", ignoreCase = true) || raw.startsWith("https://", ignoreCase = true) -> raw
+                    hasScheme -> return null // reject javascript:, file:, intent:, content:, etc.
+                    else -> "https://$raw"
+                }
+                DeviceChatAction.OpenUrl(url = url)
+            }
+            "SHARE", "SHARE_TEXT", "BAGIKAN" -> {
+                val txt = parts.drop(1).joinToString(" | ").trim()
+                if (txt.isBlank()) null else DeviceChatAction.ShareText(text = txt)
+            }
+            "ALARM", "SET_ALARM" -> {
+                val hm = parseHourMinute(parts.getOrNull(1).orEmpty()) ?: return null
+                val label = parts.getOrNull(2).orEmpty().trim()
+                DeviceChatAction.SetAlarm(hour = hm.first, minute = hm.second, label = label)
+            }
+            "TIMER", "SET_TIMER", "POMODORO" -> {
+                val secs = parseTimerSeconds(parts.getOrNull(1).orEmpty()) ?: return null
+                val defaultLbl = if (cmd == "POMODORO") "Pomodoro" else ""
+                val label = parts.getOrNull(2).orEmpty().trim().ifBlank { defaultLbl }
+                DeviceChatAction.SetTimer(seconds = secs, label = label)
+            }
+            "REMINDER", "SET_REMINDER", "INGATKAN" -> {
+                // Supports:
+                // [DEVICE:REMINDER|YYYY-MM-DD_or_hari_ini|HH:mm|pesan]
+                // [DEVICE:REMINDER|HH:mm|pesan]
+                val p1 = parts.getOrNull(1).orEmpty().trim()
+                val p2 = parts.getOrNull(2).orEmpty().trim()
+                val hm1 = parseHourMinute(p1)
+                if (hm1 != null) {
+                    val msg = parts.drop(2).joinToString(" ").trim().ifBlank { "Pengingat dari Rem" }
+                    DeviceChatAction.SetReminder(
+                        dateStr = java.time.LocalDate.now().toString(),
+                        hour = hm1.first,
+                        minute = hm1.second,
+                        message = msg
+                    )
+                } else {
+                    val hm2 = parseHourMinute(p2) ?: return null
+                    val dateStr = normalizeDeviceDate(p1).ifBlank { java.time.LocalDate.now().toString() }
+                    val msg = parts.drop(3).joinToString(" ").trim().ifBlank { "Pengingat dari Rem" }
+                    DeviceChatAction.SetReminder(
+                        dateStr = dateStr,
+                        hour = hm2.first,
+                        minute = hm2.second,
+                        message = msg
+                    )
+                }
+            }
+            "DEL_REMINDER", "CANCEL_REMINDER", "HAPUS_REMINDER" -> {
+                val target = parts.getOrNull(1).orEmpty().trim()
+                if (target.isBlank()) null else DeviceChatAction.CancelReminder(target = target)
+            }
+            "CAL_ADD", "CALENDAR_ADD", "ADD_EVENT" -> {
+                // [DEVICE:CAL_ADD|judul|YYYY-MM-DD|HH:mm_mulai|HH:mm_selesai_opsional|lokasi_opsional|catatan_opsional]
+                val title = parts.getOrNull(1).orEmpty().trim()
+                if (title.isBlank()) return null
+                val dateStr = normalizeDeviceDate(parts.getOrNull(2).orEmpty())
+                    .ifBlank { java.time.LocalDate.now().toString() }
+                val startHm = parseHourMinute(parts.getOrNull(3).orEmpty()) ?: (9 to 0)
+                val endHm = parseHourMinute(parts.getOrNull(4).orEmpty())
+                val location = parts.getOrNull(5).orEmpty().trim()
+                val description = parts.getOrNull(6).orEmpty().trim()
+                DeviceChatAction.AddCalendarEvent(
+                    title = title,
+                    dateStr = dateStr,
+                    startHour = startHm.first,
+                    startMinute = startHm.second,
+                    endHour = endHm?.first,
+                    endMinute = endHm?.second,
+                    location = location,
+                    description = description
+                )
+            }
+            else -> null
+        }
+    }
+
+    private fun parseHourMinute(raw: String): Pair<Int, Int>? {
+        val m = Regex("""^(\d{1,2})[:.](\d{2})$""").matchEntire(raw.trim()) ?: return null
+        val h = m.groupValues[1].toIntOrNull() ?: return null
+        val min = m.groupValues[2].toIntOrNull() ?: return null
+        if (h !in 0..23 || min !in 0..59) return null
+        return h to min
+    }
+
+    private fun parseTimerSeconds(raw: String): Int? {
+        val clean = raw.trim().lowercase()
+        if (clean.isEmpty()) return null
+        val m = Regex("""^(\d+)\s*(s|sec|detik|m|min|menit|h|jam)?$""").matchEntire(clean) ?: return null
+        val num = m.groupValues[1].toIntOrNull() ?: return null
+        if (num <= 0) return null
+        val unit = m.groupValues[2]
+        val secs = when (unit) {
+            "s", "sec", "detik" -> num
+            "m", "min", "menit" -> num * 60
+            "h", "jam" -> num * 3600
+            else -> if (num <= 180) num * 60 else num
+        }
+        return secs.coerceIn(1, 86_400)
+    }
+
+    private fun normalizeDeviceDate(raw: String): String {
+        val clean = raw.trim().lowercase()
+        if (clean.isEmpty()) return ""
+        return when (clean) {
+            "hari ini", "today" -> java.time.LocalDate.now().toString()
+            "besok", "tomorrow" -> java.time.LocalDate.now().plusDays(1).toString()
+            "lusa" -> java.time.LocalDate.now().plusDays(2).toString()
+            else -> normalizeCuciDate(raw)
         }
     }
 

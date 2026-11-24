@@ -117,6 +117,7 @@ import com.ecosystemku.assistant.data.local.AiConfigSnapshot
 import com.ecosystemku.assistant.data.local.ConversationSummaryEntity
 import com.ecosystemku.assistant.data.local.UserMemoryEntity
 import com.ecosystemku.assistant.data.network.MemoryProfileData
+import com.ecosystemku.assistant.device.AndroidDeviceBridge
 import com.ecosystemku.assistant.notifications.DailyOsNotificationHelper
 import com.ecosystemku.assistant.ui.asisten.EcosystemZipImportResult
 import java.io.File
@@ -154,6 +155,7 @@ fun SetelanScreen(
     isSynthesizingMemoryProfile: Boolean = false,
     autoLearnMemory: Boolean = true,
     isLearningMemory: Boolean = false,
+    deviceLocationOptIn: Boolean = false,
     onUpdateProfileName: (String) -> Unit = {},
     onSetThemeMode: (String) -> Unit = {},
     onPickStageWallpaper: (Uri) -> Unit = {},
@@ -167,6 +169,7 @@ fun SetelanScreen(
     onSetNotifTimes: (String, String) -> Unit = { _, _ -> },
     onTestNotification: () -> Unit = {},
     onToggleAutoLearn: (Boolean) -> Unit = {},
+    onSetDeviceLocationOptIn: (Boolean) -> Unit = {},
     onAddManualMemory: (category: String, label: String, value: String) -> Unit = { _, _, _ -> },
     onDeleteMemory: (Long) -> Unit = {},
     onDeleteSummary: (Long) -> Unit = {},
@@ -214,6 +217,12 @@ fun SetelanScreen(
     var hasNotifPerm by remember {
         mutableStateOf(DailyOsNotificationHelper.hasNotificationPermission(context))
     }
+    var hasCalPerm by remember {
+        mutableStateOf(AndroidDeviceBridge.hasCalendarPermission(context))
+    }
+    var hasLocPerm by remember {
+        mutableStateOf(AndroidDeviceBridge.hasLocationPermission(context))
+    }
     var pendingTestAfterPerm by remember { mutableStateOf(false) }
 
     val notifPermLauncher = rememberLauncherForActivityResult(
@@ -226,6 +235,26 @@ fun SetelanScreen(
         } else if (!granted) {
             pendingTestAfterPerm = false
             onShowBanner("Izin notifikasi ditolak di pengaturan perangkat")
+        }
+    }
+
+    val calPermLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        hasCalPerm = granted
+        onShowBanner(if (granted) "Izin Kalender aktif untuk Rem" else "Izin Kalender ditolak")
+    }
+
+    val locPermLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        hasLocPerm = granted
+        if (granted) {
+            onSetDeviceLocationOptIn(true)
+            onShowBanner("Akses lokasi perkiraan aktif untuk Rem")
+        } else {
+            onSetDeviceLocationOptIn(false)
+            onShowBanner("Izin lokasi ditolak di perangkat")
         }
     }
 
@@ -1385,6 +1414,99 @@ fun SetelanScreen(
                             ) {
                                 Icon(Icons.Outlined.Notifications, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(14.dp))
                                 Text("Test Notifikasi", fontFamily = UiSans, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = AccentBlue)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 4b. Akses Perangkat (Kalender & Lokasi Opsional)
+            item {
+                SettingsSection(
+                    title = "AKSES PERANGKAT",
+                    badgeText = if (hasCalPerm || (deviceLocationOptIn && hasLocPerm)) "Aktif" else null
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Baca Kalender", fontFamily = UiSans, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = TextPrimary)
+                                Text(
+                                    if (hasCalPerm) "Rem dapat mengecek jadwal kalender perangkat"
+                                    else "Perlu izin baca kalender agar Rem bisa cek agenda",
+                                    fontFamily = UiSans,
+                                    fontSize = 11.sp,
+                                    color = TextMuted
+                                )
+                            }
+                            if (hasCalPerm) {
+                                NestedPill {
+                                    Text("Diizinkan", fontFamily = UiSans, fontSize = 11.sp, color = SemanticSuccess, fontWeight = FontWeight.Medium)
+                                }
+                            } else {
+                                Row(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(ElevatedSurface)
+                                        .border(1.dp, BorderSubtle, RoundedCornerShape(10.dp))
+                                        .clickable {
+                                            calPermLauncher.launch(Manifest.permission.READ_CALENDAR)
+                                        }
+                                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Text("Izinkan", fontFamily = UiSans, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = AccentBlue)
+                                }
+                            }
+                        }
+
+                        HorizontalDivider(thickness = 1.dp, color = BorderSubtle)
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
+                                Text("Izinkan Rem Baca Lokasi", fontFamily = UiSans, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = TextPrimary)
+                                Text(
+                                    "Opsional • Lokasi perkiraan hanya dibaca saat ditanya",
+                                    fontFamily = UiSans,
+                                    fontSize = 11.sp,
+                                    color = TextMuted
+                                )
+                            }
+                            val locOn = deviceLocationOptIn && hasLocPerm
+                            Box(
+                                modifier = Modifier
+                                    .width(42.dp)
+                                    .height(24.dp)
+                                    .clip(RoundedCornerShape(50))
+                                    .background(if (locOn) AccentBlue else ElevatedSurface)
+                                    .border(1.dp, if (locOn) AccentBlue else BorderLight, RoundedCornerShape(50))
+                                    .clickable {
+                                        if (locOn) {
+                                            onSetDeviceLocationOptIn(false)
+                                        } else {
+                                            hasLocPerm = AndroidDeviceBridge.hasLocationPermission(context)
+                                            if (hasLocPerm) {
+                                                onSetDeviceLocationOptIn(true)
+                                            } else {
+                                                locPermLauncher.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
+                                            }
+                                        }
+                                    }
+                                    .padding(3.dp),
+                                contentAlignment = if (locOn) Alignment.CenterEnd else Alignment.CenterStart
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(18.dp)
+                                        .clip(CircleShape)
+                                        .background(if (locOn) DominantBg else TextMuted)
+                                )
                             }
                         }
                     }

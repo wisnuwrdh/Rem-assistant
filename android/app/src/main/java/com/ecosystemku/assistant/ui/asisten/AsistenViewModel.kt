@@ -34,6 +34,7 @@ import com.ecosystemku.assistant.data.local.LinkkuBackupWrapperDto
 import com.ecosystemku.assistant.data.local.LinkkuCategoryEntity
 import com.ecosystemku.assistant.data.local.LinkkuEncryptedPrivatePayloadDto
 import com.ecosystemku.assistant.data.local.LinkkuLinkEntity
+import com.ecosystemku.assistant.data.local.RemReminderEntity
 import com.ecosystemku.assistant.data.local.UserMemoryEntity
 import com.ecosystemku.assistant.data.network.ChatSseClient
 import com.ecosystemku.assistant.data.network.ChatStreamEvent
@@ -49,6 +50,8 @@ import com.ecosystemku.assistant.data.network.LinkkuMetaClient
 import com.ecosystemku.assistant.data.network.MemoryClient
 import com.ecosystemku.assistant.data.network.MemoryProfileData
 import com.ecosystemku.assistant.data.network.SseTagParser
+import com.ecosystemku.assistant.device.AndroidDeviceBridge
+import com.ecosystemku.assistant.device.DeviceActionEvent
 import com.ecosystemku.assistant.live2d.Live2DStageCallbacks
 import com.ecosystemku.assistant.live2d.WebViewLive2DStageController
 import com.ecosystemku.assistant.ui.apps.cucimoney.CuciMoneyActions
@@ -80,6 +83,7 @@ import java.text.SimpleDateFormat
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
@@ -92,8 +96,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
@@ -201,6 +208,7 @@ data class AsistenUiState(
     val cuciMoneyState: CuciMoneyUiState = CuciMoneyUiState(),
     val idekuState: IdekuUiState = IdekuUiState(),
     val dailyOsState: DailyOsUiState = DailyOsUiState(),
+    val deviceLocationOptIn: Boolean = false,
     val pendingOpenApp: String? = null,
     val errorMessage: String? = null
 )
@@ -216,6 +224,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
     private val cuciMoneyDao = db.cuciMoneyDao()
     private val idekuDao = db.idekuDao()
     private val dailyOsDao = db.dailyOsDao()
+    private val remReminderDao = db.remReminderDao()
     private val asistenPrefs = application.getSharedPreferences("asisten_prefs", Context.MODE_PRIVATE)
     private val linkkuPrefs = application.getSharedPreferences("linkku_prefs", Context.MODE_PRIVATE)
     private val cuciPrefs = application.getSharedPreferences("cucimoney_prefs", Context.MODE_PRIVATE)
@@ -233,6 +242,9 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
 
     private val _uiState = MutableStateFlow(AsistenUiState())
     val uiState: StateFlow<AsistenUiState> = _uiState.asStateFlow()
+
+    private val _deviceEvents = MutableSharedFlow<DeviceActionEvent>(extraBufferCapacity = 8)
+    val deviceEvents: SharedFlow<DeviceActionEvent> = _deviceEvents.asSharedFlow()
 
     private val _activeSessionId = MutableStateFlow(0L)
 
@@ -285,6 +297,11 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         Jika Tuan meminta membuka LinkKu atau daftar link tersimpan, sisipkan [OPEN:linkku] sebelum [EXPR:...].
         Jika Tuan menyebut pengeluaran/pemasukan atau meminta mencatat transaksi keuangan ke CuciMoney+, sisipkan:
         [CUCI:ADD|out_atau_in|nominal_angka|judul|kategori_opsional|akun_opsional|buku_opsional|tanggal_yyyy-mm-dd_atau_kosong]
+        Jika Tuan mengoreksi transaksi yang sudah tercatat (nominal/judul/kategori/akun/tanggal), gunakan id jika ada atau kata kunci unik:
+        [CUCI:EDIT|id_atau_kata_kunci|nominal_baru_atau_kosong|judul_baru_atau_kosong|kategori_baru_atau_kosong|akun_baru_atau_kosong|tanggal_yyyy-mm-dd_atau_kosong]
+        Jika Tuan meminta menghapus transaksi tertentu, sisipkan:
+        [CUCI:DEL|id_atau_kata_kunci]
+        Aturan edit/hapus: jika target transaksi belum muncul di ringkasan atau ada beberapa transaksi mirip, jalankan [SEARCH:cuci|...] dulu untuk mendapatkan id pasti atau tawarkan pilihan [CHOICES:single|...] sebelum mengubah/menghapus. Jangan mengubah transaksi tabungan wishlist lewat tag ini.
         Jika Tuan ingin menyetor/menambah tabungan ke target barang wishlist, sisipkan:
         [CUCI:SAVE|nama_wishlist|nominal_angka|akun_sumber_opsional|buku_opsional]
         Jika Tuan melapor target barang wishlist sudah kebeli / ingin merealisasikan tabungannya, sisipkan:
@@ -294,17 +311,40 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         [IDEKU:ADD|Idea|judul_ide|kategori_opsional|Penting_Nanti_Kapan-kapan|catatan_opsional|jalur_opsional]
         atau untuk wishlist:
         [IDEKU:ADD|Wishlist|nama_barang|harga_angka|Belanja|Penting_Nanti_Kapan-kapan|catatan_opsional]
+        Jika Tuan ingin menandai ide/wishlist selesai atau mengubah statusnya (Belum, Proses, Parkir, Selesai), sisipkan:
+        [IDEKU:STATUS|id_atau_kata_kunci|Selesai_atau_Proses_atau_Parkir_atau_Belum]
+        Jika Tuan mengoreksi detail ide/wishlist (judul/kategori/prioritas/catatan/jalur/harga), sisipkan:
+        [IDEKU:EDIT|id_atau_kata_kunci|judul_baru_atau_kosong|kategori_baru_atau_kosong|prioritas_baru_atau_kosong|catatan_baru_atau_kosong|jalur_baru_atau_kosong|harga_baru_atau_kosong]
+        Jika Tuan meminta menghapus ide/wishlist tertentu, sisipkan:
+        [IDEKU:DEL|id_atau_kata_kunci]
         Jika Tuan meminta membuka IdeKu / daftar ide / wishlist, sisipkan [OPEN:ideku] sebelum [EXPR:...].
         Jika Tuan meminta membuat habit baru di Daily OS, sisipkan:
         [DAILYOS:HABIT|nama_habit|kategori_opsional|ikon_opsional]
         Jika Tuan meminta mencatat tugas/to-do ke Daily OS, sisipkan:
         [DAILYOS:TODO|judul_task|urgent_atau_soon_atau_normal|deadline_yyyy-mm-dd_atau_kosong]
         Jika Tuan menyatakan sudah menyelesaikan salah satu habit/to-do hari ini, sisipkan:
-        [DAILYOS:CHECK|nama_habit_atau_task]
+        [DAILYOS:CHECK|id_atau_kata_kunci]
+        Jika Tuan membatalkan/mengoreksi centang habit hari ini atau status selesai to-do, sisipkan:
+        [DAILYOS:UNCHECK|id_atau_kata_kunci]
+        Jika Tuan mengubah judul, prioritas, atau deadline to-do (isi '-' untuk hapus deadline), sisipkan:
+        [DAILYOS:EDIT_TODO|id_atau_kata_kunci|judul_baru_atau_kosong|urgent_soon_normal_atau_kosong|YYYY-MM-DD_atau_-_atau_kosong]
+        Jika Tuan meminta menghapus to-do, sisipkan:
+        [DAILYOS:DEL_TODO|id_atau_kata_kunci]
+        Jika Tuan meminta mengarsipkan atau menghapus habit, sisipkan [DAILYOS:ARCHIVE_HABIT|id_atau_kata_kunci] atau [DAILYOS:DEL_HABIT|id_atau_kata_kunci].
         Jika Tuan meminta membuka Daily OS / habit tracker / daftar to-do, sisipkan [OPEN:dailyos] sebelum [EXPR:...].
 
-        ## Pencarian Arsip Lokal (On-Demand Search)
-        Ringkasan modul di prompt hanya menampilkan item terbaru. Jika Tuan menanyakan arsip lama, transaksi bulan/tanggal tertentu (mis. 2026-10), jurnal lama, ide/bookmark yang tidak muncul di ringkasan, atau obrolan dari sesi lalu, JANGAN menebak. Keluarkan tag pencarian HANYA satu baris: [SEARCH:scope|kata_kunci] (scope valid: kronik, linkku, cuci, ideku, dailyos, chat, all; kata_kunci boleh kosong untuk daftar arsip lebih lengkap). Sistem akan langsung mengambil data akurat dari database lokal agar Rem bisa menjawab dengan tepat.
+        ## Fungsi Perangkat Android
+        Kamu dapat membantu Tuan mengoperasikan fitur perangkat lewat tag tersembunyi (sebelum [EXPR:...]):
+        - Pasang alarm jam sistem: [DEVICE:ALARM|HH:mm|label_opsional]
+        - Pengingat sekali jalan (notifikasi lokal Rem, mis. "ingatkan aku jam 5"): [DEVICE:REMINDER|YYYY-MM-DD_atau_hari_ini_atau_besok|HH:mm|pesan]
+        - Batalkan pengingat lokal Rem: [DEVICE:DEL_REMINDER|id_atau_kata_kunci]
+        - Pasang timer / Pomodoro (mis. 25m atau 1500s): [DEVICE:TIMER|durasi_seperti_25m_atau_90s|label_opsional]
+        - Tambah acara ke aplikasi Kalender: [DEVICE:CAL_ADD|judul|YYYY-MM-DD|HH:mm_mulai|HH:mm_selesai_opsional|lokasi_opsional|catatan_opsional]
+        - Buka tautan URL http/https di browser: [DEVICE:OPEN_URL|https://...]
+        - Bagikan teks lewat menu Share Android: [DEVICE:SHARE|teks]
+
+        ## Pencarian Arsip Lokal & Info Perangkat (On-Demand Search)
+        Ringkasan modul di prompt hanya menampilkan item terbaru. Jika Tuan menanyakan arsip lama, transaksi bulan/tanggal/kategori tertentu (mis. 2026-10), jurnal lama, ide/bookmark yang tidak muncul di ringkasan, riwayat habit, obrolan dari sesi lalu, atau kondisi perangkat (baterai, jadwal kalender, lokasi perkiraan, daftar pengingat aktif), JANGAN menebak. Keluarkan tag pencarian HANYA satu baris: [SEARCH:scope|kata_kunci] (scope valid: kronik, linkku, cuci, ideku, dailyos, device, chat, all; untuk scope device, isi query dengan battery, calendar, calendar YYYY-MM-DD, location, atau reminders). Khusus scope cuci, untuk query terstruktur gunakan format key=value dipisah titik koma, misalnya [SEARCH:cuci|book=Personal;month=2026-10;cat=Makan;dir=out] (parameter tersedia: book, month, from, to, cat, acc, dir, q). Sistem akan mengambil & menghitung data akurat dari database/perangkat agar Rem bisa menjawab dengan tepat.
 
         ## Memori Personal
         Jika Tuan secara eksplisit meminta Rem mengingat, memperbarui, atau melupakan informasi tertentu:
@@ -395,6 +435,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         val habitNotifOn = asistenPrefs.getBoolean("asisten_notif_habit_on", true)
         val todoNotifOn = asistenPrefs.getBoolean("asisten_notif_todo_on", true)
         val autoLearn = asistenPrefs.getBoolean("asisten_auto_learn", true)
+        val locOptIn = asistenPrefs.getBoolean("asisten_device_location_opt_in", false)
         val frac = asistenPrefs.getFloat("asisten_stage_fraction", 0.56f).coerceIn(0.35f, 0.70f)
         val rawWallpaper = asistenPrefs.getString("asisten_wallpaper_file", null)?.trim()?.takeIf { it.isNotEmpty() }
         val validWallpaper = rawWallpaper?.takeIf { File(File(app.filesDir, "stage_wallpaper"), it).exists() }
@@ -427,6 +468,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 notifHabitEnabled = habitNotifOn,
                 notifTodoEnabled = todoNotifOn,
                 autoLearnMemory = autoLearn,
+                deviceLocationOptIn = locOptIn,
                 memoryProfile = memProfile,
                 stageFraction = frac,
                 stageWallpaperFile = validWallpaper,
@@ -1022,6 +1064,11 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
     fun setAutoLearnMemory(enabled: Boolean) {
         asistenPrefs.edit().putBoolean("asisten_auto_learn", enabled).apply()
         _uiState.update { it.copy(autoLearnMemory = enabled) }
+    }
+
+    fun setDeviceLocationOptIn(enabled: Boolean) {
+        asistenPrefs.edit().putBoolean("asisten_device_location_opt_in", enabled).apply()
+        _uiState.update { it.copy(deviceLocationOptIn = enabled) }
     }
 
     fun addManualMemory(category: String, factLabel: String, factValue: String) {
@@ -3509,6 +3556,70 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                             didRealizeWishlist = true
                             savedLabels.add("Wishlist Selesai: $wishTitle")
                         }
+                        is SseTagParser.CuciChatAction.EditTransaction -> {
+                            val allTrx = cuciMoneyDao.getAllTransactions()
+                            val targetTrx = resolveCuciTransactionTarget(
+                                target = act.target,
+                                allTrx = allTrx,
+                                activeBookId = activeBook?.id ?: cuciState.currentBookId,
+                                today = today
+                            )
+                            if (targetTrx != null && targetTrx.savingsPot == null && targetTrx.transferPair == null) {
+                                val nextAmount = act.amount ?: targetTrx.amount
+                                val nextTitle = act.title.ifBlank { targetTrx.title }
+                                val nextDate = act.date.ifBlank { targetTrx.date }
+                                val dir = targetTrx.direction
+                                val nextCatId = if (act.categoryName.isNotBlank()) {
+                                    cuciState.categories.firstOrNull { c ->
+                                        c.name.equals(act.categoryName, ignoreCase = true) &&
+                                            (c.type == "both" || (dir == "in" && c.type == "income") || (dir == "out" && c.type == "expense"))
+                                    }?.id ?: targetTrx.categoryId
+                                } else targetTrx.categoryId
+                                val nextAccId = if (act.accountName.isNotBlank()) {
+                                    val bookAccs = CuciMoneyHelpers.bookAccounts(cuciState, targetTrx.bookId)
+                                    bookAccs.firstOrNull { !it.isSavings && it.name.contains(act.accountName, ignoreCase = true) }?.id
+                                        ?: cuciState.accounts.firstOrNull { !it.isSavings && it.name.contains(act.accountName, ignoreCase = true) }?.id
+                                        ?: targetTrx.accountId
+                                } else targetTrx.accountId
+
+                                val rev = if (targetTrx.direction == "in") -targetTrx.amount else targetTrx.amount
+                                cuciMoneyDao.adjustAccountBalance(targetTrx.accountId, rev)
+                                val updatedTrx = targetTrx.copy(
+                                    title = nextTitle,
+                                    amount = nextAmount,
+                                    categoryId = nextCatId,
+                                    accountId = nextAccId,
+                                    date = nextDate
+                                )
+                                cuciMoneyDao.upsertTransaction(updatedTrx)
+                                cuciMoneyDao.adjustAccountBalance(nextAccId, if (dir == "in") nextAmount else -nextAmount)
+                                savedLabels.add("Diubah: $nextTitle (${CuciMoneyHelpers.formatRp(nextAmount)})")
+                            }
+                        }
+                        is SseTagParser.CuciChatAction.DeleteTransaction -> {
+                            val allTrx = cuciMoneyDao.getAllTransactions()
+                            val targetTrx = resolveCuciTransactionTarget(
+                                target = act.target,
+                                allTrx = allTrx,
+                                activeBookId = activeBook?.id ?: cuciState.currentBookId,
+                                today = today
+                            )
+                            if (targetTrx != null && targetTrx.savingsPot == null) {
+                                if (targetTrx.transferPair != null) {
+                                    val pairs = cuciMoneyDao.getTransactionsByPair(targetTrx.transferPair)
+                                    pairs.forEach { p ->
+                                        val rev = if (p.direction == "in") -p.amount else p.amount
+                                        cuciMoneyDao.adjustAccountBalance(p.accountId, rev)
+                                    }
+                                    cuciMoneyDao.deleteTransactionsByPair(targetTrx.transferPair)
+                                } else {
+                                    val rev = if (targetTrx.direction == "in") -targetTrx.amount else targetTrx.amount
+                                    cuciMoneyDao.adjustAccountBalance(targetTrx.accountId, rev)
+                                    cuciMoneyDao.deleteTransactionById(targetTrx.id)
+                                }
+                                savedLabels.add("Dihapus: ${targetTrx.title}")
+                            }
+                        }
                     }
                 }
                 if (savedLabels.isNotEmpty()) {
@@ -3548,14 +3659,50 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                             if (entity.type == "Wishlist") {
                                 syncIdekuWishlistToCuciMoney(entity)
                             }
-                            savedTitles.add(entity.title)
+                            savedTitles.add("Tersimpan \"${entity.title}\"")
+                        }
+                        is SseTagParser.IdekuChatAction.SetStatus -> {
+                            val existing = resolveIdekuTarget(act.target, idekuDao.getAll())
+                            if (existing != null) {
+                                val updated = existing.copy(status = act.status)
+                                idekuDao.upsert(updated)
+                                if (updated.type == "Wishlist") {
+                                    syncIdekuWishlistToCuciMoney(updated)
+                                }
+                                savedTitles.add("${updated.title} -> ${updated.status}")
+                            }
+                        }
+                        is SseTagParser.IdekuChatAction.EditItem -> {
+                            val existing = resolveIdekuTarget(act.target, idekuDao.getAll())
+                            if (existing != null) {
+                                val updated = existing.copy(
+                                    title = act.title.ifBlank { existing.title },
+                                    category = act.category.ifBlank { existing.category },
+                                    priority = act.priority.ifBlank { existing.priority },
+                                    notes = act.notes.ifBlank { existing.notes },
+                                    jalur = if (existing.type == "Wishlist") "" else act.jalur.ifBlank { existing.jalur },
+                                    price = if (existing.type == "Wishlist") (act.price ?: existing.price).coerceAtLeast(0L) else 0L
+                                )
+                                idekuDao.upsert(updated)
+                                if (updated.type == "Wishlist") {
+                                    syncIdekuWishlistToCuciMoney(updated)
+                                }
+                                savedTitles.add("Diubah \"${updated.title}\"")
+                            }
+                        }
+                        is SseTagParser.IdekuChatAction.DeleteItem -> {
+                            val existing = resolveIdekuTarget(act.target, idekuDao.getAll())
+                            if (existing != null) {
+                                idekuDao.deleteById(existing.id)
+                                savedTitles.add("Dihapus \"${existing.title}\"")
+                            }
                         }
                     }
                 }
                 if (savedTitles.isNotEmpty()) {
                     didMutateModuleAction = true
                     _uiState.update {
-                        it.copy(kronikBannerMessage = "IdeKu: Tersimpan \"${savedTitles.first()}\"")
+                        it.copy(kronikBannerMessage = "IdeKu: ${savedTitles.first()}")
                     }
                     viewModelScope.launch {
                         delay(4_000L)
@@ -3606,8 +3753,10 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                         }
                         is SseTagParser.DailyOsChatAction.CheckItem -> {
                             val q = act.query.trim()
-                            val matchedHabit = dailyOsDao.getAllHabits()
-                                .firstOrNull { !it.archived && it.name.contains(q, ignoreCase = true) }
+                            val allHabits = dailyOsDao.getAllHabits()
+                            val matchedHabit = allHabits.firstOrNull { !it.archived && it.id.equals(q, ignoreCase = true) }
+                                ?: allHabits.firstOrNull { !it.archived && it.name.equals(q, ignoreCase = true) }
+                                ?: allHabits.firstOrNull { !it.archived && it.name.contains(q, ignoreCase = true) }
                             if (matchedHabit != null) {
                                 val subs = DailyOsHelpers.parseSubTasks(matchedHabit.subTasksJson)
                                 val subId = subs.firstOrNull()?.id ?: "main"
@@ -3621,11 +3770,78 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                                     savedMsgs.add("Checklist \"${matchedHabit.name}\"")
                                 }
                             } else {
-                                val matchedTodo = dailyOsDao.getAllTodos()
-                                    .firstOrNull { !it.done && it.title.contains(q, ignoreCase = true) }
+                                val allTodos = dailyOsDao.getAllTodos()
+                                val matchedTodo = allTodos.firstOrNull { !it.done && it.id.equals(q, ignoreCase = true) }
+                                    ?: allTodos.firstOrNull { !it.done && it.title.equals(q, ignoreCase = true) }
+                                    ?: allTodos.firstOrNull { !it.done && it.title.contains(q, ignoreCase = true) }
                                 if (matchedTodo != null) {
                                     dailyOsDao.upsertTodo(matchedTodo.copy(done = true, completedAt = Instant.now().toString()))
                                     savedMsgs.add("Selesai \"${matchedTodo.title}\"")
+                                }
+                            }
+                        }
+                        is SseTagParser.DailyOsChatAction.UncheckItem -> {
+                            val q = act.query.trim()
+                            val allHabits = dailyOsDao.getAllHabits()
+                            val matchedHabit = allHabits.firstOrNull { !it.archived && it.id.equals(q, ignoreCase = true) }
+                                ?: allHabits.firstOrNull { !it.archived && it.name.equals(q, ignoreCase = true) }
+                                ?: allHabits.firstOrNull { !it.archived && it.name.contains(q, ignoreCase = true) }
+                            if (matchedHabit != null) {
+                                val hist = DailyOsHelpers.parseHistory(matchedHabit.historyJson).toMutableMap()
+                                if (!hist[today].isNullOrEmpty()) {
+                                    hist.remove(today)
+                                    dailyOsDao.upsertHabit(matchedHabit.copy(historyJson = DailyOsHelpers.encodeHistory(hist)))
+                                    savedMsgs.add("Batal centang \"${matchedHabit.name}\"")
+                                }
+                            } else {
+                                val allTodos = dailyOsDao.getAllTodos()
+                                val matchedTodo = allTodos.firstOrNull { it.done && it.id.equals(q, ignoreCase = true) }
+                                    ?: allTodos.firstOrNull { it.done && it.title.equals(q, ignoreCase = true) }
+                                    ?: allTodos.firstOrNull { it.done && it.title.contains(q, ignoreCase = true) }
+                                if (matchedTodo != null) {
+                                    dailyOsDao.upsertTodo(matchedTodo.copy(done = false, completedAt = null))
+                                    savedMsgs.add("Dibuka lagi \"${matchedTodo.title}\"")
+                                }
+                            }
+                        }
+                        is SseTagParser.DailyOsChatAction.EditTodo -> {
+                            val matchedTodo = resolveDailyOsTodoTarget(act.target, dailyOsDao.getAllTodos())
+                            if (matchedTodo != null) {
+                                val nextDl = when (act.deadline) {
+                                    "__CLEAR__" -> ""
+                                    "" -> matchedTodo.deadline
+                                    else -> act.deadline
+                                }
+                                val updated = matchedTodo.copy(
+                                    title = act.title.ifBlank { matchedTodo.title },
+                                    priority = act.priority.ifBlank { matchedTodo.priority },
+                                    deadline = nextDl
+                                )
+                                dailyOsDao.upsertTodo(updated)
+                                savedMsgs.add("Diubah \"${updated.title}\"")
+                            }
+                        }
+                        is SseTagParser.DailyOsChatAction.DeleteTodo -> {
+                            val matchedTodo = resolveDailyOsTodoTarget(act.target, dailyOsDao.getAllTodos())
+                            if (matchedTodo != null) {
+                                dailyOsDao.deleteTodoById(matchedTodo.id)
+                                savedMsgs.add("Dihapus \"${matchedTodo.title}\"")
+                            }
+                        }
+                        is SseTagParser.DailyOsChatAction.ArchiveHabit -> {
+                            val q = act.target.trim()
+                            val allHabits = dailyOsDao.getAllHabits()
+                            val matchedHabit = allHabits.firstOrNull { it.id.equals(q, ignoreCase = true) }
+                                ?: allHabits.firstOrNull { !it.archived && it.name.equals(q, ignoreCase = true) }
+                                ?: allHabits.firstOrNull { !it.archived && it.name.contains(q, ignoreCase = true) }
+                                ?: allHabits.firstOrNull { it.name.contains(q, ignoreCase = true) }
+                            if (matchedHabit != null) {
+                                if (act.deletePermanently) {
+                                    dailyOsDao.deleteHabitById(matchedHabit.id)
+                                    savedMsgs.add("Habit dihapus \"${matchedHabit.name}\"")
+                                } else {
+                                    dailyOsDao.upsertHabit(matchedHabit.copy(archived = true))
+                                    savedMsgs.add("Habit diarsipkan \"${matchedHabit.name}\"")
                                 }
                             }
                         }
@@ -3635,6 +3851,104 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                     didMutateModuleAction = true
                     _uiState.update {
                         it.copy(kronikBannerMessage = "Daily OS: ${savedMsgs.first()}")
+                    }
+                    viewModelScope.launch {
+                        delay(4_000L)
+                        _uiState.update { it.copy(kronikBannerMessage = null) }
+                    }
+                }
+            }
+
+            if (parsed.deviceActions.isNotEmpty()) {
+                val app = getApplication<Application>()
+                val zone = ZoneId.systemDefault()
+                val deviceLabels = mutableListOf<String>()
+                parsed.deviceActions.forEach { act ->
+                    when (act) {
+                        is SseTagParser.DeviceChatAction.OpenUrl -> {
+                            _deviceEvents.tryEmit(DeviceActionEvent.OpenUrl(act.url))
+                            deviceLabels.add("Buka URL")
+                        }
+                        is SseTagParser.DeviceChatAction.ShareText -> {
+                            _deviceEvents.tryEmit(DeviceActionEvent.ShareText(act.text))
+                            deviceLabels.add("Bagikan teks")
+                        }
+                        is SseTagParser.DeviceChatAction.SetAlarm -> {
+                            _deviceEvents.tryEmit(DeviceActionEvent.SetAlarm(act.hour, act.minute, act.label))
+                            deviceLabels.add(String.format(Locale.US, "Alarm %02d:%02d", act.hour, act.minute))
+                        }
+                        is SseTagParser.DeviceChatAction.SetTimer -> {
+                            _deviceEvents.tryEmit(DeviceActionEvent.SetTimer(act.seconds, act.label))
+                            val mins = act.seconds / 60
+                            val lbl = if (mins > 0 && act.seconds % 60 == 0) "${mins}m" else "${act.seconds}d"
+                            deviceLabels.add("Timer $lbl")
+                        }
+                        is SseTagParser.DeviceChatAction.SetReminder -> {
+                            val parsedDate = runCatching { LocalDate.parse(act.dateStr) }
+                                .getOrDefault(LocalDate.now(zone))
+                            var targetLdt = LocalDateTime.of(parsedDate, LocalTime.of(act.hour, act.minute))
+                            val nowLdt = LocalDateTime.now(zone)
+                            if (!targetLdt.isAfter(nowLdt)) {
+                                targetLdt = targetLdt.plusDays(1)
+                            }
+                            val triggerMs = targetLdt.atZone(zone).toInstant().toEpochMilli()
+                            val insertedId = remReminderDao.insert(
+                                RemReminderEntity(
+                                    title = act.message,
+                                    triggerAtMs = triggerMs
+                                )
+                            )
+                            com.ecosystemku.assistant.notifications.DailyOsNotificationHelper.scheduleOneTimeReminder(
+                                context = app,
+                                reminderId = insertedId,
+                                triggerAtMs = triggerMs,
+                                title = "Rem • Pengingat",
+                                body = act.message
+                            )
+                            val timeFmt = String.format(Locale.US, "%02d:%02d", targetLdt.hour, targetLdt.minute)
+                            deviceLabels.add("Pengingat $timeFmt")
+                        }
+                        is SseTagParser.DeviceChatAction.CancelReminder -> {
+                            val nowMs = System.currentTimeMillis()
+                            val active = remReminderDao.getActive(nowMs)
+                            val q = act.target.trim()
+                            val hit = q.toLongOrNull()?.let { id -> active.firstOrNull { it.id == id } }
+                                ?: active.firstOrNull { it.title.equals(q, ignoreCase = true) }
+                                ?: active.firstOrNull { it.title.contains(q, ignoreCase = true) }
+                            if (hit != null) {
+                                com.ecosystemku.assistant.notifications.DailyOsNotificationHelper.cancelOneTimeReminder(app, hit.id)
+                                remReminderDao.deleteById(hit.id)
+                                deviceLabels.add("Pengingat dibatalkan")
+                            }
+                        }
+                        is SseTagParser.DeviceChatAction.AddCalendarEvent -> {
+                            val parsedDate = runCatching { LocalDate.parse(act.dateStr) }
+                                .getOrDefault(LocalDate.now(zone))
+                            val startLdt = LocalDateTime.of(parsedDate, LocalTime.of(act.startHour, act.startMinute))
+                            val endLdt = if (act.endHour != null && act.endMinute != null) {
+                                LocalDateTime.of(parsedDate, LocalTime.of(act.endHour, act.endMinute))
+                            } else {
+                                startLdt.plusHours(1)
+                            }
+                            val startMs = startLdt.atZone(zone).toInstant().toEpochMilli()
+                            val endMs = endLdt.atZone(zone).toInstant().toEpochMilli().coerceAtLeast(startMs + 1_800_000L)
+                            _deviceEvents.tryEmit(
+                                DeviceActionEvent.AddCalendarEvent(
+                                    title = act.title,
+                                    startMs = startMs,
+                                    endMs = endMs,
+                                    location = act.location,
+                                    description = act.description
+                                )
+                            )
+                            deviceLabels.add("Kalender: ${act.title}")
+                        }
+                    }
+                }
+                if (deviceLabels.isNotEmpty()) {
+                    didMutateModuleAction = true
+                    _uiState.update {
+                        it.copy(kronikBannerMessage = "Perangkat: ${deviceLabels.first()}")
                     }
                     viewModelScope.launch {
                         delay(4_000L)
@@ -3810,7 +4124,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                     append("- Fokus Proses (${prosesIdeas.size}/${IdekuHelpers.FOCUS_LIMIT}): ")
                     append(prosesIdeas.joinToString("; ") { item ->
                         val nxt = if (item.nextStep.isNotBlank()) " → ${item.nextStep}" else ""
-                        "${item.title}$nxt"
+                        "[id=${item.id}] ${item.title}$nxt"
                     })
                     append("\n")
                 }
@@ -3818,15 +4132,15 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                     append("- Wishlist aktif (${activeWishlist.size}): ")
                     append(activeWishlist.take(8).joinToString(", ") { item ->
                         val priceTag = if (item.price > 0L) " ${CuciMoneyHelpers.formatRp(item.price)}" else ""
-                        "\"${item.title}\"$priceTag [${item.status}]"
+                        "[id=${item.id}] \"${item.title}\"$priceTag [${item.status}]"
                     })
                     append("\n")
                 }
-                val latestItems = idekuList.take(4)
+                val latestItems = idekuList.take(5)
                 append("- Terbaru: ")
                 append(latestItems.joinToString("; ") { item ->
                     val priceTag = if (item.type == "Wishlist" && item.price > 0L) ", ${CuciMoneyHelpers.formatRp(item.price)}" else ""
-                    "[${item.type}] ${item.title} (${item.category}, ${item.status}$priceTag)"
+                    "[id=${item.id}] [${item.type}] ${item.title} (${item.category}, ${item.status}$priceTag)"
                 })
                 append("\n")
             }
@@ -3839,17 +4153,49 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 val prog = DailyOsHelpers.calculateTodayProgress(dailyState.habits, today)
                 val streak = DailyOsHelpers.calculateOverallStreak(dailyState.habits, today)
                 val pendingTodos = dailyTodos.filter { !it.done }
-                append("\n## Daily OS Hari Ini (${prog[3]}/${prog[4]} habit selesai [${prog[2]}%], Streak ${streak}h)\n")
+                val recentDoneTodos = dailyTodos.filter { it.done }.takeLast(3)
+                append("\n## Daily OS Hari Ini (${prog[3]}/${prog[4]} habit selesai [${prog[2]}%], Overall Streak ${streak}h)\n")
                 if (dailyHabits.isNotEmpty()) {
-                    append("- Habit aktif (${dailyHabits.size}): ")
-                    append(dailyHabits.take(10).joinToString(", ") { it.name })
-                    append("\n")
+                    append("- Habit aktif (${dailyHabits.size}):\n")
+                    dailyHabits.take(15).forEach { h ->
+                        val hStreak = DailyOsHelpers.calculateHabitStreak(h, today)
+                        val hist = DailyOsHelpers.parseHistory(h.historyJson)
+                        val totalDays = hist.count { it.value.isNotEmpty() }
+                        val scheduledToday = DailyOsHelpers.isHabitScheduled(h, today)
+                        val doneToday = hist[today].orEmpty().isNotEmpty()
+                        val todayStatus = when {
+                            doneToday -> "selesai hari ini"
+                            !scheduledToday -> "tidak terjadwal hari ini"
+                            else -> "belum hari ini"
+                        }
+                        append("  • [id=${h.id}] ${h.name} (${h.category}): streak $hStreak hari berturut-turut, $todayStatus, total $totalDays hari\n")
+                    }
                 }
                 if (pendingTodos.isNotEmpty()) {
-                    val urgentOrOv = pendingTodos.filter { it.priority == "urgent" || DailyOsHelpers.isOverdue(it.deadline, today) }.take(4)
+                    val urgentOrOv = pendingTodos.filter { it.priority == "urgent" || DailyOsHelpers.isOverdue(it.deadline, today) }.take(6)
+                    val shownTodos = urgentOrOv.ifEmpty { pendingTodos.take(6) }
                     append("- To-Do Pending (${pendingTodos.size} task): ")
-                    append((urgentOrOv.ifEmpty { pendingTodos.take(4) }).joinToString("; ") { "${it.title} [${it.priority}]" })
+                    append(shownTodos.joinToString("; ") { t ->
+                        val dl = if (t.deadline.isNotBlank()) ", dl ${t.deadline}" else ""
+                        "[id=${t.id}] ${t.title} [${t.priority}$dl]"
+                    })
                     append("\n")
+                }
+                if (recentDoneTodos.isNotEmpty()) {
+                    append("- To-Do Selesai Terbaru: ")
+                    append(recentDoneTodos.joinToString("; ") { "[id=${it.id}] ${it.title}" })
+                    append("\n")
+                }
+            }
+
+            val activeReminders = remReminderDao.getActive(nowMs)
+            if (activeReminders.isNotEmpty()) {
+                val rFmt = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.getDefault())
+                val rZone = ZoneId.systemDefault()
+                append("\n## Pengingat Terjadwal Rem (${activeReminders.size} aktif)\n")
+                activeReminders.take(8).forEach { rem ->
+                    val whenStr = Instant.ofEpochMilli(rem.triggerAtMs).atZone(rZone).format(rFmt)
+                    append("- [id=${rem.id}] $whenStr: ${rem.title}\n")
                 }
             }
 
@@ -3889,6 +4235,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         val expenseCats = sortedCats.filter { it.type == "expense" || it.type == "both" }.map { it.name }
         val incomeCats = sortedCats.filter { it.type == "income" || it.type == "both" }.map { it.name }
         val catById = sortedCats.associateBy { it.id }
+        val accById = cuciState.accounts.associateBy { it.id }
 
         sb.append("\n## Ringkasan Keuangan CuciMoney+ (Buku aktif di app: ${activeBook?.name ?: "-"})\n")
         if (expenseCats.isNotEmpty()) {
@@ -3920,27 +4267,25 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 sb.append("  Catatan buku \"${book.name}\": $transferCount transfer antar akun bulan ini tidak dihitung sebagai pemasukan/pengeluaran.\n")
             }
 
-            val topExpenseCats = monthTrx.filter { it.direction == "out" }
+            val allExpenseCats = monthTrx.filter { it.direction == "out" }
                 .groupBy { catById[it.categoryId]?.name ?: "Lainnya" }
                 .mapValues { (_, list) -> list.sumOf { it.amount } }
                 .entries
                 .sortedByDescending { it.value }
-                .take(6)
-            if (topExpenseCats.isNotEmpty()) {
+            if (allExpenseCats.isNotEmpty()) {
                 sb.append("  Breakdown Pengeluaran bulan ini (${book.name}): ")
-                sb.append(topExpenseCats.joinToString(", ") { "${it.key} ${CuciMoneyHelpers.formatRp(it.value)}" })
+                sb.append(allExpenseCats.joinToString(", ") { "${it.key} ${CuciMoneyHelpers.formatRp(it.value)}" })
                 sb.append("\n")
             }
 
-            val topIncomeCats = monthTrx.filter { it.direction == "in" }
+            val allIncomeCats = monthTrx.filter { it.direction == "in" }
                 .groupBy { catById[it.categoryId]?.name ?: "Lainnya" }
                 .mapValues { (_, list) -> list.sumOf { it.amount } }
                 .entries
                 .sortedByDescending { it.value }
-                .take(5)
-            if (topIncomeCats.isNotEmpty()) {
+            if (allIncomeCats.isNotEmpty()) {
                 sb.append("  Breakdown Pemasukan bulan ini (${book.name}): ")
-                sb.append(topIncomeCats.joinToString(", ") { "${it.key} ${CuciMoneyHelpers.formatRp(it.value)}" })
+                sb.append(allIncomeCats.joinToString(", ") { "${it.key} ${CuciMoneyHelpers.formatRp(it.value)}" })
                 sb.append("\n")
             }
 
@@ -3986,12 +4331,14 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 val recentCuci = cuciState.transactions
                     .filter { it.bookId == book.id }
                     .sortedWith(compareByDescending<CuciTransactionEntity> { it.date }.thenByDescending { it.id })
-                    .take(3)
+                    .take(5)
                 if (recentCuci.isNotEmpty()) {
                     sb.append("  Transaksi terakhir (${book.name}): ")
                     sb.append(recentCuci.joinToString("; ") { t ->
                         val sign = if (t.direction == "in") "+" else "-"
-                        "${t.title} ($sign${CuciMoneyHelpers.formatRp(t.amount)}, ${t.date})"
+                        val cName = catById[t.categoryId]?.name ?: "-"
+                        val aName = accById[t.accountId]?.name ?: "-"
+                        "[id=${t.id}] ${t.title} ($sign${CuciMoneyHelpers.formatRp(t.amount)}, $cName, $aName, ${t.date})"
                     })
                     sb.append("\n")
                 }
@@ -4140,61 +4487,112 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
             val catMap = cuci.categories.associate { it.id to it.name }
             val accMap = cuci.accounts.associate { it.id to it.name }
             val allTrx = cuci.transactions.sortedWith(compareByDescending<CuciTransactionEntity> { it.date }.thenByDescending { it.id })
-            val hits = allTrx.filter { t ->
-                val bName = bookMap[t.bookId].orEmpty()
-                val cName = catMap[t.categoryId].orEmpty()
-                val aName = accMap[t.accountId].orEmpty()
-                val dirLabel = if (t.direction == "in") "masuk pemasukan" else "keluar pengeluaran"
-                matchesTokens("${t.date} ${t.title} $bName $cName $aName $dirLabel ${t.amount}")
+            val filter = SseTagParser.parseCuciSearchQuery(rawQuery)
+            val hits = if (filter.isStructured) {
+                val qTokens = filter.query.lowercase().split(Regex("\\s+")).filter { it.length >= 2 }
+                allTrx.filter { t ->
+                    val bName = bookMap[t.bookId].orEmpty()
+                    val cName = catMap[t.categoryId].orEmpty()
+                    val aName = accMap[t.accountId].orEmpty()
+                    val bookOk = filter.book.isBlank() || bName.contains(filter.book, ignoreCase = true)
+                    val monthOk = filter.month.isBlank() || t.date.startsWith(filter.month)
+                    val fromOk = filter.fromDate.isBlank() || t.date >= filter.fromDate
+                    val toOk = filter.toDate.isBlank() || t.date <= filter.toDate
+                    val catOk = filter.category.isBlank() || cName.contains(filter.category, ignoreCase = true)
+                    val accOk = filter.account.isBlank() || aName.contains(filter.account, ignoreCase = true)
+                    val dirOk = filter.direction.isBlank() || t.direction == filter.direction
+                    val hay = "${t.title} $bName $cName $aName ${t.date} ${t.amount}".lowercase()
+                    val qOk = qTokens.isEmpty() || qTokens.all { hay.contains(it) }
+                    bookOk && monthOk && fromOk && toOk && catOk && accOk && dirOk && qOk
+                }
+            } else {
+                val dateRegex = Regex("""^\d{4}-\d{2}(-\d{2})?$""")
+                val dateTokens = tokens.filter { dateRegex.matches(it) }
+                val textTokens = tokens.filterNot { dateRegex.matches(it) }
+                allTrx.filter { t ->
+                    val bName = bookMap[t.bookId].orEmpty()
+                    val cName = catMap[t.categoryId].orEmpty()
+                    val aName = accMap[t.accountId].orEmpty()
+                    val dirLabel = if (t.direction == "in") "masuk pemasukan" else "keluar pengeluaran"
+                    val hay = "${t.date} ${t.title} $bName $cName $aName $dirLabel ${t.amount}".lowercase()
+                    val datesOk = dateTokens.all { t.date.startsWith(it) }
+                    val textsOk = if (dateTokens.isNotEmpty()) {
+                        textTokens.all { hay.contains(it) }
+                    } else {
+                        matchesTokens(hay)
+                    }
+                    datesOk && textsOk
+                }
             }
             if (hits.isNotEmpty()) {
                 val nonTrfHits = hits.filter { it.transferPair == null }
                 val sumIn = nonTrfHits.filter { it.direction == "in" }.sumOf { it.amount }
                 val sumOut = nonTrfHits.filter { it.direction == "out" }.sumOf { it.amount }
                 out.append("CuciMoney+ (${hits.size} transaksi cocok; total non-transfer masuk ${CuciMoneyHelpers.formatRp(sumIn)}, keluar ${CuciMoneyHelpers.formatRp(sumOut)}):\n")
-                hits.take(if (scope == "cuci") 12 else limitPerMod).forEach { t ->
+                val outBreakdown = nonTrfHits.filter { it.direction == "out" }
+                    .groupBy { catMap[it.categoryId] ?: "Lainnya" }
+                    .mapValues { (_, list) -> list.sumOf { it.amount } }
+                    .entries
+                    .sortedByDescending { it.value }
+                if (outBreakdown.isNotEmpty()) {
+                    out.append("  Breakdown keluar: ${outBreakdown.joinToString(", ") { "${it.key} ${CuciMoneyHelpers.formatRp(it.value)}" }}\n")
+                }
+                hits.take(if (scope == "cuci") 15 else limitPerMod).forEach { t ->
                     val sign = if (t.direction == "in") "+" else "-"
                     val bName = bookMap[t.bookId].orEmpty()
                     val cName = catMap[t.categoryId].orEmpty()
                     val aName = accMap[t.accountId].orEmpty()
-                    out.append("- ${t.date} [$bName] ${t.title} ($sign${CuciMoneyHelpers.formatRp(t.amount)}, $cName, $aName)\n")
+                    out.append("- [id=${t.id}] ${t.date} [$bName] ${t.title} ($sign${CuciMoneyHelpers.formatRp(t.amount)}, $cName, $aName)\n")
                 }
             }
         }
 
         if (scope == "ideku" || scope == "all") {
             val hits = _uiState.value.idekuState.ideas.filter { item ->
-                matchesTokens("${item.type} ${item.title} ${item.notes} ${item.category} ${item.status} ${item.priority} ${item.jalur}")
+                matchesTokens("${item.id} ${item.type} ${item.title} ${item.notes} ${item.category} ${item.status} ${item.priority} ${item.jalur}")
             }.take(limitPerMod)
             if (hits.isNotEmpty()) {
                 out.append("IdeKu & Wishlist (${hits.size} ditemukan):\n")
                 hits.forEach { item ->
                     val price = if (item.type == "Wishlist" && item.price > 0L) ", ${CuciMoneyHelpers.formatRp(item.price)}" else ""
                     val note = if (item.notes.isNotBlank()) " — ${item.notes.take(80)}" else ""
-                    out.append("- [${item.type}] ${item.title} (${item.category}, ${item.status}, ${item.priority}$price)$note\n")
+                    out.append("- [id=${item.id}] [${item.type}] ${item.title} (${item.category}, ${item.status}, ${item.priority}$price)$note\n")
                 }
             }
         }
 
         if (scope == "dailyos" || scope == "all") {
             val daily = _uiState.value.dailyOsState
+            val today = DailyOsHelpers.todayStr()
             val habitHits = daily.habits.filter {
-                matchesTokens("${it.name} ${it.category} ${if (it.archived) "arsip" else "aktif"}")
+                matchesTokens("${it.id} ${it.name} ${it.category} ${if (it.archived) "arsip" else "aktif"}")
             }.take(limitPerMod)
             val todoHits = daily.todos.filter {
-                matchesTokens("${it.title} ${it.priority} ${it.deadline.orEmpty()} ${if (it.done) "selesai done" else "pending"}")
+                matchesTokens("${it.id} ${it.title} ${it.priority} ${it.deadline.orEmpty()} ${if (it.done) "selesai done" else "pending"}")
             }.take(limitPerMod)
             if (habitHits.isNotEmpty() || todoHits.isNotEmpty()) {
                 out.append("Daily OS:\n")
                 habitHits.forEach { h ->
                     val hist = DailyOsHelpers.parseHistory(h.historyJson)
-                    val totalDays = hist.count { it.value.isNotEmpty() }
-                    out.append("- Habit \"${h.name}\" (${h.category}, $totalDays hari tercatat${if (h.archived) ", diarsipkan" else ""})\n")
+                    val nonEmptyDates = hist.filterValues { it.isNotEmpty() }.keys.sortedDescending()
+                    val totalDays = nonEmptyDates.size
+                    val hStreak = DailyOsHelpers.calculateHabitStreak(h, today)
+                    val scheduledToday = DailyOsHelpers.isHabitScheduled(h, today)
+                    val doneToday = hist[today].orEmpty().isNotEmpty()
+                    val todayInfo = when {
+                        doneToday -> "hari ini selesai"
+                        !scheduledToday -> "hari ini tidak terjadwal"
+                        else -> "hari ini belum"
+                    }
+                    val recentInfo = if (nonEmptyDates.isNotEmpty()) {
+                        ", terakhir: ${nonEmptyDates.take(5).joinToString(", ")}"
+                    } else ""
+                    out.append("- [id=${h.id}] Habit \"${h.name}\" (${h.category}, streak $hStreak hari berturut-turut, $todayInfo, total $totalDays hari$recentInfo${if (h.archived) ", diarsipkan" else ""})\n")
                 }
                 todoHits.forEach { t ->
                     val st = if (t.done) "Selesai" else "Belum"
                     val dl = t.deadline?.takeIf { it.isNotBlank() }?.let { ", deadline $it" }.orEmpty()
-                    out.append("- To-Do \"${t.title}\" [$st, ${t.priority}$dl]\n")
+                    out.append("- [id=${t.id}] To-Do \"${t.title}\" [$st, ${t.priority}$dl]\n")
                 }
             }
         }
@@ -4221,10 +4619,109 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
             }
         }
 
+        if (scope == "device") {
+            val app = getApplication<Application>()
+            val wantBattery = q.contains("baterai") || q.contains("battery")
+            val wantCalendar = q.contains("kalender") || q.contains("calendar") || q.contains("jadwal") || q.contains("agenda")
+            val wantLocation = q.contains("lokasi") || q.contains("location") || q.contains("dimana") || q.contains("di mana")
+            val wantReminders = q.contains("reminder") || q.contains("pengingat")
+            val generic = !wantBattery && !wantCalendar && !wantLocation && !wantReminders
+
+            if (wantBattery || generic) {
+                out.append(AndroidDeviceBridge.readBatteryStatus(app)).append("\n")
+            }
+            if (wantReminders || generic) {
+                val active = remReminderDao.getActive(System.currentTimeMillis())
+                if (active.isNotEmpty()) {
+                    val rFmt = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.getDefault())
+                    val rZone = ZoneId.systemDefault()
+                    out.append("Pengingat Terjadwal Rem (${active.size}):\n")
+                    active.take(10).forEach { rem ->
+                        val whenStr = Instant.ofEpochMilli(rem.triggerAtMs).atZone(rZone).format(rFmt)
+                        out.append("- [id=${rem.id}] $whenStr: ${rem.title}\n")
+                    }
+                } else if (wantReminders) {
+                    out.append("Tidak ada pengingat terjadwal aktif saat ini.\n")
+                }
+            }
+            if (wantCalendar || (generic && AndroidDeviceBridge.hasCalendarPermission(app))) {
+                val dateArg = Regex("""\d{4}-\d{2}-\d{2}""").find(rawQuery)?.value
+                if (!AndroidDeviceBridge.hasCalendarPermission(app)) {
+                    _deviceEvents.tryEmit(
+                        DeviceActionEvent.RequestPermission(android.Manifest.permission.READ_CALENDAR, "Kalender")
+                    )
+                }
+                out.append(AndroidDeviceBridge.readCalendarEvents(app, dateArg)).append("\n")
+            }
+            if (wantLocation) {
+                val optIn = _uiState.value.deviceLocationOptIn
+                if (optIn && !AndroidDeviceBridge.hasLocationPermission(app)) {
+                    _deviceEvents.tryEmit(
+                        DeviceActionEvent.RequestPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION, "Lokasi")
+                    )
+                }
+                out.append(AndroidDeviceBridge.readCoarseLocation(app, optIn)).append("\n")
+            }
+        }
+
         val resultStr = out.toString().trim()
         return resultStr.ifBlank {
             "Tidak ditemukan data yang cocok di arsip $scope untuk kata kunci \"$rawQuery\"."
         }
+    }
+
+    private fun resolveCuciTransactionTarget(
+        target: String,
+        allTrx: List<CuciTransactionEntity>,
+        activeBookId: Long,
+        today: String
+    ): CuciTransactionEntity? {
+        val clean = target.trim()
+        if (clean.isEmpty()) return null
+        clean.toLongOrNull()?.let { exactId ->
+            return allTrx.firstOrNull { it.id == exactId }
+        }
+        val editable = allTrx.filter { it.savingsPot == null }
+        val q = clean.lowercase()
+        val tiers = listOf(
+            editable.filter { it.bookId == activeBookId && it.date == today && it.title.equals(q, ignoreCase = true) },
+            editable.filter { it.bookId == activeBookId && it.date == today && it.title.lowercase().contains(q) },
+            editable.filter { it.bookId == activeBookId && it.title.equals(q, ignoreCase = true) },
+            editable.filter { it.bookId == activeBookId && it.title.lowercase().contains(q) },
+            editable.filter { it.title.equals(q, ignoreCase = true) },
+            editable.filter { it.title.lowercase().contains(q) }
+        )
+        for (tier in tiers) {
+            if (tier.size == 1) return tier.first()
+            if (tier.size > 1) return null
+        }
+        return null
+    }
+
+    private fun resolveIdekuTarget(target: String, items: List<IdekuIdeaEntity>): IdekuIdeaEntity? {
+        val clean = target.trim()
+        if (clean.isEmpty()) return null
+        clean.toLongOrNull()?.let { exactId ->
+            return items.firstOrNull { it.id == exactId }
+        }
+        val q = clean.lowercase()
+        val exact = items.filter { it.title.equals(q, ignoreCase = true) }
+        if (exact.size == 1) return exact.first()
+        if (exact.size > 1) return null
+        val partial = items.filter { it.title.lowercase().contains(q) }
+        return if (partial.size == 1) partial.first() else null
+    }
+
+    private fun resolveDailyOsTodoTarget(target: String, todos: List<DailyOsTodoEntity>): DailyOsTodoEntity? {
+        val clean = target.trim()
+        if (clean.isEmpty()) return null
+        todos.firstOrNull { it.id.equals(clean, ignoreCase = true) }?.let { return it }
+        val q = clean.lowercase()
+        val exact = todos.filter { it.title.equals(q, ignoreCase = true) }
+        if (exact.size == 1) return exact.first()
+        if (exact.size > 1) return null
+        val partial = todos.filter { it.title.lowercase().contains(q) }
+        return if (partial.size == 1) partial.first() else null
     }
 
     private fun applyExpression(name: String, autoRevert: Boolean) {
