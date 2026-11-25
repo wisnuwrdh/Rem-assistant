@@ -129,7 +129,7 @@ Respons LLM dapat menyertakan tag tersembunyi berikut (dibersihkan dari bubble c
 | `[MEMORY:SET\|kategori\|fact_key\|nilai]` | Menyimpan atau memperbarui fakta memori personal dari obrolan |
 | `[MEMORY:DEL\|fact_key_atau_kata_kunci]` | Menghapus/melupakan fakta memori personal |
 | `[EXPR:nama]` | Mengubah ekspresi & motion Live2D (`happy`, `smile`, `shame`, `sad`, `cry`, `angry`, `surprise`, `serious`, `proud`, `doubt`, `puzzle`, `upset`, `appeal`, `navi`, `none`) |
-| `[OPEN:app]` | Membuka overlay modul (`kronik`, `linkku`, `cucimoney`, `ideku`, `dailyos`) |
+| `[OPEN:app]` | Membuka overlay modul (`kronik`, `linkku`, `cucimoney`, `ideku`, `dailyos`) dengan verifikasi perintah eksplisit (`shouldAllowOpenApp`) agar tidak terbuka tidak sengaja saat obrolan biasa |
 | `[DEVICE:ALARM\|HH:mm\|label]` | Memasang alarm sistem Android lewat `AlarmClock.ACTION_SET_ALARM` (alias: `SET_ALARM`) |
 | `[DEVICE:REMINDER\|tgl\|HH:mm\|pesan]` | Menjadwalkan pengingat notifikasi lokal sekali jalan (persisten di `RemReminderEntity`, alias: `SET_REMINDER`, `INGATKAN`) |
 | `[DEVICE:DEL_REMINDER\|id_atau_query]` | Membatalkan pengingat terjadwal Rem (alias: `CANCEL_REMINDER`, `HAPUS_REMINDER`) |
@@ -282,7 +282,7 @@ Bagian ini merangkum posisi proyek saat ini sebagai konteks bagi kontributor ata
 * Backup/Restore portabel lintas-modul via ZIP v3 (termasuk `knowledge_graph.json`) maupun **Cloud Backup Google Drive (`appDataFolder`)** + Auto-Backup `WorkManager` & enkripsi passphrase AES-256-GCM.
 
 ### Area Terbuka & Kandidat Pengembangan Berikutnya
-1. **Automated Testing:** Telah tersedia unit test untuk `CloudBackupCryptoTest`, `KnowledgeGraphModelsTest`, dan `BehavioralSignalSyncTest` — kandidat prioritas berikutnya adalah unit test untuk `SseTagParser`, `CuciMoney` saldo/realisasi wishlist, `LinkkuCrypto`, dan migrasi Room (`MigrationTestHelper`).
+1. **Automated Testing:** Telah tersedia unit test untuk `CloudBackupCryptoTest`, `KnowledgeGraphModelsTest`, `BehavioralSignalSyncTest`, dan `SseTagParserTest` — kandidat prioritas berikutnya adalah unit test untuk `CuciMoney` saldo/realisasi wishlist, `LinkkuCrypto`, dan migrasi Room (`MigrationTestHelper`).
 2. **Modularisasi `AsistenViewModel.kt`:** Ekosistem ZIP sudah dipisahkan ke `EcosystemBackupRepository`; memecah orkestrasi AI, prompt builder, tag executor, dan action 5 sub-app menjadi use-case per modul akan meningkatkan keterbacaan dan testability.
 3. **Voice Interaction Dua Arah & TTS Fallback Sistem:** Menambah mode percakapan hands-free (STT mic kontinu) serta opsi Android `TextToSpeech` lokal sebagai opsi tambahan di luar Fish Audio & voice klip bawaan.
 4. **Pembersihan Legacy:** Menghapus parameter `API_BASE_URL` yang sudah tidak terpakai (`@Suppress("unused")`) di client jaringan Android.

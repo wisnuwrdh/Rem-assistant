@@ -929,6 +929,38 @@ object SseTagParser {
         }
     }
 
+    /**
+     * Memastikan tag [OPEN:app] dari LLM hanya dieksekusi bila pesan pengguna benar-benar
+     * berisi perintah eksplisit untuk membuka/berpindah ke layar sub-app terkait.
+     */
+    fun shouldAllowOpenApp(userMessage: String, appKey: String): Boolean {
+        val cleanApp = appKey.trim().lowercase()
+        val msg = userMessage.trim().lowercase()
+        if (cleanApp.isEmpty() || msg.isEmpty()) return false
+
+        val negationRegex = Regex(
+            """\b(jangan|jgn|tidak|tak|nggak|gak|gk|usah|tanpa|bukan)\s+(?:perlu\s+|usah\s+)?(buka|bukakan|bukain|open|launch|masuk|pindah|pergi|tampilkan|tampilin|lihat)\b"""
+        )
+        if (negationRegex.containsMatchIn(msg)) return false
+
+        val openIntentRegex = Regex(
+            """\b(buka|bukakan|bukain|open|launch)\b|\b(masuk|pindah|pergi|arahkan)\s+ke\b|\b(tampilkan|tampilin|lihat|ke)\s+(halaman|layar|menu|tab|aplikasi|app|modul)\b"""
+        )
+        if (!openIntentRegex.containsMatchIn(msg)) return false
+
+        val appTerms: List<String> = when (cleanApp) {
+            "kronik" -> listOf("kronik", "jurnal", "diary", "catatan harian")
+            "linkku" -> listOf("linkku", "link ku", "bookmark", "tautan", "daftar link")
+            "cucimoney" -> listOf("cucimoney", "cuci money", "cuci", "dompet", "keuangan", "buku kas")
+            "ideku" -> listOf("ideku", "ide ku", "wishlist", "daftar ide", "ide")
+            "dailyos" -> listOf("dailyos", "daily os", "habit", "todo", "to-do", "daftar tugas")
+            else -> return false
+        }
+        return appTerms.any { term ->
+            Regex("""\b${Regex.escape(term)}\b""").containsMatchIn(msg)
+        }
+    }
+
     fun splitForTts(text: String, minLen: Int = 12, maxChunks: Int = 4): List<String> {
         val trimmed = text.trim().take(500)
         if (trimmed.isEmpty()) return emptyList()

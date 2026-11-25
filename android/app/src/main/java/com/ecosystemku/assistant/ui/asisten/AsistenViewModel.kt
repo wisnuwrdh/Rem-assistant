@@ -257,10 +257,8 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         Jika Tuan meminta Rem mencatat refleksi/jurnal ke Kronik, sisipkan tag tersembunyi di akhir jawaban (sebelum [EXPR:...]):
         [KRONIK:ADD|judul_singkat|isi_jurnal_natural|mood_opsional]
         Mood opsional yang valid: Fokus, Lelah, Terinspirasi, Berat, Stabil, Semangat, Kabur.
-        Jika Tuan eksplisit meminta membuka Kronik, sisipkan [OPEN:kronik] sebelum [EXPR:...].
         Jika Tuan membagikan tautan/URL atau meminta menyimpan bookmark ke LinkKu, sisipkan:
         [LINKKU:ADD|url_lengkap|judul_singkat|catatan_opsional|kategori_opsional|tag1,tag2]
-        Jika Tuan meminta membuka LinkKu atau daftar link tersimpan, sisipkan [OPEN:linkku] sebelum [EXPR:...].
         Jika Tuan menyebut pengeluaran/pemasukan atau meminta mencatat transaksi keuangan ke CuciMoney+, sisipkan:
         [CUCI:ADD|out_atau_in|nominal_angka|judul|kategori_opsional|akun_opsional|buku_opsional|tanggal_yyyy-mm-dd_atau_kosong]
         Jika Tuan mengoreksi transaksi yang sudah tercatat (nominal/judul/kategori/akun/tanggal), gunakan id jika ada atau kata kunci unik:
@@ -272,7 +270,6 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         [CUCI:SAVE|nama_wishlist|nominal_angka|akun_sumber_opsional|buku_opsional]
         Jika Tuan melapor target barang wishlist sudah kebeli / ingin merealisasikan tabungannya, sisipkan:
         [CUCI:REALIZE|nama_wishlist|akun_opsional|nominal_beli_opsional|buku_opsional]
-        Jika Tuan meminta membuka CuciMoney+ / dompet / analisis keuangan, sisipkan [OPEN:cucimoney] sebelum [EXPR:...].
         Jika Tuan menyampaikan ide baru atau barang impian/wishlist untuk dicatat ke IdeKu, sisipkan:
         [IDEKU:ADD|Idea|judul_ide|kategori_opsional|Penting_Nanti_Kapan-kapan|catatan_opsional|jalur_opsional]
         atau untuk wishlist:
@@ -283,7 +280,6 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         [IDEKU:EDIT|id_atau_kata_kunci|judul_baru_atau_kosong|kategori_baru_atau_kosong|prioritas_baru_atau_kosong|catatan_baru_atau_kosong|jalur_baru_atau_kosong|harga_baru_atau_kosong]
         Jika Tuan meminta menghapus ide/wishlist tertentu, sisipkan:
         [IDEKU:DEL|id_atau_kata_kunci]
-        Jika Tuan meminta membuka IdeKu / daftar ide / wishlist, sisipkan [OPEN:ideku] sebelum [EXPR:...].
         Jika Tuan meminta membuat habit baru di Daily OS, sisipkan:
         [DAILYOS:HABIT|nama_habit|kategori_opsional|ikon_opsional]
         Jika Tuan meminta mencatat tugas/to-do ke Daily OS, sisipkan:
@@ -297,7 +293,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         Jika Tuan meminta menghapus to-do, sisipkan:
         [DAILYOS:DEL_TODO|id_atau_kata_kunci]
         Jika Tuan meminta mengarsipkan atau menghapus habit, sisipkan [DAILYOS:ARCHIVE_HABIT|id_atau_kata_kunci] atau [DAILYOS:DEL_HABIT|id_atau_kata_kunci].
-        Jika Tuan meminta membuka Daily OS / habit tracker / daftar to-do, sisipkan [OPEN:dailyos] sebelum [EXPR:...].
+        Aturan [OPEN:app] (KETAT): JANGAN pernah menyisipkan [OPEN:kronik], [OPEN:linkku], [OPEN:cucimoney], [OPEN:ideku], atau [OPEN:dailyos] saat Tuan hanya membahas, membaca, bertanya isi, menganalisis, atau mencatat data via chat. Sisipkan [OPEN:nama_app] sebelum [EXPR:...] HANYA jika Tuan secara eksplisit menyuruh membuka atau berpindah ke layar aplikasi tersebut (contoh: "buka Kronik", "bukain CuciMoney+", "pindah ke Daily OS").
 
         ## Fungsi Perangkat Android
         Kamu dapat membantu Tuan mengoperasikan fitur perangkat lewat tag tersembunyi (sebelum [EXPR:...]):
@@ -4049,7 +4045,9 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 }
             }
 
-            val didOpenApp = parsed.openApp in setOf("kronik", "linkku", "cucimoney", "ideku", "dailyos")
+            val lastUserMsg = recent.lastOrNull { it.role == "user" }?.content.orEmpty()
+            val didOpenApp = parsed.openApp in setOf("kronik", "linkku", "cucimoney", "ideku", "dailyos") &&
+                SseTagParser.shouldAllowOpenApp(lastUserMsg, parsed.openApp.orEmpty())
             if (didOpenApp) {
                 _uiState.update { it.copy(pendingOpenApp = parsed.openApp) }
             }
@@ -4063,7 +4061,6 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
             _streamingText.value = ""
             _uiState.update { it.copy(isThinking = false) }
 
-            val lastUserMsg = recent.lastOrNull { it.role == "user" }?.content.orEmpty()
             val isFirstTurnInSession = recent.count { it.role == "user" } <= 1
             val fallbackClip = selectChatVoiceClip(
                 userMessage = lastUserMsg,
