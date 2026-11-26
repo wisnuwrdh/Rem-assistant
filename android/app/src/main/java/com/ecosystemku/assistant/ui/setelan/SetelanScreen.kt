@@ -179,6 +179,7 @@ fun SetelanScreen(
     kgNodeCount: Int = 0,
     kgEdgeCount: Int = 0,
     kgMicroQuestionsEnabled: Boolean = true,
+    skillsEnabled: Boolean = true,
     kgWeeklyReflectionEnabled: Boolean = false,
     kgWeeklyReflectionDay: Int = Calendar.SUNDAY,
     kgWeeklyReflectionTime: String = "20:00",
@@ -198,6 +199,7 @@ fun SetelanScreen(
     onToggleAutoLearn: (Boolean) -> Unit = {},
     onOpenKnowledgeGraph: () -> Unit = {},
     onToggleKgMicroQuestions: (Boolean) -> Unit = {},
+    onToggleSkillsEnabled: (Boolean) -> Unit = {},
     onToggleKgWeeklyReflection: (Boolean) -> Unit = {},
     onSetKgWeeklyReflectionSchedule: (Int, String) -> Unit = { _, _ -> },
     onSetDeviceLocationOptIn: (Boolean) -> Unit = {},
@@ -899,6 +901,49 @@ fun SetelanScreen(
                                         .size(18.dp)
                                         .clip(CircleShape)
                                         .background(if (kgMicroQuestionsEnabled) DominantBg else TextMuted)
+                                )
+                            }
+                        }
+
+                        // Toggle Mode Keahlian Adaptif (Skills)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onToggleSkillsEnabled(!skillsEnabled) },
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Mode Keahlian Adaptif (Skills)",
+                                    fontFamily = UiSans,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = TextPrimary
+                                )
+                                Text(
+                                    text = "Muat panduan keuangan, refleksi, ide, & review hanya saat relevan",
+                                    fontFamily = UiSans,
+                                    fontSize = 11.sp,
+                                    color = TextMuted
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Box(
+                                modifier = Modifier
+                                    .width(42.dp)
+                                    .height(24.dp)
+                                    .clip(RoundedCornerShape(50))
+                                    .background(if (skillsEnabled) AccentBlue else ElevatedSurface)
+                                    .border(1.dp, if (skillsEnabled) AccentBlue else BorderLight, RoundedCornerShape(50))
+                                    .padding(3.dp),
+                                contentAlignment = if (skillsEnabled) Alignment.CenterEnd else Alignment.CenterStart
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(18.dp)
+                                        .clip(CircleShape)
+                                        .background(if (skillsEnabled) DominantBg else TextMuted)
                                 )
                             }
                         }

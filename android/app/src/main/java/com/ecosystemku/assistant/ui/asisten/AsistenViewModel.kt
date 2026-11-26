@@ -26,6 +26,7 @@ import com.ecosystemku.assistant.data.kg.KnowledgeGraphHelpers
 import com.ecosystemku.assistant.data.kg.KnowledgeGraphRepository
 import com.ecosystemku.assistant.data.kg.SimilarityBenchmark
 import com.ecosystemku.assistant.data.kg.SimilarityRunReport
+import com.ecosystemku.assistant.data.skills.RemSkillRegistry
 import com.ecosystemku.assistant.data.local.AiConfigField
 import com.ecosystemku.assistant.data.local.AiConfigSnapshot
 import com.ecosystemku.assistant.data.local.ApiKeyStore
@@ -163,6 +164,7 @@ data class AsistenUiState(
     val kgEdges: List<KgEdgeEntity> = emptyList(),
     val isSyncingKg: Boolean = false,
     val kgMicroQuestionsEnabled: Boolean = true,
+    val skillsEnabled: Boolean = true,
     val kgWeeklyReflectionEnabled: Boolean = false,
     val kgWeeklyReflectionDay: Int = Calendar.SUNDAY,
     val kgWeeklyReflectionTime: String = "20:00",
@@ -193,6 +195,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
     private val kgDao = db.knowledgeGraphDao()
     private val kgRepository = KnowledgeGraphRepository(kgDao)
     private val behavioralSignalSync = BehavioralSignalSync(db, kgRepository)
+    private val skillRegistry = RemSkillRegistry(application)
     private val asistenPrefs = application.getSharedPreferences("asisten_prefs", Context.MODE_PRIVATE)
     private val linkkuPrefs = application.getSharedPreferences("linkku_prefs", Context.MODE_PRIVATE)
     private val cuciPrefs = application.getSharedPreferences("cucimoney_prefs", Context.MODE_PRIVATE)
@@ -409,6 +412,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         val todoNotifOn = asistenPrefs.getBoolean("asisten_notif_todo_on", true)
         val autoLearn = asistenPrefs.getBoolean("asisten_auto_learn", true)
         val kgMicroQuestions = asistenPrefs.getBoolean("asisten_kg_micro_questions", true)
+        val skillsOn = asistenPrefs.getBoolean("asisten_skills_enabled", true)
         val kgWeeklyOn = asistenPrefs.getBoolean("asisten_kg_weekly_enabled", false)
         val kgWeeklyDay = asistenPrefs.getInt("asisten_kg_weekly_day", Calendar.SUNDAY).coerceIn(Calendar.SUNDAY, Calendar.SATURDAY)
         val kgWeeklyTime = asistenPrefs.getString("asisten_kg_weekly_time", "20:00")?.takeIf { it.contains(":") } ?: "20:00"
@@ -467,6 +471,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 notifTodoEnabled = todoNotifOn,
                 autoLearnMemory = autoLearn,
                 kgMicroQuestionsEnabled = kgMicroQuestions,
+                skillsEnabled = skillsOn,
                 kgWeeklyReflectionEnabled = kgWeeklyOn,
                 kgWeeklyReflectionDay = kgWeeklyDay,
                 kgWeeklyReflectionTime = kgWeeklyTime,
@@ -1239,6 +1244,15 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         showBannerMessage(
             if (enabled) "Pertanyaan refleksi ringan diaktifkan"
             else "Pertanyaan refleksi ringan dimatikan"
+        )
+    }
+
+    fun setSkillsEnabled(enabled: Boolean) {
+        asistenPrefs.edit().putBoolean("asisten_skills_enabled", enabled).apply()
+        _uiState.update { it.copy(skillsEnabled = enabled) }
+        showBannerMessage(
+            if (enabled) "Mode Keahlian Adaptif diaktifkan"
+            else "Mode Keahlian Adaptif dimatikan"
         )
     }
 
@@ -4456,6 +4470,18 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                     append(
                         "\n\nCatatan opsional: bila terasa natural dan relevan dengan topik, Rem boleh menyelipkan maksimal satu pertanyaan ringan singkat untuk lebih memahami alasan/preferensi/pola pikir Tuan (jangan memaksa jika Tuan sedang terburu-buru atau bertanya hal teknis)."
                     )
+                }
+            }
+            if (_uiState.value.skillsEnabled) {
+                val activeSkill = skillRegistry.resolveSkill(
+                    userMessage = currentUserText,
+                    sessionTitle = activeSession?.title,
+                    isKenaliAku = isKenaliAku
+                )
+                if (activeSkill != null) {
+                    append("\n\n## Panduan Keahlian Aktif (${activeSkill.title})\n")
+                    append(activeSkill.body)
+                    append("\n")
                 }
             }
             if (topMemories.isNotEmpty()) {
