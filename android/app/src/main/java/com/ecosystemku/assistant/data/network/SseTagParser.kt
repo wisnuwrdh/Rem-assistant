@@ -15,6 +15,7 @@ object SseTagParser {
     private val IDEKU_REGEX = Regex("""\[IDEKU:([^\]\r\n]+)]""", RegexOption.IGNORE_CASE)
     private val DAILYOS_REGEX = Regex("""\[DAILYOS:([^\]\r\n]+)]""", RegexOption.IGNORE_CASE)
     private val DEVICE_REGEX = Regex("""\[DEVICE:([^\]\r\n]+)]""", RegexOption.IGNORE_CASE)
+    private val KG_REGEX = Regex("""\[KG:([^\]\r\n]+)]""", RegexOption.IGNORE_CASE)
 
     private val VALID_EXPRS = setOf(
         "happy", "smile", "shame", "sad", "cry", "angry",
@@ -39,11 +40,50 @@ object SseTagParser {
         ) : MemoryChatAction()
     }
 
+    sealed class KgChatAction {
+        data class UpdateNode(
+            val target: String,
+            val newLabel: String = "",
+            val newSummary: String = "",
+            val newType: String = "",
+            val reason: String = ""
+        ) : KgChatAction()
+
+        data class ArchiveNode(
+            val target: String,
+            val reason: String = ""
+        ) : KgChatAction()
+
+        data class MergeNodes(
+            val sourceTarget: String,
+            val destinationTarget: String,
+            val reason: String = ""
+        ) : KgChatAction()
+    }
+
     sealed class KronikChatAction {
         data class AddEntry(
             val title: String,
             val content: String,
             val mood: String? = null
+        ) : KronikChatAction()
+
+        data class EditEntry(
+            val target: String,
+            val title: String = "",
+            val content: String = "",
+            val mood: String? = null,
+            val date: String = ""
+        ) : KronikChatAction()
+
+        data class DeleteEntry(
+            val target: String,
+            val archiveOnly: Boolean = false
+        ) : KronikChatAction()
+
+        data class MergeEntries(
+            val sourceTarget: String,
+            val destinationTarget: String
         ) : KronikChatAction()
     }
 
@@ -124,6 +164,15 @@ object SseTagParser {
 
         data class DeleteItem(
             val target: String
+        ) : IdekuChatAction()
+
+        data class ArchiveItem(
+            val target: String
+        ) : IdekuChatAction()
+
+        data class MergeItems(
+            val sourceTarget: String,
+            val destinationTarget: String
         ) : IdekuChatAction()
     }
 
@@ -216,6 +265,7 @@ object SseTagParser {
             .replace(CHOICES_REGEX, "")
             .replace(SEARCH_REGEX, "")
             .replace(MEMORY_REGEX, "")
+            .replace(KG_REGEX, "")
             .replace(KRONIK_REGEX, "")
             .replace(LINKKU_REGEX, "")
             .replace(CUCI_REGEX, "")
@@ -236,6 +286,7 @@ object SseTagParser {
         val choices: ChatChoicesData? = null,
         val searchAction: SearchQueryAction? = null,
         val memoryActions: List<MemoryChatAction> = emptyList(),
+        val kgActions: List<KgChatAction> = emptyList(),
         val kronikActions: List<KronikChatAction> = emptyList(),
         val linkkuActions: List<LinkkuChatAction> = emptyList(),
         val cuciActions: List<CuciChatAction> = emptyList(),
@@ -254,6 +305,9 @@ object SseTagParser {
         val searchAction = SEARCH_REGEX.find(rawText)?.groupValues?.getOrNull(1)?.let { parseSearchPayload(it) }
         val memoryActions = MEMORY_REGEX.findAll(rawText).mapNotNull { match ->
             parseMemoryPayload(match.groupValues.getOrNull(1).orEmpty())
+        }.toList()
+        val kgActions = KG_REGEX.findAll(rawText).mapNotNull { match ->
+            parseKgPayload(match.groupValues.getOrNull(1).orEmpty())
         }.toList()
         val kronikActions = KRONIK_REGEX.findAll(rawText).mapNotNull { match ->
             parseKronikPayload(match.groupValues.getOrNull(1).orEmpty())
@@ -282,6 +336,7 @@ object SseTagParser {
                 .replace(CHOICES_REGEX, "")
                 .replace(SEARCH_REGEX, "")
                 .replace(MEMORY_REGEX, "")
+                .replace(KG_REGEX, "")
                 .replace(KRONIK_REGEX, "")
                 .replace(LINKKU_REGEX, "")
                 .replace(CUCI_REGEX, "")
@@ -297,6 +352,7 @@ object SseTagParser {
             choices = choices,
             searchAction = searchAction,
             memoryActions = memoryActions,
+            kgActions = kgActions,
             kronikActions = kronikActions,
             linkkuActions = linkkuActions,
             cuciActions = cuciActions,
@@ -332,6 +388,52 @@ object SseTagParser {
             SearchQueryAction(scope = normalizedScope, query = q)
         } else {
             SearchQueryAction(scope = "all", query = parts.joinToString(" ").trim().take(160))
+        }
+    }
+
+    private fun parseKgPayload(payload: String): KgChatAction? {
+        val parts = payload.split("|").map { it.trim() }
+        if (parts.isEmpty()) return null
+        val cmd = parts[0].uppercase()
+        return when (cmd) {
+            "UPDATE", "EDIT", "UBAH" -> {
+                val target = parts.getOrNull(1).orEmpty().trim()
+                if (target.isBlank()) return null
+                val newLabel = parts.getOrNull(2).orEmpty().trim()
+                val newSummary = parts.getOrNull(3).orEmpty().trim()
+                val newType = parts.getOrNull(4).orEmpty().trim().uppercase()
+                val reason = parts.getOrNull(5).orEmpty().trim()
+                if (newLabel.isBlank() && newSummary.isBlank() && newType.isBlank()) {
+                    null
+                } else {
+                    KgChatAction.UpdateNode(
+                        target = target,
+                        newLabel = newLabel,
+                        newSummary = newSummary,
+                        newType = newType,
+                        reason = reason
+                    )
+                }
+            }
+            "ARCHIVE", "ARSIP", "USANG", "DEPRECATE" -> {
+                val target = parts.getOrNull(1).orEmpty().trim()
+                if (target.isBlank()) null
+                else KgChatAction.ArchiveNode(
+                    target = target,
+                    reason = parts.getOrNull(2).orEmpty().trim()
+                )
+            }
+            "MERGE", "GABUNG" -> {
+                val source = parts.getOrNull(1).orEmpty().trim()
+                val dest = parts.getOrNull(2).orEmpty().trim()
+                if (source.isBlank() || dest.isBlank()) null
+                else KgChatAction.MergeNodes(
+                    sourceTarget = source,
+                    destinationTarget = dest,
+                    reason = parts.getOrNull(3).orEmpty().trim()
+                )
+            }
+            else -> null
         }
     }
 
@@ -392,6 +494,47 @@ object SseTagParser {
                 val mood = parts.getOrNull(3)?.takeIf { it.isNotBlank() }
                 if (title.isBlank() && content.isBlank()) null
                 else KronikChatAction.AddEntry(title = title, content = content, mood = mood)
+            }
+            "EDIT", "UPDATE", "FIX" -> {
+                // [KRONIK:EDIT|id_atau_query|judul_baru|isi_baru|mood_baru|tanggal_yyyy-mm-dd]
+                val target = parts.getOrNull(1).orEmpty().trim()
+                if (target.isBlank()) return null
+                val title = parts.getOrNull(2).orEmpty().trim()
+                val content = parts.getOrNull(3).orEmpty().trim()
+                val rawMood = parts.getOrNull(4).orEmpty().trim()
+                val mood = when {
+                    rawMood.isBlank() -> null
+                    rawMood.lowercase() in setOf("-", "none", "hapus", "clear") -> "__CLEAR__"
+                    else -> rawMood
+                }
+                val date = normalizeCuciDate(parts.getOrNull(5).orEmpty())
+                if (title.isBlank() && content.isBlank() && mood == null && date.isBlank()) {
+                    return null
+                }
+                KronikChatAction.EditEntry(
+                    target = target,
+                    title = title,
+                    content = content,
+                    mood = mood,
+                    date = date
+                )
+            }
+            "DEL", "DELETE", "REMOVE", "HAPUS", "ARCHIVE", "ARSIP" -> {
+                val target = parts.getOrNull(1).orEmpty().trim()
+                if (target.isBlank()) null
+                else KronikChatAction.DeleteEntry(
+                    target = target,
+                    archiveOnly = cmd == "ARCHIVE" || cmd == "ARSIP"
+                )
+            }
+            "MERGE", "GABUNG" -> {
+                val source = parts.getOrNull(1).orEmpty().trim()
+                val dest = parts.getOrNull(2).orEmpty().trim()
+                if (source.isBlank() || dest.isBlank()) null
+                else KronikChatAction.MergeEntries(
+                    sourceTarget = source,
+                    destinationTarget = dest
+                )
             }
             else -> null
         }
@@ -638,6 +781,19 @@ object SseTagParser {
                     price = price
                 )
             }
+            "ARCHIVE", "ARSIP" -> {
+                val target = parts.getOrNull(1).orEmpty().trim()
+                if (target.isBlank()) null else IdekuChatAction.ArchiveItem(target = target)
+            }
+            "MERGE", "GABUNG" -> {
+                val source = parts.getOrNull(1).orEmpty().trim()
+                val dest = parts.getOrNull(2).orEmpty().trim()
+                if (source.isBlank() || dest.isBlank()) null
+                else IdekuChatAction.MergeItems(
+                    sourceTarget = source,
+                    destinationTarget = dest
+                )
+            }
             "DEL", "DELETE", "REMOVE", "HAPUS" -> {
                 val target = parts.getOrNull(1).orEmpty().trim()
                 if (target.isBlank()) null else IdekuChatAction.DeleteItem(target = target)
@@ -805,6 +961,94 @@ object SseTagParser {
             direction = direction,
             query = freeQueries.joinToString(" ").trim(),
             isStructured = true
+        )
+    }
+
+    data class IdekuSearchFilter(
+        val type: String = "",     // "Idea" | "Wishlist" | ""
+        val status: String = "",   // "Belum" | "Proses" | "Parkir" | "Selesai" | ""
+        val priority: String = "", // "Penting" | "Nanti" | "Kapan-kapan" | ""
+        val category: String = "",
+        val query: String = ""
+    )
+
+    fun parseIdekuSearchQuery(rawQuery: String): IdekuSearchFilter {
+        val trimmed = rawQuery.trim()
+        if (trimmed.isEmpty()) return IdekuSearchFilter()
+
+        var type = ""
+        var status = ""
+        var priority = ""
+        var category = ""
+        val freeQueries = mutableListOf<String>()
+
+        val keyRegex = Regex("""(?:^|[;|\s])(type|tipe|jenis|status|pri|priority|prioritas|cat|kategori|q|query)=""", RegexOption.IGNORE_CASE)
+        if (keyRegex.containsMatchIn(trimmed)) {
+            val segments = trimmed.split(Regex("""[;|]""")).map { it.trim() }.filter { it.isNotEmpty() }
+            for (seg in segments) {
+                val eqIdx = seg.indexOf('=')
+                if (eqIdx <= 0) {
+                    freeQueries.add(seg)
+                    continue
+                }
+                val k = seg.substring(0, eqIdx).trim().lowercase()
+                val v = seg.substring(eqIdx + 1).trim()
+                if (v.isEmpty()) continue
+                when (k) {
+                    "type", "tipe", "jenis" -> {
+                        val vl = v.lowercase()
+                        type = when {
+                            vl in setOf("idea", "ide") -> "Idea"
+                            vl in setOf("wishlist", "wish", "barang") -> "Wishlist"
+                            else -> ""
+                        }
+                    }
+                    "status" -> status = normalizeIdekuStatus(v).orEmpty()
+                    "pri", "priority", "prioritas" -> {
+                        val vl = v.lowercase()
+                        priority = when {
+                            vl in setOf("penting", "tinggi", "urgent", "high") -> "Penting"
+                            vl in setOf("nanti", "sedang", "medium") -> "Nanti"
+                            vl in setOf("kapan-kapan", "kapan2", "rendah", "low") -> "Kapan-kapan"
+                            else -> ""
+                        }
+                    }
+                    "cat", "kategori" -> category = v
+                    "q", "query" -> freeQueries.add(v)
+                    else -> freeQueries.add(seg)
+                }
+            }
+            return IdekuSearchFilter(
+                type = type,
+                status = status,
+                priority = priority,
+                category = category,
+                query = freeQueries.joinToString(" ").trim()
+            )
+        }
+
+        val tokens = trimmed.split(Regex("""\s+""")).filter { it.isNotBlank() }
+        for (tok in tokens) {
+            val tl = tok.lowercase().trim(',', '.', ';', ':')
+            when {
+                tl in setOf("daftar", "list", "semua", "all", "yang", "masih", "status") -> Unit
+                type.isEmpty() && tl in setOf("idea", "ide", "ideku") -> type = "Idea"
+                type.isEmpty() && tl in setOf("wishlist", "wish") -> type = "Wishlist"
+                status.isEmpty() && tl in setOf("belum", "proses", "parkir", "selesai") -> {
+                    status = normalizeIdekuStatus(tl).orEmpty()
+                }
+                priority.isEmpty() && tl in setOf("penting", "nanti", "kapan-kapan", "kapan2") -> {
+                    priority = normalizeIdekuPriority(tl)
+                }
+                else -> freeQueries.add(tok)
+            }
+        }
+        return IdekuSearchFilter(
+            type = type,
+            status = status,
+            priority = priority,
+            category = category,
+            query = freeQueries.joinToString(" ").trim()
         )
     }
 

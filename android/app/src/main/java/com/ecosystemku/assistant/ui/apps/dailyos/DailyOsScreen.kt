@@ -1,7 +1,7 @@
 package com.ecosystemku.assistant.ui.apps.dailyos
 
 import android.content.Intent
-import android.widget.Toast
+import com.ecosystemku.assistant.ui.components.LocalRemToast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -111,6 +111,7 @@ fun DailyOsScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val remToast = LocalRemToast.current
     val pal = remember(uiState.isDarkTheme) { DailyOsHelpers.palette(uiState.isDarkTheme) }
 
     var activeTab by remember { mutableStateOf(DailyOsTab.HABIT) }
@@ -174,7 +175,7 @@ fun DailyOsScreen(
             }
             context.startActivity(Intent.createChooser(intent, title))
         }.onFailure {
-            Toast.makeText(context, "Gagal mengekspor file", Toast.LENGTH_SHORT).show()
+            remToast?.warning("Gagal mengekspor file")
         }
     }
 
@@ -184,7 +185,7 @@ fun DailyOsScreen(
                 context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
             }.getOrNull()
             if (raw.isNullOrBlank()) {
-                Toast.makeText(context, "Gagal membaca file JSON", Toast.LENGTH_SHORT).show()
+                remToast?.warning("Gagal membaca file JSON")
             } else {
                 confirmReq = ConfirmRequest.RestoreJson(raw)
             }
@@ -333,7 +334,7 @@ fun DailyOsScreen(
                         onParseSmart = {
                             val clean = smartInput.trim()
                             if (clean.isEmpty()) {
-                                Toast.makeText(context, "Ketik task terlebih dahulu", Toast.LENGTH_SHORT).show()
+                                remToast?.warning("Ketik task terlebih dahulu")
                             } else {
                                 parseLoading = true
                                 parseError = null
@@ -352,7 +353,7 @@ fun DailyOsScreen(
                                 actions.onAddParsedTodos(tasks)
                                 parsedPreview = null
                                 smartInput = ""
-                                Toast.makeText(context, "${tasks.size} task ditambahkan ke To-Do", Toast.LENGTH_SHORT).show()
+                                remToast?.success("${tasks.size} task ditambahkan ke To-Do")
                             }
                         },
                         rekomLoading = rekomLoading,
@@ -377,7 +378,7 @@ fun DailyOsScreen(
                             scope.launch {
                                 actions.onAddRecommendedTodos(tasks)
                                 rekomPreview = null
-                                Toast.makeText(context, "${tasks.size} rekomendasi ditambahkan ke To-Do", Toast.LENGTH_SHORT).show()
+                                remToast?.success("${tasks.size} rekomendasi ditambahkan ke To-Do")
                             }
                         }
                     )
@@ -390,7 +391,7 @@ fun DailyOsScreen(
                         onNotifTodoChange = { notifTodoInput = it },
                         onSaveNotif = {
                             actions.onSaveNotifTimes(notifHabitInput.ifBlank { "07:00" }, notifTodoInput.ifBlank { "15:00" })
-                            Toast.makeText(context, "Jadwal pengingat tersimpan", Toast.LENGTH_SHORT).show()
+                            remToast?.success("Jadwal pengingat tersimpan")
                         },
                         onExportSummary = { kind, offset ->
                             scope.launch {
@@ -409,7 +410,7 @@ fun DailyOsScreen(
                             scope.launch {
                                 val csv = actions.onExportCsv()
                                 if (csv == null) {
-                                    Toast.makeText(context, "Belum ada habit untuk diekspor", Toast.LENGTH_SHORT).show()
+                                    remToast?.warning("Belum ada habit untuk diekspor")
                                 } else {
                                     shareExportFile("dailyos-habits.csv", csv, "text/csv", "Export CSV Daily OS")
                                 }
@@ -561,7 +562,7 @@ fun DailyOsScreen(
                     scope.launch {
                         val removed = actions.onClearDayHistory(req.dateStr)
                         confirmReq = null
-                        Toast.makeText(context, "$removed aktivitas habit dihapus", Toast.LENGTH_SHORT).show()
+                        remToast?.success("$removed aktivitas habit dihapus")
                     }
                 }
             )
@@ -577,9 +578,9 @@ fun DailyOsScreen(
                         val res = actions.onImportJson(req.raw)
                         confirmReq = null
                         res.onSuccess { (hCount, tCount) ->
-                            Toast.makeText(context, "Restore berhasil ($hCount habit, $tCount task)", Toast.LENGTH_SHORT).show()
+                            remToast?.success("Restore berhasil ($hCount habit, $tCount task)")
                         }.onFailure {
-                            Toast.makeText(context, "Format file backup tidak valid", Toast.LENGTH_SHORT).show()
+                            remToast?.warning("Format file backup tidak valid")
                         }
                     }
                 }
@@ -598,7 +599,7 @@ fun DailyOsScreen(
                         parsedPreview = null
                         rekomPreview = null
                         confirmReq = null
-                        Toast.makeText(context, "Semua data Daily OS direset", Toast.LENGTH_SHORT).show()
+                        remToast?.success("Semua data Daily OS direset")
                     }
                 }
             )

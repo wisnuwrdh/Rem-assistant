@@ -77,12 +77,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
-import androidx.compose.material3.Snackbar
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
+import com.ecosystemku.assistant.ui.components.RemFloatingToastPill
+import com.ecosystemku.assistant.ui.components.RemToastData
+import com.ecosystemku.assistant.ui.components.RemToastVariant
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -661,26 +663,23 @@ fun LinkkuScreen(
                 Icon(Icons.Outlined.Add, contentDescription = "Tambah Link", modifier = Modifier.size(24.dp))
             }
 
-            // Toast Snackbar
+            // Floating Rem Toast Pill
             AnimatedVisibility(
                 visible = toastMessage != null,
                 enter = fadeIn(),
                 exit = fadeOut(),
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(start = 20.dp, end = 20.dp, bottom = 88.dp)
+                    .padding(start = 16.dp, end = 16.dp, bottom = 88.dp)
             ) {
-                Snackbar(
-                    containerColor = LkBg4,
-                    contentColor = if (toastIsError) LkRed else LkGreen,
-                    shape = RoundedCornerShape(999.dp)
-                ) {
-                    Text(
-                        text = toastMessage.orEmpty(),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
+                RemFloatingToastPill(
+                    toast = RemToastData(
+                        id = 1L,
+                        message = toastMessage.orEmpty(),
+                        variant = if (toastIsError) RemToastVariant.WARNING else RemToastVariant.SUCCESS
+                    ),
+                    onDismiss = { toastMessage = null }
+                )
             }
         }
     }

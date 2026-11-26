@@ -29,14 +29,10 @@ import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
-import androidx.compose.material3.DatePicker
-import androidx.compose.material3.DatePickerDialog
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -56,10 +52,9 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.ecosystemku.assistant.data.local.DailyOsHabitEntity
 import com.ecosystemku.assistant.data.local.DailyOsTodoEntity
+import com.ecosystemku.assistant.ui.components.RemDatePickerDialog
 import com.ecosystemku.assistant.ui.theme.UiSans
-import java.time.Instant
 import java.time.LocalDate
-import java.time.ZoneOffset
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -508,7 +503,6 @@ fun HabitEditorModal(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TodoEditorModal(
     pal: DailyOsThemePalette,
@@ -778,35 +772,18 @@ fun TodoEditorModal(
     }
 
     if (showDatePicker) {
-        val initMillis = runCatching {
+        val initDate = runCatching {
             LocalDate.parse(deadline.ifBlank { DailyOsHelpers.todayStr() })
-                .atStartOfDay(ZoneOffset.UTC)
-                .toInstant()
-                .toEpochMilli()
-        }.getOrNull()
-        val pickerState = rememberDatePickerState(initialSelectedDateMillis = initMillis)
-        DatePickerDialog(
-            onDismissRequest = { showDatePicker = false },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        pickerState.selectedDateMillis?.let { millis ->
-                            deadline = Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalDate().toString()
-                        }
-                        showDatePicker = false
-                    }
-                ) {
-                    Text("Pilih")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDatePicker = false }) {
-                    Text("Batal")
-                }
+        }.getOrNull() ?: LocalDate.now()
+        RemDatePickerDialog(
+            initialDate = initDate,
+            title = "Pilih Tenggat",
+            onDismiss = { showDatePicker = false },
+            onConfirm = { picked ->
+                deadline = picked.toString()
+                showDatePicker = false
             }
-        ) {
-            DatePicker(state = pickerState)
-        }
+        )
     }
 }
 

@@ -1,6 +1,5 @@
 package com.ecosystemku.assistant.ui.apps.kronik
 
-import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -55,16 +54,16 @@ import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.FileUpload
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DatePicker
-import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberModalBottomSheetState
+import com.ecosystemku.assistant.ui.components.LocalRemToast
+import com.ecosystemku.assistant.ui.components.RemDatePickerDialog
+import java.time.LocalDate
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -143,6 +142,7 @@ fun KronikScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val remToast = LocalRemToast.current
 
     var phase by rememberSaveable { mutableStateOf(KronikPhase.COVER) }
     var isCoverFlipping by remember { mutableStateOf(false) }
@@ -185,9 +185,9 @@ fun KronikScreen(
                     context.contentResolver.openOutputStream(uri)?.use { out ->
                         out.write(jsonStr.toByteArray(Charsets.UTF_8))
                     }
-                    Toast.makeText(context, "Backup Kronik berhasil disimpan.", Toast.LENGTH_SHORT).show()
+                    remToast?.success("Backup Kronik berhasil disimpan")
                 }.onFailure {
-                    Toast.makeText(context, "Gagal mengekspor data.", Toast.LENGTH_SHORT).show()
+                    remToast?.warning("Gagal mengekspor data Kronik")
                 }
             }
         }
@@ -203,9 +203,9 @@ fun KronikScreen(
                     val raw = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
                         ?: throw IllegalStateException("File kosong")
                     val importedCount = actions.onImportJson(raw)
-                    Toast.makeText(context, "$importedCount lembaran berhasil diimpor.", Toast.LENGTH_SHORT).show()
+                    remToast?.success("$importedCount lembaran Kronik berhasil diimpor")
                 }.onFailure {
-                    Toast.makeText(context, "Gagal impor: format file tidak valid.", Toast.LENGTH_SHORT).show()
+                    remToast?.warning("Gagal impor: format file tidak valid")
                 }
             }
         }
@@ -1672,32 +1672,17 @@ private fun KronikJournalPageEditor(
     }
 
     if (showDatePicker) {
-        val datePickerState = rememberDatePickerState(
-            initialSelectedDateMillis = KronikHelpers.dateStrToUtcMillis(dateText)
-        )
-        DatePickerDialog(
-            onDismissRequest = { showDatePicker = false },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        datePickerState.selectedDateMillis?.let { millis ->
-                            val newDate = KronikHelpers.utcMillisToDateStr(millis)
-                            dateText = newDate
-                            onUpdateLive(null, null, newDate)
-                        }
-                        showDatePicker = false
-                    }
-                ) {
-                    Text("Pilih")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDatePicker = false }) {
-                    Text("Batal")
-                }
+        val initDate = runCatching { LocalDate.parse(dateText) }.getOrNull() ?: LocalDate.now()
+        RemDatePickerDialog(
+            initialDate = initDate,
+            title = "Pilih Tanggal",
+            onDismiss = { showDatePicker = false },
+            onConfirm = { picked ->
+                val newDate = picked.toString()
+                dateText = newDate
+                onUpdateLive(null, null, newDate)
+                showDatePicker = false
             }
-        ) {
-            DatePicker(state = datePickerState)
-        }
+        )
     }
 }

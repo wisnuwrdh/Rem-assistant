@@ -17,7 +17,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.ime
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -48,6 +51,11 @@ import com.ecosystemku.assistant.ui.apps.kronik.KronikScreen
 import com.ecosystemku.assistant.ui.apps.linkku.LinkkuScreen
 import com.ecosystemku.assistant.ui.asisten.AsistenScreen
 import com.ecosystemku.assistant.ui.asisten.AsistenViewModel
+import com.ecosystemku.assistant.ui.components.LocalRemToast
+import com.ecosystemku.assistant.ui.components.RemAlertDialog
+import com.ecosystemku.assistant.ui.components.RemAlertTone
+import com.ecosystemku.assistant.ui.components.RemToastController
+import com.ecosystemku.assistant.ui.components.RemToastHost
 import com.ecosystemku.assistant.ui.kg.KnowledgeGraphScreen
 import com.ecosystemku.assistant.ui.navigation.AppTab
 import com.ecosystemku.assistant.ui.navigation.EcosystemBottomNavBar
@@ -129,6 +137,8 @@ fun EcosystemKuShell(
         val isAsistenActive = selectedTab == AppTab.ASISTEN && !showKronik && !showLinkku && !showCuciMoney && !showIdeku && !showDailyOs && !showKnowledgeGraph
         val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
         var wasImeVisible by remember { mutableStateOf(false) }
+        val toastController = remember { RemToastController() }
+        var showLlmSetupAlert by remember { mutableStateOf(false) }
 
         DisposableEffect(lifecycleOwner) {
             val observer = LifecycleEventObserver { _, event ->
@@ -164,16 +174,70 @@ fun EcosystemKuShell(
         }
 
         LaunchedEffect(pendingLaunchAction) {
-            if (pendingLaunchAction == DailyOsNotificationHelper.ACTION_KENALI_AKU) {
-                onConsumeLaunchAction()
-                showKronik = false
-                showLinkku = false
-                showCuciMoney = false
-                showIdeku = false
-                showDailyOs = false
-                showKnowledgeGraph = false
-                selectedTab = AppTab.ASISTEN
-                asistenViewModel.startKenaliAkuSession()
+            when (pendingLaunchAction) {
+                DailyOsNotificationHelper.ACTION_KENALI_AKU -> {
+                    onConsumeLaunchAction()
+                    showKronik = false
+                    showLinkku = false
+                    showCuciMoney = false
+                    showIdeku = false
+                    showDailyOs = false
+                    showKnowledgeGraph = false
+                    selectedTab = AppTab.ASISTEN
+                    asistenViewModel.startKenaliAkuSession()
+                }
+                DailyOsNotificationHelper.ACTION_OPEN_DAILYOS -> {
+                    onConsumeLaunchAction()
+                    showKronik = false
+                    showLinkku = false
+                    showCuciMoney = false
+                    showIdeku = false
+                    showKnowledgeGraph = false
+                    showDailyOs = true
+                }
+            }
+        }
+
+        LaunchedEffect(asistenState.kronikBannerMessage) {
+            val msg = asistenState.kronikBannerMessage ?: return@LaunchedEffect
+            asistenViewModel.dismissKronikBanner()
+            when {
+                msg.startsWith("Kronik:") -> toastController.action(msg, "Lihat") { showKronik = true }
+                msg.startsWith("LinkKu:") -> toastController.action(msg, "Lihat") { showLinkku = true }
+                msg.startsWith("CuciMoney+:") -> toastController.action(msg, "Lihat") { showCuciMoney = true }
+                msg.startsWith("IdeKu:") -> toastController.action(msg, "Lihat") { showIdeku = true }
+                msg.startsWith("Daily OS:") -> toastController.action(msg, "Lihat") { showDailyOs = true }
+                msg.contains("Gagal", ignoreCase = true) ||
+                    msg.contains("belum", ignoreCase = true) ||
+                    msg.contains("ditolak", ignoreCase = true) ||
+                    msg.contains("salah", ignoreCase = true) ||
+                    msg.contains("diperlukan", ignoreCase = true) ||
+                    msg.contains("berakhir", ignoreCase = true) -> {
+                    toastController.warning(msg)
+                }
+                else -> toastController.success(msg)
+            }
+        }
+
+        LaunchedEffect(asistenState.errorMessage) {
+            val err = asistenState.errorMessage ?: return@LaunchedEffect
+            asistenViewModel.dismissError()
+            if (err.contains("LLM belum diatur", ignoreCase = true)) {
+                showLlmSetupAlert = true
+            } else {
+                toastController.warning(
+                    message = err,
+                    actionLabel = "Setelan",
+                    onAction = {
+                        showKronik = false
+                        showLinkku = false
+                        showCuciMoney = false
+                        showIdeku = false
+                        showDailyOs = false
+                        showKnowledgeGraph = false
+                        selectedTab = AppTab.SETELAN
+                    }
+                )
             }
         }
 
@@ -236,6 +300,7 @@ fun EcosystemKuShell(
             }
         }
 
+        CompositionLocalProvider(LocalRemToast provides toastController) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -507,11 +572,46 @@ fun EcosystemKuShell(
                     onDeleteEdge = asistenViewModel::deleteKgEdge,
                     onClearGraph = asistenViewModel::clearKnowledgeGraph,
                     onExportDigitalTwinJson = asistenViewModel::buildDigitalTwinJson,
+                    onValidateNodeCorrect = asistenViewModel::validateKgNodeCorrect,
+                    onValidateNodeWrong = asistenViewModel::validateKgNodeWrong,
+                    onReplaceNodeEvolution = asistenViewModel::replaceKgNodeEvolution,
+                    onCompactOldNodes = asistenViewModel::compactOldKgNodes,
+                    onRunOfflineSimilarity = asistenViewModel::runOfflineSimilarityBenchmark,
+                    onRunLiveSimilarity = asistenViewModel::runLiveSimilarityBenchmark,
+                    lastSimilarityLabel = asistenState.lastSimilarityScoreLabel,
                     onShowBanner = asistenViewModel::showBannerMessage,
                     onClose = { showKnowledgeGraph = false },
                     modifier = Modifier.fillMaxSize()
                 )
             }
+        }
+
+            RemToastHost(
+                controller = toastController,
+                modifier = Modifier.zIndex(50f)
+            )
+        }
+
+        if (showLlmSetupAlert) {
+            RemAlertDialog(
+                title = "API Belum Diatur",
+                description = "${asistenState.profileName}, atur Base URL, Model, & API Key LLM di Setelan dulu agar Rem bisa menjawab.",
+                confirmText = "Buka Setelan",
+                dismissText = "Nanti",
+                tone = RemAlertTone.INFO,
+                badgeIcon = Icons.Outlined.Settings,
+                onConfirm = {
+                    showLlmSetupAlert = false
+                    showKronik = false
+                    showLinkku = false
+                    showCuciMoney = false
+                    showIdeku = false
+                    showDailyOs = false
+                    showKnowledgeGraph = false
+                    selectedTab = AppTab.SETELAN
+                },
+                onDismiss = { showLlmSetupAlert = false }
+            )
         }
         }
     }

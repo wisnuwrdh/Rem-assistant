@@ -76,7 +76,11 @@ private data class AsistenBackupMemoryDto(
     val category: String,
     val factKey: String,
     val factValue: String,
-    val confidence: Float = 0.8f
+    val confidence: Float = 0.8f,
+    val status: String = "active",
+    val createdAt: Long = 0L,
+    val deprecatedAt: Long? = null,
+    val supersededBy: String? = null
 )
 
 @Serializable
@@ -189,7 +193,16 @@ class EcosystemBackupRepository(private val appContext: Context) {
                 AsistenBackupChatDto(it.role, it.content, it.expressionTag, it.createdAt, it.choicesJson, it.sessionId)
             },
             memories = userMemoryDao.getAllMemories().map {
-                AsistenBackupMemoryDto(it.category, it.factKey, it.factValue, it.confidence)
+                AsistenBackupMemoryDto(
+                    category = it.category,
+                    factKey = it.factKey,
+                    factValue = it.factValue,
+                    confidence = it.confidence,
+                    status = it.status,
+                    createdAt = it.createdAt,
+                    deprecatedAt = it.deprecatedAt,
+                    supersededBy = it.supersededBy
+                )
             },
             summaries = userMemoryDao.getAllSummaries().map {
                 AsistenBackupSummaryDto(it.summaryText, it.turnCount, it.createdAt)
@@ -430,7 +443,27 @@ class EcosystemBackupRepository(private val appContext: Context) {
                     }
                     wrapper.memories.forEach { m ->
                         if (m.factKey.isNotBlank() && m.factValue.isNotBlank()) {
-                            userMemoryDao.upsertByFactKey(m.category, m.factKey, m.factValue, m.confidence, null)
+                            if (m.status != "active") {
+                                if (userMemoryDao.getByFactKey(m.factKey) == null) {
+                                    val tsNow = System.currentTimeMillis()
+                                    userMemoryDao.insertMemory(
+                                        com.ecosystemku.assistant.data.local.UserMemoryEntity(
+                                            category = m.category,
+                                            factKey = m.factKey,
+                                            factValue = m.factValue,
+                                            confidence = m.confidence,
+                                            sourceMessageId = null,
+                                            updatedAt = m.deprecatedAt ?: tsNow,
+                                            status = m.status,
+                                            createdAt = if (m.createdAt > 0L) m.createdAt else tsNow,
+                                            deprecatedAt = m.deprecatedAt ?: tsNow,
+                                            supersededBy = m.supersededBy
+                                        )
+                                    )
+                                }
+                            } else {
+                                userMemoryDao.upsertByFactKey(m.category, m.factKey, m.factValue, m.confidence, null)
+                            }
                         }
                     }
                     val existingSummaries = userMemoryDao.getAllSummaries().map { it.summaryText }.toSet()
@@ -520,6 +553,8 @@ class EcosystemBackupRepository(private val appContext: Context) {
                     wrapper.nodes.forEach { n ->
                         if (n.nodeKey.isBlank() || n.label.isBlank()) return@forEach
                         if (!keyToId.containsKey(n.nodeKey)) {
+                            val firstAt = if (n.firstSeenAt > 0L) n.firstSeenAt else nowMs
+                            val lastAt = if (n.lastSeenAt > 0L) n.lastSeenAt else nowMs
                             val newId = kgDao.insertNode(
                                 KgNodeEntity(
                                     nodeKey = n.nodeKey,
@@ -528,8 +563,13 @@ class EcosystemBackupRepository(private val appContext: Context) {
                                     summary = n.summary.take(300),
                                     salience = n.salience.coerceIn(0.1f, 1.0f),
                                     sourceType = n.sourceType.ifBlank { "chat" },
-                                    firstSeenAt = if (n.firstSeenAt > 0L) n.firstSeenAt else nowMs,
-                                    lastSeenAt = if (n.lastSeenAt > 0L) n.lastSeenAt else nowMs
+                                    firstSeenAt = firstAt,
+                                    lastSeenAt = lastAt,
+                                    status = n.status.ifBlank { "active" },
+                                    confidence = n.confidence.coerceIn(0.3f, 1.0f),
+                                    lastConfirmedAt = if (n.lastConfirmedAt > 0L) n.lastConfirmedAt else lastAt,
+                                    sourceRef = n.sourceRef,
+                                    validationState = n.validationState.ifBlank { "unverified" }
                                 )
                             )
                             keyToId[n.nodeKey] = newId
@@ -541,15 +581,27 @@ class EcosystemBackupRepository(private val appContext: Context) {
                         if (fromId == toId) return@forEach
                         val rel = KnowledgeGraphHelpers.normalizeRelation(e.relation)
                         if (kgDao.getEdgeByTriple(fromId, toId, rel) == null) {
+                            val updAt = if (e.updatedAt > 0L) e.updatedAt else nowMs
+                            val resolvedStatus = if (
+                                e.status != "active" ||
+                                rel == "MENGGANTIKAN" ||
+                                e.weight < 0.4f ||
+                                e.evidence.startsWith("[Historis")
+                            ) "historical" else "active"
                             kgDao.insertEdge(
                                 KgEdgeEntity(
                                     fromNodeId = fromId,
                                     toNodeId = toId,
                                     relation = rel,
                                     evidence = e.evidence.take(240),
-                                    weight = e.weight.coerceIn(0.3f, 5.0f),
+                                    weight = e.weight.coerceIn(0.15f, 5.0f),
                                     confidence = e.confidence.coerceIn(0.3f, 1.0f),
-                                    updatedAt = if (e.updatedAt > 0L) e.updatedAt else nowMs
+                                    updatedAt = updAt,
+                                    status = resolvedStatus,
+                                    createdAt = if (e.createdAt > 0L) e.createdAt else updAt,
+                                    lastConfirmedAt = if (e.lastConfirmedAt > 0L) e.lastConfirmedAt else updAt,
+                                    sourceType = e.sourceType.ifBlank { "chat" },
+                                    sourceRef = e.sourceRef
                                 )
                             )
                         }

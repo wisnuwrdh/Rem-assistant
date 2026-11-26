@@ -186,6 +186,48 @@ object BehavioralSignalExtractor {
                 )
             }
 
+        // 6. Koneksi lintas-modul antar-simpul non-pusat (MINAT/KEBIASAAN -> TUJUAN)
+        val activeIdeas = ideas.filter { it.type == "Idea" && it.status == "Proses" }.take(4)
+        val topTopics = countByTopic.entries.filter { it.value >= 2 }.sortedByDescending { it.value }.take(3).map { it.key }
+        activeIdeas.forEach { idea ->
+            val ideaTokens = KnowledgeGraphHelpers.semanticTokens("${idea.title} ${idea.category} ${idea.notes}")
+            topTopics.forEach { topic ->
+                val topicTokens = KnowledgeGraphHelpers.semanticTokens(topic)
+                if (ideaTokens.intersect(topicTokens).isNotEmpty() || idea.category.equals(topic, ignoreCase = true)) {
+                    result.add(
+                        ExtractedTripleDto(
+                            fromType = "MINAT",
+                            fromLabel = topic,
+                            relation = "MEMOTIVASI",
+                            toType = "TUJUAN",
+                            toLabel = idea.title,
+                            evidence = "Minat belajar di LinkKu sejalan dengan proyek aktif IdeKu",
+                            confidence = 0.76f
+                        )
+                    )
+                }
+            }
+            activeHabits.forEach { habit ->
+                val streak = DailyOsHelpers.calculateHabitStreak(habit, todayStr)
+                if (streak >= 3) {
+                    val habitTokens = KnowledgeGraphHelpers.semanticTokens("${habit.name} ${habit.category}")
+                    if (ideaTokens.intersect(habitTokens).isNotEmpty() || habit.category.equals(idea.category, ignoreCase = true)) {
+                        result.add(
+                            ExtractedTripleDto(
+                                fromType = "KEBIASAAN",
+                                fromLabel = habit.name,
+                                relation = "MENDUKUNG",
+                                toType = "TUJUAN",
+                                toLabel = idea.title,
+                                evidence = "Habit Daily OS (${habit.category}, streak ${streak}h) mendukung proyek IdeKu",
+                                confidence = 0.8f
+                            )
+                        )
+                    }
+                }
+            }
+        }
+
         return result
     }
 }
@@ -210,7 +252,8 @@ class BehavioralSignalSync(
             profileName = profileName,
             triples = triples,
             sourceType = "behavioral_sync",
-            weightBoost = 0f
+            weightBoost = 0f,
+            sourceRef = "behavioral_sync:modules"
         )
     }
 }

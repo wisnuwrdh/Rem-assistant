@@ -22,7 +22,10 @@ import com.ecosystemku.assistant.data.cloud.CloudRestoreFetchResult
 import com.ecosystemku.assistant.data.cloud.CloudSyncResult
 import com.ecosystemku.assistant.data.cloud.GoogleDriveBackupClient
 import com.ecosystemku.assistant.data.kg.BehavioralSignalSync
+import com.ecosystemku.assistant.data.kg.KnowledgeGraphHelpers
 import com.ecosystemku.assistant.data.kg.KnowledgeGraphRepository
+import com.ecosystemku.assistant.data.kg.SimilarityBenchmark
+import com.ecosystemku.assistant.data.kg.SimilarityRunReport
 import com.ecosystemku.assistant.data.local.AiConfigField
 import com.ecosystemku.assistant.data.local.AiConfigSnapshot
 import com.ecosystemku.assistant.data.local.ApiKeyStore
@@ -59,6 +62,7 @@ import com.ecosystemku.assistant.data.network.DailyOsAiResult
 import com.ecosystemku.assistant.data.network.DailyOsCoachMemoryDto
 import com.ecosystemku.assistant.data.network.DailyOsIdekuIdeaDto
 import com.ecosystemku.assistant.data.network.ExistingFactDto
+import com.ecosystemku.assistant.data.network.ExistingKgNodeDto
 import com.ecosystemku.assistant.data.network.IdekuAiClient
 import com.ecosystemku.assistant.data.network.KronikMoodClient
 import com.ecosystemku.assistant.data.network.LinkkuMetaClient
@@ -162,6 +166,7 @@ data class AsistenUiState(
     val kgWeeklyReflectionEnabled: Boolean = false,
     val kgWeeklyReflectionDay: Int = Calendar.SUNDAY,
     val kgWeeklyReflectionTime: String = "20:00",
+    val lastSimilarityScoreLabel: String = "Belum pernah diuji",
     val kronikEntries: List<KronikEntryEntity> = emptyList(),
     val kronikBannerMessage: String? = null,
     val linkkuState: LinkkuUiState = LinkkuUiState(),
@@ -257,6 +262,9 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         Jika Tuan meminta Rem mencatat refleksi/jurnal ke Kronik, sisipkan tag tersembunyi di akhir jawaban (sebelum [EXPR:...]):
         [KRONIK:ADD|judul_singkat|isi_jurnal_natural|mood_opsional]
         Mood opsional yang valid: Fokus, Lelah, Terinspirasi, Berat, Stabil, Semangat, Kabur.
+        Jika Tuan meminta mengubah judul, isi, mood (isi '-' untuk hapus mood), atau tanggal catatan Kronik yang ada (gunakan id jika ada atau judul/tanggal):
+        [KRONIK:EDIT|id_atau_kata_kunci|judul_baru_atau_kosong|isi_baru_atau_kosong|mood_baru_atau_kosong|tanggal_yyyy-mm-dd_atau_kosong]
+        Jika Tuan meminta menghapus, mengarsipkan, atau menggabungkan catatan Kronik, sisipkan [KRONIK:DEL|id_atau_kata_kunci], [KRONIK:ARCHIVE|id_atau_kata_kunci], atau [KRONIK:MERGE|sumber|tujuan]. Jika target Kronik belum ada di ringkasan, panggil [SEARCH:kronik|...] dulu untuk mendapatkan id pasti.
         Jika Tuan membagikan tautan/URL atau meminta menyimpan bookmark ke LinkKu, sisipkan:
         [LINKKU:ADD|url_lengkap|judul_singkat|catatan_opsional|kategori_opsional|tag1,tag2]
         Jika Tuan menyebut pengeluaran/pemasukan atau meminta mencatat transaksi keuangan ke CuciMoney+, sisipkan:
@@ -270,16 +278,15 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         [CUCI:SAVE|nama_wishlist|nominal_angka|akun_sumber_opsional|buku_opsional]
         Jika Tuan melapor target barang wishlist sudah kebeli / ingin merealisasikan tabungannya, sisipkan:
         [CUCI:REALIZE|nama_wishlist|akun_opsional|nominal_beli_opsional|buku_opsional]
-        Jika Tuan menyampaikan ide baru atau barang impian/wishlist untuk dicatat ke IdeKu, sisipkan:
+        Jika Tuan menyampaikan ide baru atau barang impian/wishlist untuk dicatat ke IdeKu (PENTING: Idea = gagasan/proyek dan Wishlist = barang impian yang ingin dibeli; keduanya TERPISAH dan jangan pernah tertukar), sisipkan:
         [IDEKU:ADD|Idea|judul_ide|kategori_opsional|Penting_Nanti_Kapan-kapan|catatan_opsional|jalur_opsional]
         atau untuk wishlist:
         [IDEKU:ADD|Wishlist|nama_barang|harga_angka|Belanja|Penting_Nanti_Kapan-kapan|catatan_opsional]
         Jika Tuan ingin menandai ide/wishlist selesai atau mengubah statusnya (Belum, Proses, Parkir, Selesai), sisipkan:
         [IDEKU:STATUS|id_atau_kata_kunci|Selesai_atau_Proses_atau_Parkir_atau_Belum]
-        Jika Tuan mengoreksi detail ide/wishlist (judul/kategori/prioritas/catatan/jalur/harga), sisipkan:
+        Jika Tuan mengoreksi detail atau prioritas ide/wishlist (judul/kategori/prioritas Penting|Nanti|Kapan-kapan/catatan/jalur/harga), sisipkan:
         [IDEKU:EDIT|id_atau_kata_kunci|judul_baru_atau_kosong|kategori_baru_atau_kosong|prioritas_baru_atau_kosong|catatan_baru_atau_kosong|jalur_baru_atau_kosong|harga_baru_atau_kosong]
-        Jika Tuan meminta menghapus ide/wishlist tertentu, sisipkan:
-        [IDEKU:DEL|id_atau_kata_kunci]
+        Jika Tuan meminta memarkir/mengarsipkan, menggabungkan dua item mirip, atau menghapus ide/wishlist tertentu, sisipkan [IDEKU:ARCHIVE|id_atau_kata_kunci], [IDEKU:MERGE|sumber|tujuan], atau [IDEKU:DEL|id_atau_kata_kunci].
         Jika Tuan meminta membuat habit baru di Daily OS, sisipkan:
         [DAILYOS:HABIT|nama_habit|kategori_opsional|ikon_opsional]
         Jika Tuan meminta mencatat tugas/to-do ke Daily OS, sisipkan:
@@ -304,14 +311,18 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         - Tambah acara ke aplikasi Kalender: [DEVICE:CAL_ADD|judul|YYYY-MM-DD|HH:mm_mulai|HH:mm_selesai_opsional|lokasi_opsional|catatan_opsional]
         - Buka tautan URL http/https di browser: [DEVICE:OPEN_URL|https://...]
         - Bagikan teks lewat menu Share Android: [DEVICE:SHARE|teks]
+        Rem juga bisa membaca jadwal kalender perangkat, status baterai, lokasi perkiraan, dan daftar pengingat aktif lewat [SEARCH:device|...].
 
         ## Pencarian Arsip Lokal & Info Perangkat (On-Demand Search)
-        Ringkasan modul di prompt hanya menampilkan item terbaru. Jika Tuan menanyakan arsip lama, transaksi bulan/tanggal/kategori tertentu (mis. 2026-10), jurnal lama, ide/bookmark yang tidak muncul di ringkasan, riwayat habit, obrolan dari sesi lalu, relasi/pola pikir di Knowledge Graph, atau kondisi perangkat (baterai, jadwal kalender, lokasi perkiraan, daftar pengingat aktif), JANGAN menebak. Keluarkan tag pencarian HANYA satu baris: [SEARCH:scope|kata_kunci] (scope valid: kronik, linkku, cuci, ideku, dailyos, kg, device, chat, all; untuk scope device, isi query dengan battery, calendar, calendar YYYY-MM-DD, location, atau reminders; untuk scope kg, cari simpul/relasi kebiasaan, pola pikir, nilai hidup, atau tujuan di Knowledge Graph). Khusus scope cuci, untuk query terstruktur gunakan format key=value dipisah titik koma, misalnya [SEARCH:cuci|book=Personal;month=2026-10;cat=Makan;dir=out] (parameter tersedia: book, month, from, to, cat, acc, dir, q). Sistem akan mengambil & menghitung data akurat dari database/perangkat agar Rem bisa menjawab dengan tepat.
+        Ringkasan modul di prompt hanya menampilkan item terbaru/sebagian. Jika Tuan menanyakan arsip lama, daftar lengkap ide/wishlist, transaksi bulan/tanggal/kategori tertentu (mis. 2026-10), jurnal lama, bookmark yang tidak muncul di ringkasan, riwayat habit, obrolan dari sesi lalu, relasi/pola pikir di Knowledge Graph, atau kondisi perangkat (baterai, jadwal kalender harian/mingguan, lokasi perkiraan, daftar pengingat aktif), JANGAN menebak dan JANGAN menyuruh Tuan mengetik ulang/mengingat daftar yang ada di aplikasi. Langsung keluarkan tag pencarian HANYA satu baris: [SEARCH:scope|kata_kunci] (scope valid: kronik, linkku, cuci, ideku, dailyos, kg, device, chat, all; untuk scope device, isi query dengan battery, calendar, calendar YYYY-MM-DD, location, atau reminders; untuk scope kg, cari simpul/relasi kebiasaan, pola pikir, nilai hidup, atau tujuan di Knowledge Graph). Khusus scope ideku, gunakan format seperti [SEARCH:ideku|type=Idea;status=Belum] atau [SEARCH:ideku|Idea Belum] atau [SEARCH:ideku|Wishlist] (parameter: type, status, pri, cat, q). Khusus scope cuci, gunakan format key=value dipisah titik koma, misalnya [SEARCH:cuci|book=Personal;month=2026-10;cat=Makan;dir=out] (parameter: book, month, from, to, cat, acc, dir, q). Sistem akan mengambil & menghitung data akurat dari database/perangkat agar Rem bisa menjawab dengan tepat.
 
-        ## Memori Personal
-        Jika Tuan secara eksplisit meminta Rem mengingat, memperbarui, atau melupakan informasi tertentu:
+        ## Memori Personal & Otak Digital
+        Jika Tuan secara eksplisit meminta Rem mengingat, memperbarui, mengarsipkan, menggabungkan, atau menonaktifkan informasi tertentu:
         - Simpan/perbarui memori: [MEMORY:SET|kategori|fact_key_snake_case|nilai_ringkas] (kategori valid: identitas, preferensi, kebiasaan, tujuan, catatan)
-        - Hapus/lupakan memori: [MEMORY:DEL|fact_key_atau_kata_kunci]
+        - Tandai memori usang/tidak lagi berlaku (riwayat tetap disimpan): [MEMORY:DEL|fact_key_atau_kata_kunci]
+        - Perbarui simpul Otak Digital: [KG:UPDATE|id_atau_label_lama|label_baru_atau_kosong|ringkasan_baru_atau_kosong|tipe_baru_atau_kosong|alasan_opsional]
+        - Tandai simpul Otak Digital usang (tanpa hapus riwayat): [KG:ARCHIVE|id_atau_label|alasan_opsional]
+        - Gabungkan simpul duplikat ke simpul utama: [KG:MERGE|sumber|tujuan|alasan_opsional]
         Sisipkan sebelum [EXPR:...].
 
         ## Pilihan Interaktif (Quick Replies)
@@ -401,6 +412,10 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         val kgWeeklyOn = asistenPrefs.getBoolean("asisten_kg_weekly_enabled", false)
         val kgWeeklyDay = asistenPrefs.getInt("asisten_kg_weekly_day", Calendar.SUNDAY).coerceIn(Calendar.SUNDAY, Calendar.SATURDAY)
         val kgWeeklyTime = asistenPrefs.getString("asisten_kg_weekly_time", "20:00")?.takeIf { it.contains(":") } ?: "20:00"
+        val lastSimilarityLabel = asistenPrefs.getString("asisten_kg_last_similarity", "Belum pernah diuji")
+            ?.trim()
+            ?.ifBlank { "Belum pernah diuji" }
+            ?: "Belum pernah diuji"
         val locOptIn = asistenPrefs.getBoolean("asisten_device_location_opt_in", false)
         val frac = asistenPrefs.getFloat("asisten_stage_fraction", 0.56f).coerceIn(0.35f, 0.70f)
         val rawWallpaper = asistenPrefs.getString("asisten_wallpaper_file", null)?.trim()?.takeIf { it.isNotEmpty() }
@@ -455,6 +470,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 kgWeeklyReflectionEnabled = kgWeeklyOn,
                 kgWeeklyReflectionDay = kgWeeklyDay,
                 kgWeeklyReflectionTime = kgWeeklyTime,
+                lastSimilarityScoreLabel = lastSimilarityLabel,
                 deviceLocationOptIn = locOptIn,
                 memoryProfile = memProfile,
                 stageFraction = frac,
@@ -1113,17 +1129,18 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    private suspend fun deleteMemoryByKeyOrQuery(query: String): Int {
+    private suspend fun deprecateMemoryByKeyOrQuery(query: String): Int {
         val raw = query.trim().lowercase()
         if (raw.isEmpty()) return 0
         val normKey = raw.replace(Regex("[^a-z0-9_]+"), "_").trim('_')
-        val all = userMemoryDao.getAllMemories()
-        val matched = all.filter { m ->
+        val active = userMemoryDao.getActiveMemories()
+        val matched = active.filter { m ->
             (normKey.isNotEmpty() && m.factKey.equals(normKey, ignoreCase = true)) ||
                 m.factKey.contains(raw, ignoreCase = true) ||
                 m.factValue.contains(raw, ignoreCase = true)
         }
-        matched.forEach { userMemoryDao.deleteById(it.id) }
+        val now = System.currentTimeMillis()
+        matched.forEach { userMemoryDao.deprecateById(it.id, deprecatedAt = now, supersededBy = null) }
         return matched.size
     }
 
@@ -1134,7 +1151,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
             return
         }
         viewModelScope.launch {
-            val allMemories = userMemoryDao.getAllMemories()
+            val allMemories = userMemoryDao.getActiveMemories()
             val allSummaries = userMemoryDao.getLatestSummaries(10)
             if (allMemories.isEmpty() && allSummaries.isEmpty()) {
                 clearMemoryProfile(showBanner = false)
@@ -1371,6 +1388,96 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
             memories = memories,
             summaries = summaries
         )
+    }
+
+    fun validateKgNodeCorrect(nodeId: Long) {
+        viewModelScope.launch {
+            kgRepository.validateNodeCorrect(nodeId)
+            showBannerMessage("Simpul ditandai benar (keyakinan dinaikkan)")
+        }
+    }
+
+    fun validateKgNodeWrong(nodeId: Long) {
+        viewModelScope.launch {
+            kgRepository.validateNodeWrong(nodeId)
+            showBannerMessage("Simpul ditandai keliru & diusangkan (riwayat tetap disimpan)")
+        }
+    }
+
+    fun replaceKgNodeEvolution(
+        oldNodeId: Long,
+        newType: String,
+        newLabel: String,
+        relationToSelf: String,
+        evidence: String
+    ) {
+        if (newLabel.isBlank()) return
+        viewModelScope.launch {
+            val ok = kgRepository.replaceNodeWithNew(
+                profileName = _uiState.value.profileName,
+                oldNodeId = oldNodeId,
+                newType = newType,
+                newLabel = newLabel,
+                relationToSelf = relationToSelf,
+                evidence = evidence
+            )
+            if (ok) {
+                showBannerMessage("Evolusi simpul dicatat (simpul lama diarsipkan)")
+            } else {
+                showBannerMessage("Gagal mengganti simpul: label baru tidak boleh sama dengan yang lama")
+            }
+        }
+    }
+
+    fun compactOldKgNodes() {
+        viewModelScope.launch {
+            val compacted = kgRepository.compactOldDeprecatedNodes(olderThanDays = 90)
+            asistenPrefs.edit().putLong("asisten_kg_last_compact_at", System.currentTimeMillis()).apply()
+            if (compacted > 0) {
+                showBannerMessage("$compacted simpul usang (>90 hari) dipadatkan menjadi ringkasan riwayat")
+            } else {
+                showBannerMessage("Belum ada simpul usang >90 hari untuk dipadatkan (DIRI & NILAI tetap utuh)")
+            }
+        }
+    }
+
+    suspend fun runOfflineSimilarityBenchmark(): SimilarityRunReport {
+        val nodes = _uiState.value.kgNodes
+        val edges = _uiState.value.kgEdges
+        val activeMemories = userMemoryDao.getActiveMemories(100)
+        val report = SimilarityBenchmark.evaluateOfflineCoverage(
+            nodes = nodes,
+            edges = edges,
+            memories = activeMemories
+        )
+        saveSimilarityReportSummary(report)
+        return report
+    }
+
+    suspend fun runLiveSimilarityBenchmark(): Result<SimilarityRunReport> {
+        if (!ApiKeyStore.isLlmConfigured(getApplication())) {
+            return Result.failure(IllegalStateException("LLM belum diatur. Isi Base URL, Model, & API Key di Setelan."))
+        }
+        val nodes = _uiState.value.kgNodes
+        val edges = _uiState.value.kgEdges
+        val activeMemories = userMemoryDao.getActiveMemories(100)
+        val res = SimilarityBenchmark.evaluateWithLlm(
+            httpClient = sseClient.httpClient,
+            profileName = _uiState.value.profileName,
+            nodes = nodes,
+            edges = edges,
+            memories = activeMemories
+        )
+        res.onSuccess { saveSimilarityReportSummary(it) }
+        return res
+    }
+
+    private fun saveSimilarityReportSummary(report: SimilarityRunReport) {
+        val stamp = SimpleDateFormat("dd MMM HH:mm", Locale("in", "ID")).format(Date(report.timestamp))
+        val modeTag = if (report.mode == "live_llm") "LLM+Graph" else "Offline"
+        val label = "${report.overallScorePercent}% ($modeTag • $stamp)"
+        asistenPrefs.edit().putString("asisten_kg_last_similarity", label).apply()
+        _uiState.update { it.copy(lastSimilarityScoreLabel = label) }
     }
 
     fun startKenaliAkuSession() {
@@ -3398,9 +3505,9 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                             lastLabel = "Memori diperbarui"
                         }
                         is SseTagParser.MemoryChatAction.DeleteMemory -> {
-                            if (deleteMemoryByKeyOrQuery(act.query) > 0) {
+                            if (deprecateMemoryByKeyOrQuery(act.query) > 0) {
                                 memChanged = true
-                                lastLabel = "Memori dihapus"
+                                lastLabel = "Memori ditandai usang"
                             }
                         }
                     }
@@ -3412,8 +3519,53 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 }
             }
 
+            if (parsed.kgActions.isNotEmpty()) {
+                var kgChanged = false
+                var lastKgLabel = ""
+                parsed.kgActions.forEach { act ->
+                    when (act) {
+                        is SseTagParser.KgChatAction.UpdateNode -> {
+                            if (kgRepository.updateNodeByTag(
+                                    target = act.target,
+                                    newLabel = act.newLabel,
+                                    newSummary = act.newSummary,
+                                    newType = act.newType,
+                                    reason = act.reason
+                                )
+                            ) {
+                                kgChanged = true
+                                lastKgLabel = "Simpul Otak Digital diperbarui"
+                            }
+                        }
+                        is SseTagParser.KgChatAction.ArchiveNode -> {
+                            val resolved = kgRepository.resolveNodeByTarget(act.target, includeDeprecated = false)
+                            if (resolved != null && resolved.nodeType != "SELF") {
+                                kgRepository.deprecateNode(resolved.id, act.reason)
+                                kgChanged = true
+                                lastKgLabel = "Simpul \"${resolved.label}\" diarsipkan"
+                            }
+                        }
+                        is SseTagParser.KgChatAction.MergeNodes -> {
+                            if (kgRepository.mergeNodes(
+                                    sourceTarget = act.sourceTarget,
+                                    destinationTarget = act.destinationTarget,
+                                    reason = act.reason
+                                )
+                            ) {
+                                kgChanged = true
+                                lastKgLabel = "Simpul duplikat digabungkan"
+                            }
+                        }
+                    }
+                }
+                if (kgChanged) {
+                    didMutateModuleAction = true
+                    showBannerMessage(lastKgLabel.ifBlank { "Otak Digital diperbarui" })
+                }
+            }
+
             if (parsed.kronikActions.isNotEmpty()) {
-                val savedTitles = mutableListOf<String>()
+                val savedLabels = mutableListOf<String>()
                 parsed.kronikActions.forEach { act ->
                     when (act) {
                         is SseTagParser.KronikChatAction.AddEntry -> {
@@ -3431,14 +3583,79 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                                 updatedAt = now
                             )
                             kronikDao.upsert(entry)
-                            savedTitles.add(entry.title)
+                            savedLabels.add("Tersimpan \"${entry.title}\"")
+                        }
+                        is SseTagParser.KronikChatAction.EditEntry -> {
+                            val existing = resolveKronikTarget(act.target, kronikDao.getAllEntries())
+                            if (existing != null) {
+                                val now = KronikHelpers.nowIsoStr()
+                                val (nextMoodStatus, nextMoodSvg) = when (act.mood) {
+                                    null -> existing.moodStatus to existing.moodSvgKey
+                                    "__CLEAR__" -> null to null
+                                    else -> {
+                                        val parsedMood = KronikMood.fromStatus(act.mood)
+                                        if (parsedMood != null) parsedMood.status to parsedMood.svgKey
+                                        else existing.moodStatus to existing.moodSvgKey
+                                    }
+                                }
+                                val updated = existing.copy(
+                                    title = act.title.ifBlank { existing.title },
+                                    content = act.content.ifBlank { existing.content },
+                                    date = act.date.ifBlank { existing.date },
+                                    moodStatus = nextMoodStatus,
+                                    moodSvgKey = nextMoodSvg,
+                                    updatedAt = now
+                                )
+                                kronikDao.upsert(updated)
+                                val labelTitle = updated.title.ifBlank { updated.date }
+                                savedLabels.add("Diperbarui \"$labelTitle\"")
+                            }
+                        }
+                        is SseTagParser.KronikChatAction.DeleteEntry -> {
+                            val existing = resolveKronikTarget(act.target, kronikDao.getAllEntries())
+                            if (existing != null) {
+                                val now = KronikHelpers.nowIsoStr()
+                                val labelTitle = existing.title.ifBlank { existing.date }
+                                if (act.archiveOnly) {
+                                    kronikDao.archiveById(id = existing.id, archivedAt = now, updatedAt = now)
+                                    savedLabels.add("Diarsipkan \"$labelTitle\"")
+                                } else {
+                                    kronikDao.deleteByIds(listOf(existing.id))
+                                    savedLabels.add("Dihapus \"$labelTitle\"")
+                                }
+                            }
+                        }
+                        is SseTagParser.KronikChatAction.MergeEntries -> {
+                            val allEntries = kronikDao.getAllEntries()
+                            val src = resolveKronikTarget(act.sourceTarget, allEntries)
+                            val dst = resolveKronikTarget(act.destinationTarget, allEntries)
+                            if (src != null && dst != null && src.id != dst.id) {
+                                val now = KronikHelpers.nowIsoStr()
+                                val mergedContent = buildString {
+                                    append(dst.content.trim())
+                                    if (src.content.isNotBlank()) {
+                                        if (isNotEmpty()) append("\n\n---\n[Digabung dari \"${src.title.ifBlank { src.date }}\"]\n")
+                                        append(src.content.trim())
+                                    }
+                                }
+                                val dstTitle = dst.title.ifBlank { src.title }
+                                kronikDao.upsert(
+                                    dst.copy(
+                                        title = dstTitle,
+                                        content = mergedContent,
+                                        updatedAt = now
+                                    )
+                                )
+                                kronikDao.archiveById(id = src.id, archivedAt = now, updatedAt = now)
+                                savedLabels.add("Digabungkan ke \"${dstTitle.ifBlank { dst.date }}\"")
+                            }
                         }
                     }
                 }
-                if (savedTitles.isNotEmpty()) {
+                if (savedLabels.isNotEmpty()) {
                     didMutateModuleAction = true
                     _uiState.update {
-                        it.copy(kronikBannerMessage = "Kronik: Tersimpan \"${savedTitles.first()}\"")
+                        it.copy(kronikBannerMessage = "Kronik: ${savedLabels.first()}")
                     }
                     viewModelScope.launch {
                         delay(4_000L)
@@ -3776,6 +3993,52 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                                     syncIdekuWishlistToCuciMoney(updated)
                                 }
                                 savedTitles.add("Diubah \"${updated.title}\"")
+                            }
+                        }
+                        is SseTagParser.IdekuChatAction.ArchiveItem -> {
+                            val existing = resolveIdekuTarget(act.target, idekuDao.getAll())
+                            if (existing != null) {
+                                val updated = existing.copy(status = "Parkir")
+                                idekuDao.upsert(updated)
+                                if (updated.type == "Wishlist") {
+                                    syncIdekuWishlistToCuciMoney(updated)
+                                }
+                                savedTitles.add("Diparkir \"${updated.title}\"")
+                            }
+                        }
+                        is SseTagParser.IdekuChatAction.MergeItems -> {
+                            val allItems = idekuDao.getAll()
+                            val src = resolveIdekuTarget(act.sourceTarget, allItems)
+                            val dst = resolveIdekuTarget(act.destinationTarget, allItems)
+                            if (src != null && dst != null && src.id != dst.id) {
+                                val mergedNotes = buildString {
+                                    append(dst.notes.trim())
+                                    if (src.notes.isNotBlank()) {
+                                        if (isNotEmpty()) append("\n")
+                                        append("[Digabung dari \"${src.title}\"]: ${src.notes.trim()}")
+                                    }
+                                }
+                                val mergedDst = dst.copy(
+                                    notes = mergedNotes,
+                                    jalur = dst.jalur.ifBlank { src.jalur },
+                                    nextStep = dst.nextStep.ifBlank { src.nextStep },
+                                    price = if (dst.type == "Wishlist" && dst.price == 0L) src.price else dst.price
+                                )
+                                idekuDao.upsert(mergedDst)
+                                val archivedSrc = src.copy(
+                                    status = "Parkir",
+                                    notes = buildString {
+                                        if (src.notes.isNotBlank()) {
+                                            append(src.notes.trim())
+                                            append("\n")
+                                        }
+                                        append("[Digabung ke \"${dst.title}\"]")
+                                    }
+                                )
+                                idekuDao.upsert(archivedSrc)
+                                if (mergedDst.type == "Wishlist") syncIdekuWishlistToCuciMoney(mergedDst)
+                                if (archivedSrc.type == "Wishlist") syncIdekuWishlistToCuciMoney(archivedSrc)
+                                savedTitles.add("Digabung ke \"${mergedDst.title}\"")
                             }
                         }
                         is SseTagParser.IdekuChatAction.DeleteItem -> {
@@ -4120,7 +4383,8 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
             it.role == "user" && (currentUserMsgId == null || it.id == currentUserMsgId)
         }?.content.orEmpty()
         val kgContext = kgRepository.queryContextForMessage(currentUserText, maxEdges = 14)
-        val recentJournals = kronikDao.getVisibleEntries(3)
+        val candidateJournals = kronikDao.getVisibleEntries(60)
+        val totalKronikCount = _uiState.value.kronikEntries.size
         val recentPublicLinks = linkkuDao.getPublicLinks(4)
         val cuciState = _uiState.value.cuciMoneyState
         val profileName = _uiState.value.profileName.trim()
@@ -4211,12 +4475,51 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 append("\n## Ringkasan Konteks Sesi Ini (Pesan Sebelumnya)\n")
                 append(rolling).append("\n")
             }
-            if (recentJournals.isNotEmpty()) {
-                append("\n## Jurnal Kronik Terbaru Tuan\n")
-                recentJournals.forEach { j ->
+            if (candidateJournals.isNotEmpty()) {
+                val kronikTokens = buildSet {
+                    currentUserText.lowercase().split(Regex("[^a-z0-9]+")).filter { it.length >= 3 }.forEach { add(it) }
+                    kgContext.forEach { t ->
+                        if (t.fromNode.nodeKey != "self") {
+                            t.fromNode.label.lowercase().split(Regex("[^a-z0-9]+")).filter { it.length >= 3 }.forEach { add(it) }
+                        }
+                        if (t.toNode.nodeKey != "self") {
+                            t.toNode.label.lowercase().split(Regex("[^a-z0-9]+")).filter { it.length >= 3 }.forEach { add(it) }
+                        }
+                    }
+                }
+                val relevantJournals = if (kronikTokens.isEmpty()) {
+                    emptyList()
+                } else {
+                    candidateJournals.mapNotNull { j ->
+                        val hay = "${j.title} ${j.content} ${j.moodStatus.orEmpty()}".lowercase()
+                        val score = kronikTokens.count { hay.contains(it) }
+                        if (score > 0) j to score else null
+                    }
+                        .sortedWith(compareByDescending<Pair<KronikEntryEntity, Int>> { it.second }.thenByDescending { it.first.date })
+                        .take(3)
+                        .map { it.first }
+                }
+                val relevantIds = relevantJournals.map { it.id }.toSet()
+                val latestCompact = candidateJournals.filter { it.id !in relevantIds }.take(2)
+                val shownCount = latestCompact.size + relevantJournals.size
+                val headerNote = if (totalKronikCount > shownCount) {
+                    "menampilkan $shownCount dari $totalKronikCount entri aktif; gunakan [SEARCH:kronik|kata_kunci] untuk entri lain"
+                } else {
+                    "$totalKronikCount entri aktif"
+                }
+                append("\n## Jurnal Kronik Tuan ($headerNote)\n")
+                latestCompact.forEachIndexed { idx, j ->
                     val moodInfo = j.moodStatus?.let { " [Mood: $it]" }.orEmpty()
-                    val snippet = j.content.replace('\n', ' ').trim().take(120)
-                    append("- ${j.date}$moodInfo ${j.title.ifBlank { "(tanpa judul)" }}: $snippet\n")
+                    val snippetPart = if (idx == 0 && relevantJournals.isEmpty()) {
+                        val s = j.content.replace('\n', ' ').trim().take(80)
+                        if (s.isNotBlank()) ": $s" else ""
+                    } else ""
+                    append("- [Terbaru] [id=${j.id}] ${j.date}$moodInfo ${j.title.ifBlank { "(tanpa judul)" }}$snippetPart\n")
+                }
+                relevantJournals.forEach { j ->
+                    val moodInfo = j.moodStatus?.let { " [Mood: $it]" }.orEmpty()
+                    val snippet = j.content.replace('\n', ' ').trim().take(140)
+                    append("- [Relevan] [id=${j.id}] ${j.date}$moodInfo ${j.title.ifBlank { "(tanpa judul)" }}: $snippet\n")
                 }
             }
             if (recentPublicLinks.isNotEmpty()) {
@@ -4229,34 +4532,104 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
             appendCuciMoneyContext(this, cuciState)
 
             val idekuList = _uiState.value.idekuState.ideas
-            if (idekuList.isNotEmpty()) {
-                val prosesIdeas = idekuList.filter { it.type == "Idea" && it.status == "Proses" }
-                val activeWishlist = idekuList.filter { it.type == "Wishlist" && it.status != "Selesai" }
-                val pendingCount = idekuList.count { it.status == "Belum" }
-                append("\n## IdeKu & Wishlist Tuan (${idekuList.size} item, $pendingCount Belum)\n")
+            val allIdeas = idekuList.filter { it.type == "Idea" }
+            if (allIdeas.isNotEmpty()) {
+                val prosesIdeas = allIdeas.filter { it.status == "Proses" }
+                val belumIdeas = allIdeas.filter { it.status == "Belum" }
+                val parkirIdeas = allIdeas.filter { it.status == "Parkir" }
+                val doneIdeasCount = allIdeas.count { it.status == "Selesai" }
+
+                append("\n## Daftar Ide (IdeKu — Tipe: Idea | Total ${allIdeas.size}: ${prosesIdeas.size} Proses, ${belumIdeas.size} Belum, ${parkirIdeas.size} Parkir, $doneIdeasCount Selesai)\n")
                 if (prosesIdeas.isNotEmpty()) {
                     append("- Fokus Proses (${prosesIdeas.size}/${IdekuHelpers.FOCUS_LIMIT}): ")
                     append(prosesIdeas.joinToString("; ") { item ->
                         val nxt = if (item.nextStep.isNotBlank()) " → ${item.nextStep}" else ""
-                        "[id=${item.id}] ${item.title}$nxt"
+                        "[id=${item.id}] [Tipe=Idea | Status=Proses | Prioritas=${item.priority}] ${item.title} (${item.category})$nxt"
                     })
                     append("\n")
                 }
-                if (activeWishlist.isNotEmpty()) {
-                    append("- Wishlist aktif (${activeWishlist.size}): ")
-                    append(activeWishlist.take(8).joinToString(", ") { item ->
-                        val priceTag = if (item.price > 0L) " ${CuciMoneyHelpers.formatRp(item.price)}" else ""
-                        "[id=${item.id}] \"${item.title}\"$priceTag [${item.status}]"
+                if (belumIdeas.isNotEmpty()) {
+                    val shownBelum = belumIdeas.take(20)
+                    val moreBelum = belumIdeas.size - shownBelum.size
+                    append("- Idea Belum (${belumIdeas.size}): ")
+                    append(shownBelum.joinToString("; ") { item ->
+                        val notePart = if (item.notes.isNotBlank()) " - ${item.notes.replace('\n', ' ').trim().take(45)}" else ""
+                        "[id=${item.id}] [Tipe=Idea | Status=Belum | Prioritas=${item.priority}] ${item.title} (${item.category})$notePart"
                     })
+                    if (moreBelum > 0) {
+                        append("; (+$moreBelum lainnya, panggil [SEARCH:ideku|type=Idea;status=Belum])")
+                    }
                     append("\n")
                 }
-                val latestItems = idekuList.take(5)
-                append("- Terbaru: ")
-                append(latestItems.joinToString("; ") { item ->
-                    val priceTag = if (item.type == "Wishlist" && item.price > 0L) ", ${CuciMoneyHelpers.formatRp(item.price)}" else ""
-                    "[id=${item.id}] [${item.type}] ${item.title} (${item.category}, ${item.status}$priceTag)"
-                })
-                append("\n")
+                if (parkirIdeas.isNotEmpty()) {
+                    val shownParkir = parkirIdeas.take(10)
+                    append("- Idea Parkir (${parkirIdeas.size}): ")
+                    append(shownParkir.joinToString("; ") { item ->
+                        "[id=${item.id}] [Tipe=Idea | Status=Parkir | Prioritas=${item.priority}] ${item.title} (${item.category})"
+                    })
+                    if (parkirIdeas.size > shownParkir.size) {
+                        append("; (+${parkirIdeas.size - shownParkir.size} lainnya, panggil [SEARCH:ideku|type=Idea;status=Parkir])")
+                    }
+                    append("\n")
+                }
+            }
+
+            val idekuWishlists = idekuList.filter { it.type == "Wishlist" }
+            val cuciWishlists = cuciState.wishlists
+            if (idekuWishlists.isNotEmpty() || cuciWishlists.isNotEmpty()) {
+                data class UnifiedWishlistRow(
+                    val refId: String,
+                    val title: String,
+                    val price: Long,
+                    val saved: Long,
+                    val status: String,
+                    val priority: String
+                )
+                val mergedWishlists = mutableListOf<UnifiedWishlistRow>()
+                val matchedCuciIds = mutableSetOf<String>()
+                idekuWishlists.forEach { iw ->
+                    val idStr = iw.id.toString()
+                    val pot = cuciWishlists.firstOrNull { cw ->
+                        cw.id == idStr || cw.id == "wish_$idStr" || cw.title.equals(iw.title, ignoreCase = true)
+                    }
+                    if (pot != null) matchedCuciIds.add(pot.id)
+                    mergedWishlists.add(
+                        UnifiedWishlistRow(
+                            refId = idStr,
+                            title = iw.title,
+                            price = if (iw.price > 0L) iw.price else (pot?.price ?: 0L),
+                            saved = pot?.saved ?: 0L,
+                            status = iw.status,
+                            priority = iw.priority
+                        )
+                    )
+                }
+                cuciWishlists.filter { it.id !in matchedCuciIds }.forEach { cw ->
+                    mergedWishlists.add(
+                        UnifiedWishlistRow(
+                            refId = cw.id,
+                            title = cw.title,
+                            price = cw.price,
+                            saved = cw.saved,
+                            status = cw.status,
+                            priority = cw.priority
+                        )
+                    )
+                }
+                val activeWishes = mergedWishlists.filter { it.status != "Selesai" }
+                val doneWishCount = mergedWishlists.count { it.status == "Selesai" }
+                append("\n## Daftar Wishlist (Barang Impian — Tipe: Wishlist, BUKAN Idea | ${activeWishes.size} aktif, $doneWishCount selesai)\n")
+                if (activeWishes.isNotEmpty()) {
+                    val shownWish = activeWishes.take(15)
+                    shownWish.forEach { w ->
+                        val priceTag = if (w.price > 0L) " | Harga=${CuciMoneyHelpers.formatRp(w.price)}" else ""
+                        val savedTag = if (w.saved > 0L) " | Tabungan=${CuciMoneyHelpers.formatRp(w.saved)}" else ""
+                        append("- [id=${w.refId}] [Tipe=Wishlist | Status=${w.status} | Prioritas=${w.priority}] \"${w.title}\"$priceTag$savedTag\n")
+                    }
+                    if (activeWishes.size > shownWish.size) {
+                        append("- (+${activeWishes.size - shownWish.size} wishlist lainnya, panggil [SEARCH:ideku|type=Wishlist])\n")
+                    }
+                }
             }
 
             val dailyState = _uiState.value.dailyOsState
@@ -4462,14 +4835,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         val savingsTotal = cuciState.accounts.filter { it.isSavings }.sumOf { it.balance }
         val activeWishes = cuciState.wishlists.filter { it.status != "Selesai" }
         if (savingsTotal > 0L || activeWishes.isNotEmpty()) {
-            sb.append("- Tabungan Wishlist (Total saldo pot tabungan: ${CuciMoneyHelpers.formatRp(savingsTotal)}):\n")
-            activeWishes.take(10).forEach { w ->
-                val remaining = (w.price - w.saved).coerceAtLeast(0L)
-                sb.append(
-                    "  • \"${w.title}\": terkumpul ${CuciMoneyHelpers.formatRp(w.saved)} / " +
-                        "target ${CuciMoneyHelpers.formatRp(w.price)} (kurang ${CuciMoneyHelpers.formatRp(remaining)}) [${w.priority}]\n"
-                )
-            }
+            sb.append("- Pot Tabungan Wishlist CuciMoney+: total saldo ${CuciMoneyHelpers.formatRp(savingsTotal)} untuk ${activeWishes.size} wishlist aktif (rincian item ada di bagian Daftar Wishlist).\n")
         }
     }
 
@@ -4482,11 +4848,13 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                     .map { ChatTurnDto(role = it.role, content = it.content) }
                 val existing = userMemoryDao.getTopMemories(35)
                     .map { ExistingFactDto(factKey = it.factKey, factValue = it.factValue) }
+                val existingKgNodes = kgRepository.getActiveNodeHints(35)
+                    .map { ExistingKgNodeDto(nodeKey = it.nodeKey, nodeType = it.nodeType, label = it.label) }
 
-                val result = memoryClient.extractMemories(recentTurns, existing) ?: return@launch
+                val result = memoryClient.extractMemories(recentTurns, existing, existingKgNodes) ?: return@launch
                 var memoryChanged = false
                 result.deleteKeys.forEach { delKey ->
-                    if (deleteMemoryByKeyOrQuery(delKey) > 0) memoryChanged = true
+                    if (deprecateMemoryByKeyOrQuery(delKey) > 0) memoryChanged = true
                 }
                 result.facts.forEach { fact ->
                     if (fact.factKey.isNotBlank() && fact.factValue.isNotBlank()) {
@@ -4517,7 +4885,8 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                         profileName = _uiState.value.profileName,
                         triples = result.triples,
                         sourceType = "chat",
-                        weightBoost = 0.7f
+                        weightBoost = 0.7f,
+                        sourceRef = "chat:session=$sessionId:msg=$sourceMessageId"
                     )
                 }
                 val nowSync = System.currentTimeMillis()
@@ -4525,6 +4894,11 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                     runCatching {
                         behavioralSignalSync.syncAll(_uiState.value.profileName)
                         lastBehavioralKgSyncAt = nowSync
+                        val lastCompactAt = asistenPrefs.getLong("asisten_kg_last_compact_at", 0L)
+                        if (nowSync - lastCompactAt >= 7L * 24L * 60L * 60L * 1000L) {
+                            kgRepository.compactOldDeprecatedNodes(olderThanDays = 90)
+                            asistenPrefs.edit().putLong("asisten_kg_last_compact_at", nowSync).apply()
+                        }
                     }
                 }
                 if (memoryChanged) {
@@ -4579,15 +4953,17 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
 
         if (scope == "kronik" || scope == "all") {
             val entries = kronikDao.getVisibleEntries(150)
+            val kronikLimit = if (scope == "kronik") 15 else limitPerMod
             val hits = entries.filter {
-                matchesTokens("${it.date} ${it.moodStatus.orEmpty()} ${it.title} ${it.content}")
-            }.take(limitPerMod)
+                matchesTokens("${it.id} ${it.date} ${it.moodStatus.orEmpty()} ${it.title} ${it.content}")
+            }
             if (hits.isNotEmpty()) {
-                out.append("Kronik (${hits.size} ditemukan):\n")
-                hits.forEach { j ->
+                val shown = hits.take(kronikLimit)
+                out.append("Kronik (${hits.size} ditemukan, menampilkan ${shown.size}):\n")
+                shown.forEach { j ->
                     val mood = j.moodStatus?.let { " [$it]" }.orEmpty()
-                    val snippet = j.content.replace('\n', ' ').trim().take(150)
-                    out.append("- ${j.date}$mood ${j.title.ifBlank { "(tanpa judul)" }}: $snippet\n")
+                    val snippet = j.content.replace('\n', ' ').trim().take(200)
+                    out.append("- [id=${j.id}] ${j.date}$mood ${j.title.ifBlank { "(tanpa judul)" }}: $snippet\n")
                 }
             }
         }
@@ -4677,14 +5053,25 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         }
 
         if (scope == "ideku" || scope == "all") {
+            val idekuFilter = SseTagParser.parseIdekuSearchQuery(rawQuery)
+            val qTokens = idekuFilter.query.lowercase().split(Regex("\\s+")).filter { it.length >= 2 }
+            val idekuLimit = if (scope == "ideku") 30 else limitPerMod
             val hits = _uiState.value.idekuState.ideas.filter { item ->
-                matchesTokens("${item.id} ${item.type} ${item.title} ${item.notes} ${item.category} ${item.status} ${item.priority} ${item.jalur}")
-            }.take(limitPerMod)
+                val typeOk = idekuFilter.type.isBlank() || item.type.equals(idekuFilter.type, ignoreCase = true)
+                val statusOk = idekuFilter.status.isBlank() || item.status.equals(idekuFilter.status, ignoreCase = true)
+                val priOk = idekuFilter.priority.isBlank() || item.priority.equals(idekuFilter.priority, ignoreCase = true)
+                val catOk = idekuFilter.category.isBlank() || item.category.contains(idekuFilter.category, ignoreCase = true)
+                val hay = "${item.id} ${item.type} ${item.title} ${item.notes} ${item.category} ${item.status} ${item.priority} ${item.jalur}".lowercase()
+                val qOk = qTokens.isEmpty() || qTokens.all { hay.contains(it) } ||
+                    (qTokens.size > 1 && qTokens.count { hay.contains(it) } >= ((qTokens.size + 1) / 2))
+                typeOk && statusOk && priOk && catOk && qOk
+            }
             if (hits.isNotEmpty()) {
-                out.append("IdeKu & Wishlist (${hits.size} ditemukan):\n")
-                hits.forEach { item ->
+                val shown = hits.take(idekuLimit)
+                out.append("IdeKu & Wishlist (${hits.size} ditemukan, menampilkan ${shown.size}):\n")
+                shown.forEach { item ->
                     val price = if (item.type == "Wishlist" && item.price > 0L) ", ${CuciMoneyHelpers.formatRp(item.price)}" else ""
-                    val note = if (item.notes.isNotBlank()) " — ${item.notes.take(80)}" else ""
+                    val note = if (item.notes.isNotBlank()) " — ${item.notes.replace('\n', ' ').trim().take(80)}" else ""
                     out.append("- [id=${item.id}] [${item.type}] ${item.title} (${item.category}, ${item.status}, ${item.priority}$price)$note\n")
                 }
             }
@@ -4830,6 +5217,28 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         for (tier in tiers) {
             if (tier.size == 1) return tier.first()
             if (tier.size > 1) return null
+        }
+        return null
+    }
+
+    private fun resolveKronikTarget(target: String, entries: List<KronikEntryEntity>): KronikEntryEntity? {
+        val clean = target.trim()
+        if (clean.isEmpty()) return null
+        entries.firstOrNull { it.id.equals(clean, ignoreCase = true) }?.let { return it }
+        val q = clean.lowercase()
+        val pools = listOf(entries.filter { !it.isArchived }, entries)
+        for (pool in pools) {
+            if (pool.isEmpty()) continue
+            val tiers = listOf(
+                pool.filter { it.title.equals(clean, ignoreCase = true) },
+                pool.filter { it.date == clean },
+                pool.filter { it.title.lowercase().contains(q) },
+                pool.filter { it.content.lowercase().contains(q) }
+            )
+            for (tier in tiers) {
+                if (tier.size == 1) return tier.first()
+                if (tier.size > 1) return null
+            }
         }
         return null
     }

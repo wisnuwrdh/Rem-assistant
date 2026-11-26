@@ -40,14 +40,10 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.PersonOutline
-import androidx.compose.material3.DatePicker
-import androidx.compose.material3.DatePickerDialog
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -70,8 +66,10 @@ import com.ecosystemku.assistant.data.local.CuciAccountEntity
 import com.ecosystemku.assistant.data.local.CuciCategoryEntity
 import com.ecosystemku.assistant.data.local.CuciMemberEntity
 import com.ecosystemku.assistant.data.local.CuciTransactionEntity
+import com.ecosystemku.assistant.ui.components.RemDatePickerDialog
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
+import java.time.LocalDate
 import java.util.Date
 import java.util.Locale
 
@@ -699,41 +697,21 @@ private fun TransferAccountCard(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun CuciDatePickerDialog(
     initialDate: String,
     onSelect: (String) -> Unit,
     onClose: () -> Unit
 ) {
-    val initMillis = remember(initialDate) {
-        runCatching {
-            SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(initialDate)?.time
-        }.getOrNull() ?: System.currentTimeMillis()
+    val initDate = remember(initialDate) {
+        runCatching { LocalDate.parse(initialDate) }.getOrNull() ?: LocalDate.now()
     }
-    val datePickerState = rememberDatePickerState(initialSelectedDateMillis = initMillis)
-
-    DatePickerDialog(
-        onDismissRequest = onClose,
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    val millis = datePickerState.selectedDateMillis ?: initMillis
-                    val formatted = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(millis))
-                    onSelect(formatted)
-                }
-            ) {
-                Text("Pilih", color = CuciMoneyColors.Primary, fontWeight = FontWeight.Bold)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onClose) {
-                Text("Batal", color = CuciMoneyColors.TextMuted)
-            }
-        }
-    ) {
-        DatePicker(state = datePickerState)
-    }
+    RemDatePickerDialog(
+        initialDate = initDate,
+        title = "Pilih Tanggal",
+        onDismiss = onClose,
+        onConfirm = { picked -> onSelect(picked.toString()) }
+    )
 }
 
 @Composable

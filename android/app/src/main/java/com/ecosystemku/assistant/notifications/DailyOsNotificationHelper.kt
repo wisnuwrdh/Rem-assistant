@@ -9,21 +9,55 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.LinearGradient
+import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
+import android.graphics.Rect
+import android.graphics.RectF
+import android.graphics.Shader
 import android.os.Build
+import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.ecosystemku.assistant.MainActivity
 import com.ecosystemku.assistant.R
+import com.ecosystemku.assistant.data.local.AssistantDatabase
+import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Date
+import java.util.Locale
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 object DailyOsNotificationHelper {
     const val CHANNEL_ID = "dailyos_reminders"
     const val EXTRA_LAUNCH_ACTION = "launch_action"
     const val ACTION_KENALI_AKU = "kenali_aku"
-    private const val REQ_HABIT = 1001
-    private const val REQ_TODO = 1002
-    private const val REQ_KG_WEEKLY = 1003
+    const val ACTION_OPEN_DAILYOS = "open_dailyos"
+
+    internal const val ACTION_SNOOZE_15M = "com.ecosystemku.assistant.ACTION_NOTIF_SNOOZE_15M"
+    internal const val ACTION_MARK_DONE = "com.ecosystemku.assistant.ACTION_NOTIF_MARK_DONE"
+
+    const val REQ_HABIT = 1001
+    const val REQ_TODO = 1002
+    const val REQ_KG_WEEKLY = 1003
+
+    @Volatile
+    private var cachedAvatarBitmap: Bitmap? = null
+
+    fun getProfileName(context: Context): String {
+        val prefs = context.applicationContext.getSharedPreferences("asisten_prefs", Context.MODE_PRIVATE)
+        return prefs.getString("asisten_profile_name", "Tuan")
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?: "Tuan"
+    }
 
     fun ensureChannel(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -55,10 +89,15 @@ object DailyOsNotificationHelper {
         notificationId: Int,
         title: String,
         body: String,
-        launchAction: String? = null
+        launchAction: String? = null,
+        reminderId: Long = -1L
     ): Boolean {
         if (!hasNotificationPermission(context)) return false
         ensureChannel(context)
+
+        val formattedTitle = title.replace("•", "·")
+        val timeLabel = SimpleDateFormat("HH.mm", Locale.getDefault()).format(Date())
+
         val launchIntent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
             if (!launchAction.isNullOrBlank()) {
@@ -71,11 +110,64 @@ object DailyOsNotificationHelper {
             launchIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+
+        val snoozeIntent = Intent(context, DailyOsAlarmReceiver::class.java).apply {
+            action = ACTION_SNOOZE_15M
+            putExtra("notif_id", notificationId)
+            putExtra("reminder_id", reminderId)
+            putExtra("title", formattedTitle)
+            putExtra("body", body)
+            if (!launchAction.isNullOrBlank()) {
+                putExtra(EXTRA_LAUNCH_ACTION, launchAction)
+            }
+        }
+        val snoozePending = PendingIntent.getBroadcast(
+            context,
+            notificationId * 10 + 1,
+            snoozeIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val doneIntent = Intent(context, DailyOsAlarmReceiver::class.java).apply {
+            action = ACTION_MARK_DONE
+            putExtra("notif_id", notificationId)
+            putExtra("reminder_id", reminderId)
+        }
+        val donePending = PendingIntent.getBroadcast(
+            context,
+            notificationId * 10 + 2,
+            doneIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val avatarBmp = getOrBuildRemAvatarBitmap(context)
+
+        val compactViews = RemoteViews(context.packageName, R.layout.notif_rem_compact).apply {
+            setTextViewText(R.id.notif_title, formattedTitle)
+            setTextViewText(R.id.notif_time, timeLabel)
+            setTextViewText(R.id.notif_body, body)
+            if (avatarBmp != null) {
+                setImageViewBitmap(R.id.notif_avatar, avatarBmp)
+            }
+        }
+
+        val expandedViews = RemoteViews(context.packageName, R.layout.notif_rem_expanded).apply {
+            setTextViewText(R.id.notif_title, formattedTitle)
+            setTextViewText(R.id.notif_time, timeLabel)
+            setTextViewText(R.id.notif_body, body)
+            if (avatarBmp != null) {
+                setImageViewBitmap(R.id.notif_avatar, avatarBmp)
+            }
+            setOnClickPendingIntent(R.id.btn_snooze, snoozePending)
+            setOnClickPendingIntent(R.id.btn_done, donePending)
+        }
+
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle(title)
+            .setContentTitle(formattedTitle)
             .setContentText(body)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setCustomContentView(compactViews)
+            .setCustomBigContentView(expandedViews)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setAutoCancel(true)
             .setContentIntent(contentPending)
@@ -88,11 +180,13 @@ object DailyOsNotificationHelper {
     }
 
     fun postTestNotification(context: Context): Boolean {
+        val name = getProfileName(context)
         return postNotification(
             context = context,
             notificationId = 9001,
-            title = "Rem • Pengingat Daily OS",
-            body = "Halo Tuan! Notifikasi pengingat Habit & To-Do sudah aktif dan siap mengingatkan Tuan. 💙"
+            title = "Rem · Daily OS",
+            body = "$name, notifikasi pengingat Habit & To-Do sudah aktif dan siap mengingatkan $name setiap hari.",
+            launchAction = ACTION_OPEN_DAILYOS
         )
     }
 
@@ -104,21 +198,24 @@ object DailyOsNotificationHelper {
         todoTime: String
     ) {
         ensureChannel(context)
+        val name = getProfileName(context)
         scheduleSingle(
             context = context,
             requestCode = REQ_HABIT,
             enabled = habitEnabled,
             timeStr = habitTime,
-            title = "Rem • Pengingat Habit Hari Ini",
-            body = "Tuan, jangan lupa cek dan selesaikan habit Daily OS hari ini ya. 💙"
+            title = "Rem · Pengingat Habit",
+            body = "$name, waktunya cek dan selesaikan habit Daily OS hari ini ya.",
+            launchAction = ACTION_OPEN_DAILYOS
         )
         scheduleSingle(
             context = context,
             requestCode = REQ_TODO,
             enabled = todoEnabled,
             timeStr = todoTime,
-            title = "Rem • Pengingat Tugas Pending",
-            body = "Tuan, masih ada daftar To-Do di Daily OS yang menunggu diselesaikan. 💙"
+            title = "Rem · Daily OS",
+            body = "$name, masih ada daftar tugas hari ini yang menunggu diselesaikan.",
+            launchAction = ACTION_OPEN_DAILYOS
         )
     }
 
@@ -128,13 +225,17 @@ object DailyOsNotificationHelper {
         enabled: Boolean,
         timeStr: String,
         title: String,
-        body: String
+        body: String,
+        launchAction: String? = null
     ) {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
         val intent = Intent(context, DailyOsAlarmReceiver::class.java).apply {
             putExtra("notif_id", requestCode)
             putExtra("title", title)
             putExtra("body", body)
+            if (!launchAction.isNullOrBlank()) {
+                putExtra(EXTRA_LAUNCH_ACTION, launchAction)
+            }
         }
         val pending = PendingIntent.getBroadcast(
             context,
@@ -174,7 +275,8 @@ object DailyOsNotificationHelper {
         reminderId: Long,
         triggerAtMs: Long,
         title: String,
-        body: String
+        body: String,
+        launchAction: String? = null
     ): Boolean {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return false
         ensureChannel(context)
@@ -184,6 +286,9 @@ object DailyOsNotificationHelper {
             putExtra("reminder_id", reminderId)
             putExtra("title", title)
             putExtra("body", body)
+            if (!launchAction.isNullOrBlank()) {
+                putExtra(EXTRA_LAUNCH_ACTION, launchAction)
+            }
         }
         val pending = PendingIntent.getBroadcast(
             context,
@@ -206,6 +311,48 @@ object DailyOsNotificationHelper {
         }.getOrDefault(false)
     }
 
+    fun scheduleSnooze15Minutes(
+        context: Context,
+        notificationId: Int,
+        reminderId: Long,
+        title: String,
+        body: String,
+        launchAction: String?
+    ) {
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+        ensureChannel(context)
+        val snoozeReqCode = 50_000 + (notificationId.coerceAtLeast(1) % 40_000)
+        val triggerAtMs = System.currentTimeMillis() + 15L * 60_000L
+        val intent = Intent(context, DailyOsAlarmReceiver::class.java).apply {
+            putExtra("notif_id", notificationId)
+            putExtra("reminder_id", reminderId)
+            putExtra("title", title)
+            putExtra("body", body)
+            putExtra("is_snoozed", true)
+            if (!launchAction.isNullOrBlank()) {
+                putExtra(EXTRA_LAUNCH_ACTION, launchAction)
+            }
+        }
+        val pending = PendingIntent.getBroadcast(
+            context,
+            snoozeReqCode,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        runCatching {
+            val canExact = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                alarmManager.canScheduleExactAlarms()
+            } else {
+                true
+            }
+            if (canExact) {
+                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMs, pending)
+            } else {
+                alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMs, pending)
+            }
+        }
+    }
+
     fun syncWeeklyReflectionSchedule(
         context: Context,
         enabled: Boolean,
@@ -214,10 +361,11 @@ object DailyOsNotificationHelper {
     ) {
         ensureChannel(context)
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+        val name = getProfileName(context)
         val intent = Intent(context, DailyOsAlarmReceiver::class.java).apply {
             putExtra("notif_id", REQ_KG_WEEKLY)
-            putExtra("title", "Rem • Refleksi Mingguan Otak Digital")
-            putExtra("body", "Tuan, yuk luangkan 2 menit untuk Sesi Kenali Aku mingguan agar peta pola pikirmu makin akurat. 💙")
+            putExtra("title", "Rem · Refleksi Mingguan")
+            putExtra("body", "$name, yuk luangkan 2 menit untuk Sesi Kenali Aku mingguan agar peta pola pikirmu makin akurat.")
             putExtra(EXTRA_LAUNCH_ACTION, ACTION_KENALI_AKU)
         }
         val pending = PendingIntent.getBroadcast(
@@ -268,14 +416,148 @@ object DailyOsNotificationHelper {
         alarmManager.cancel(pending)
         pending.cancel()
     }
+
+    private fun getOrBuildRemAvatarBitmap(context: Context): Bitmap? {
+        cachedAvatarBitmap?.let { if (!it.isRecycled) return it }
+        return runCatching {
+            val sizePx = 168
+            val ringStroke = 7f
+            val innerGap = 4f
+            val source = BitmapFactory.decodeResource(context.resources, R.drawable.rem_chat_avatar)
+                ?: return@runCatching null
+
+            val out = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(out)
+            val center = sizePx / 2f
+
+            // Outer #5B9CF6 gradient ring
+            val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                shader = LinearGradient(
+                    0f, 0f, sizePx.toFloat(), sizePx.toFloat(),
+                    intArrayOf(0xFF80B6FF.toInt(), 0xFF5B9CF6.toInt(), 0xFF4079CE.toInt()),
+                    null,
+                    Shader.TileMode.CLAMP
+                )
+            }
+            canvas.drawCircle(center, center, center - 2f, ringPaint)
+
+            // Cutout inner dark border matching #1A1917 card
+            val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = 0xFF1A1917.toInt()
+            }
+            canvas.drawCircle(center, center, center - 2f - ringStroke, bgPaint)
+
+            // Cropped circular avatar
+            val avatarRadius = center - 2f - ringStroke - innerGap
+            val avatarSize = (avatarRadius * 2f).toInt().coerceAtLeast(1)
+            val cropped = Bitmap.createBitmap(avatarSize, avatarSize, Bitmap.Config.ARGB_8888)
+            val cropCanvas = Canvas(cropped)
+            val maskPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+            cropCanvas.drawCircle(avatarRadius, avatarRadius, avatarRadius, maskPaint)
+            maskPaint.xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
+
+            val srcMin = minOf(source.width, source.height)
+            val srcLeft = (source.width - srcMin) / 2
+            val srcTop = (source.height - srcMin) / 2
+            val srcRect = Rect(srcLeft, srcTop, srcLeft + srcMin, srcTop + srcMin)
+            val dstRect = RectF(0f, 0f, avatarSize.toFloat(), avatarSize.toFloat())
+            cropCanvas.drawBitmap(source, srcRect, dstRect, maskPaint)
+
+            canvas.drawBitmap(cropped, center - avatarRadius, center - avatarRadius, null)
+            cachedAvatarBitmap = out
+            out
+        }.getOrNull()
+    }
 }
 
 class DailyOsAlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        val id = intent.getIntExtra("notif_id", 1001)
-        val title = intent.getStringExtra("title") ?: "Rem • Pengingat Daily OS"
-        val body = intent.getStringExtra("body") ?: "Jangan lupa cek Daily OS hari ini, Tuan. 💙"
+        val action = intent.action
+        val id = intent.getIntExtra("notif_id", DailyOsNotificationHelper.REQ_HABIT)
+        val reminderId = intent.getLongExtra("reminder_id", -1L)
+
+        when (action) {
+            DailyOsNotificationHelper.ACTION_SNOOZE_15M -> {
+                NotificationManagerCompat.from(context).cancel(id)
+                val title = intent.getStringExtra("title") ?: "Rem · Pengingat"
+                val body = intent.getStringExtra("body") ?: "Pengingat dari Rem, ${DailyOsNotificationHelper.getProfileName(context)}."
+                val launchAction = intent.getStringExtra(DailyOsNotificationHelper.EXTRA_LAUNCH_ACTION)
+                DailyOsNotificationHelper.scheduleSnooze15Minutes(
+                    context = context,
+                    notificationId = id,
+                    reminderId = reminderId,
+                    title = title,
+                    body = body,
+                    launchAction = launchAction
+                )
+                return
+            }
+
+            DailyOsNotificationHelper.ACTION_MARK_DONE -> {
+                NotificationManagerCompat.from(context).cancel(id)
+                if (reminderId > 0L) {
+                    val pendingResult = goAsync()
+                    CoroutineScope(Dispatchers.IO).launch {
+                        try {
+                            AssistantDatabase.getInstance(context.applicationContext)
+                                .remReminderDao()
+                                .markFired(reminderId)
+                        } finally {
+                            pendingResult.finish()
+                        }
+                    }
+                }
+                return
+            }
+        }
+
+        val name = DailyOsNotificationHelper.getProfileName(context)
+        val rawTitle = intent.getStringExtra("title") ?: "Rem · Pengingat"
+        val rawBody = intent.getStringExtra("body") ?: "$name, jangan lupa cek Daily OS hari ini ya."
         val launchAction = intent.getStringExtra(DailyOsNotificationHelper.EXTRA_LAUNCH_ACTION)
-        DailyOsNotificationHelper.postNotification(context, id, title, body, launchAction)
+        val isSnoozed = intent.getBooleanExtra("is_snoozed", false)
+
+        if (!isSnoozed && (id == DailyOsNotificationHelper.REQ_TODO || id == DailyOsNotificationHelper.REQ_HABIT)) {
+            val pendingResult = goAsync()
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val dao = AssistantDatabase.getInstance(context.applicationContext).dailyOsDao()
+                    val resolvedBody = if (id == DailyOsNotificationHelper.REQ_TODO) {
+                        val pendingCount = dao.getAllTodos().count { !it.done }
+                        if (pendingCount > 0) {
+                            "$name, masih ada $pendingCount tugas hari ini yang belum selesai. Mau Rem bantu atur sekarang?"
+                        } else {
+                            "$name, semua tugas Daily OS sudah beres hari ini. Kerja bagus!"
+                        }
+                    } else {
+                        val activeHabits = dao.getAllHabits().count { !it.archived }
+                        if (activeHabits > 0) {
+                            "$name, ada $activeHabits habit aktif menunggumu hari ini. Yuk cek sebentar!"
+                        } else {
+                            rawBody
+                        }
+                    }
+                    DailyOsNotificationHelper.postNotification(
+                        context = context,
+                        notificationId = id,
+                        title = rawTitle,
+                        body = resolvedBody,
+                        launchAction = launchAction,
+                        reminderId = reminderId
+                    )
+                } finally {
+                    pendingResult.finish()
+                }
+            }
+        } else {
+            DailyOsNotificationHelper.postNotification(
+                context = context,
+                notificationId = id,
+                title = rawTitle,
+                body = rawBody,
+                launchAction = launchAction,
+                reminderId = reminderId
+            )
+        }
     }
 }

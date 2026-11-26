@@ -3,7 +3,7 @@
 **EcosystemKu (Rem Assistant)** adalah aplikasi **Android Native** berbasis karakter **Live2D (Cubism 4 — Rem)** yang terintegrasi penuh dengan **5 modul produktivitas lokal**: **Daily OS**, **CuciMoney+**, **IdeKu**, **Kronik**, dan **LinkKu**.
 
 Repositori ini difokuskan **100% pada aplikasi Android (`android/`)**:
-* **Android Native App (`android/`):** Kotlin + Jetpack Compose + Material 3 + Room SQLite (v15) + WebView Live2D + ExoPlayer (Media3) — berjalan **100% standalone (BYOK / Bring Your Own Key)** langsung dari perangkat ke penyedia LLM & TTS.
+* **Android Native App (`android/`):** Kotlin + Jetpack Compose + Material 3 + Room SQLite (v16) + WebView Live2D + ExoPlayer (Media3) — berjalan **100% standalone (BYOK / Bring Your Own Key)** langsung dari perangkat ke penyedia LLM & TTS.
 
 ---
 
@@ -13,7 +13,7 @@ Repositori ini difokuskan **100% pada aplikasi Android (`android/`)**:
 - [2. Live2D Stage, Lip-Sync, & Sistem Audio Anti-Bentrok](#2-live2d-stage-lip-sync--sistem-audio-anti-bentrok)
 - [3. Protokol Tag Chat Rem](#3-protokol-tag-chat-rem)
 - [4. Ekosistem 5 Sub-App Terintegrasi & Setelan](#4-ekosistem-5-sub-app-terintegrasi--setelan)
-- [5. Skema Database Android (Room v15)](#5-skema-database-android-room-v15)
+- [5. Skema Database Android (Room v16)](#5-skema-database-android-room-v16)
 - [6. Struktur Proyek](#6-struktur-proyek)
 - [7. Tech Stack, Build APK, & CI/CD](#7-tech-stack-build-apk--cicd)
 - [8. Status Saat Ini & Arah Pengembangan Lanjutan](#8-status-saat-ini--arah-pengembangan-lanjutan)
@@ -29,7 +29,7 @@ flowchart LR
     subgraph Android["Android Native (Standalone BYOK)"]
         UI["Jetpack Compose UI\n(Asisten · Apps · Setelan · Otak Digital)"]
         VM["AsistenViewModel\n(State, Prompt, KG Sync, Tag Executor)"]
-        DB[("Room SQLite v15\n20 Entities")]
+        DB[("Room SQLite v16\n20 Entities")]
         KS["ApiKeyStore\n(Android Keystore AES-256-GCM)"]
         WV["WebView Live2D\n(stage.html + stage.js + Cubism 4)"]
         EXO["TtsAudioManager\n(ExoPlayer + TeeAudioProcessor RMS)"]
@@ -70,22 +70,23 @@ Sebelum memanggil LLM, klien menyuntikkan konteks nyata secara berurutan:
 2. **Konteks Waktu Lokal & Jeda Pesan:** Hari, tanggal, jam perangkat, kategori waktu (`pagi`/`siang`/`sore`/`malam`), serta durasi jeda sejak pesan user terakhir (`formatElapsedGapId`), sehingga Rem sadar jeda antar chat.
 3. **Lapisan Memori 4-Tingkat + Knowledge Graph ("Otak Digital"):**
    * **Ringkasan Memori Naratif (`MemoryProfileData`):** Profil terstruktur per bagian yang disintesis di latar belakang oleh `MemoryClient`, serta dapat diedit/ditambah/dihapus manual (dilindungi flag `manuallyEdited` agar pembaruan otomatis tidak menimpa editan user).
-   * **Personal Knowledge Graph (`kg_nodes` & `kg_edges`):** Peta graf relasional berbobot (`SELF`, `NILAI`, `POLA_PIKIR`, `KEBIASAAN`, `TUJUAN`, `EMOSI_PEMICU`, `KEPUTUSAN`, `MINAT`, `ORANG`, `KONTEKS`) yang mengambil hingga 14 relasi paling relevan ke prompt setiap giliran (`queryContextForMessage`), mendukung mode reflektif **Sesi Kenali Aku**, opsi **Pertanyaan Refleksi Ringan** (`kgMicroQuestionsEnabled`), **Check-In Refleksi Mingguan** terjadwal (notifikasi *deep-link* hari & jam kustom), serta pelacakan **evolusi/pola historis** (`replacesLabel` & `markEdgeHistorical` agar pola lama tetap tercatat sebagai `[Historis]` dengan bobot turun tanpa tercampur aturan aktif).
-   * **Memori Fakta Teratas (`user_memories`):** Hingga 20 fakta personal (`identitas`, `preferensi`, `kebiasaan`, `tujuan`, `catatan`).
+   * **Personal Knowledge Graph ("Otak Digital" — `kg_nodes` & `kg_edges`):** Peta graf relasional berbobot (`SELF`, `NILAI`, `POLA_PIKIR`, `KEBIASAAN`, `TUJUAN`, `EMOSI_PEMICU`, `KEPUTUSAN`, `MINAT`, `ORANG`, `KONTEKS`) beserta relasi policy/kausal (`MENYEBABKAN`, `BERTENTANGAN`, `MEMOTIVASI`, `CONTOH_DARI`, `MENGGANTIKAN`). Sistem mengambil hingga 14 relasi **aktif** paling relevan ke prompt setiap giliran (`queryContextForMessage`), menyimpan metadata sumber (`sourceType`, `sourceRef`), tanggal dibuat/konfirmasi (`firstSeenAt`, `lastConfirmedAt`), `confidence`, `validationState`, dan status `active`/`deprecated`/`compacted`. Saat fakta serupa ditegaskan ulang, sistem memperkuat `confidence` dan `lastConfirmedAt` lewat pencocokan semantik (`findSimilarActiveNode`) tanpa membuat simpul duplikat; simpul `deprecated` berusia >90 hari dapat dipadatkan berkala menjadi ringkasan riwayat (`compactOldDeprecatedNodes`) dengan **tetap menjaga simpul `SELF` dan `NILAI` secara utuh**.
+   * **Memori Fakta Teratas (`user_memories`):** Hingga 20 fakta personal aktif (`identitas`, `preferensi`, `kebiasaan`, `tujuan`, `catatan`), dengan pelestarian riwayat saat fakta berubah atau ditandai usang.
    * **Ringkasan Sesi Lalu (`conversation_summaries`):** 3 ringkasan sesi terdahulu.
    * **Rolling Context Compaction (`rollingSummary` di `chat_sessions`):** Saat pesan dalam satu sesi melebihi 10 pesan, pesan lama dipadatkan secara inkremental agar percakapan panjang tetap nyambung tanpa membengkakkan token.
 4. **Ringkasan Live 5 Sub-App:**
    * **Daily OS:** Status habit hari ini, streak berturut-turut per-habit (`calculateHabitStreak`) & overall streak, daftar to-do aktif/prioritas & selesai terbaru (beserta ID).
-   * **CuciMoney+:** Daftar buku, akun beserta saldo saat ini, daftar kategori pemasukan & pengeluaran resmi, seluruh breakdown pemasukan & pengeluaran bulan berjalan per kategori, 5 transaksi terakhir (beserta ID), status Master Budget bulanan, dan daftar tabungan Wishlist beserta progres nominalnya.
-   * **IdeKu:** Daftar ide & wishlist aktif beserta ID dan statusnya.
-   * **Kronik:** 3 entri jurnal terbaru yang tidak diarsipkan.
+   * **CuciMoney+:** Daftar buku, akun beserta saldo saat ini, daftar kategori pemasukan & pengeluaran resmi, seluruh breakdown pemasukan & pengeluaran bulan berjalan per kategori, 5 transaksi terakhir (beserta ID), status Master Budget bulanan, dan ringkasan saldo total pot tabungan Wishlist.
+   * **IdeKu & Wishlist (Terpisah):** Bagian **Daftar Ide** (`Fokus Proses`, `Idea Belum` hingga 20 item, `Idea Parkir` hingga 10 item) terpisah tegas dari bagian **Daftar Wishlist** (digabungkan dengan progres pot tabungan CuciMoney+), dengan label `[Tipe=... | Status=... | Prioritas=...]` di setiap item.
+   * **Kronik:** Ringkasan hemat-token: 2 entri terbaru secara ringkas + hingga 3 entri aktif yang paling relevan dengan topik chat/simpul Otak Digital saat ini (entri lain diakses via `[SEARCH:kronik|...]`).
    * **LinkKu:** 4 bookmark publik terbaru (bookmark privat tidak disuntikkan ke prompt).
+5. **Batasan Keamanan & Privasi Chat:** Rem **tidak memiliki akses browsing internet bebas** di dalam chat dan **tidak dapat mengirim pesan (WhatsApp/SMS/email) atas nama pengguna**; aksi eksternal dibatasi pada `Intent` Android eksplisit (`OPEN_URL`, `SHARE`, alarm, kalender) yang membutuhkan konfirmasi/interaksi pengguna di layar sistem.
 
 ### B. Eksekusi Multi-Putaran & On-Demand Archive Search (2-Tahap)
 1. **Round 0..2 Loop (`streamAssistantReply`):** Klien mengirim maksimal 10 pesan terakhir + `personalizedPrompt` via SSE (`/chat/completions` dengan `stream = true`). Selama streaming, `SseTagParser.visibleTextDuringStream` menyembunyikan tag internal (`[...]`, `[JA]...[/JA]`) dari UI.
 2. **Pencarian Arsip Lokal (`[SEARCH:scope|query]`):** Jika jawaban membutuhkan data lama, filter khusus, relasi Knowledge Graph, atau info perangkat yang tidak ada di ringkasan prompt (mis. transaksi bulan/kategori tertentu via `book=...;month=...;from=...;to=...;cat=...;acc=...;dir=...;q=...`, riwayat tanggal & streak habit, jurnal lama, ide, bookmark publik, isi chat sesi lalu, simpul/relasi `kg`, atau status baterai/kalender/lokasi/pengingat), Rem mengeluarkan `[SEARCH:scope|query]`. Klien mengeksekusi query lokal (`executeLocalArchiveSearch`), memutar klip tunggu `ack_2.mp3`, lalu menjalankan putaran LLM berikutnya dengan hasil pencarian tersebut (maksimal 2 putaran search per giliran).
-3. **Finalisasi Tag & Pembaruan Modul:** `SseTagParser.parseFinal` memisahkan teks bersih, `[EXPR:...]`, `[CHOICES:...]`, `[OPEN:...]`, tag aksi modul (`MEMORY`, `DEVICE`, `KRONIK`, `LINKKU`, `CUCI`, `IDEKU`, `DAILYOS`), dan `[JA]...[/JA]`.
-4. **Post-Reply Background Tasks:** Jika `autoLearnMemory` aktif, `extractAndPersistMemories` mengekstrak fakta baru (`user_memories`) beserta triple Knowledge Graph (`kg_nodes`/`kg_edges`) ke SQLite, menjalankan sinkronisasi sinyal perilaku 0-token (`BehavioralSignalSync` dari Daily OS, Kronik, IdeKu, CuciMoney+, dan LinkKu publik saja), dan memperbarui `MemoryProfileData` (kecuali bila `manuallyEdited == true`); lalu `compactSessionIfNeeded` memadatkan riwayat lama bila pesan sesi > 10.
+3. **Finalisasi Tag & Pembaruan Modul:** `SseTagParser.parseFinal` memisahkan teks bersih, `[EXPR:...]`, `[CHOICES:...]`, `[OPEN:...]`, tag aksi modul (`MEMORY`, `KG`, `DEVICE`, `KRONIK`, `LINKKU`, `CUCI`, `IDEKU`, `DAILYOS`), dan `[JA]...[/JA]`.
+4. **Post-Reply Background Tasks:** Jika `autoLearnMemory` aktif, `extractAndPersistMemories` membaca petunjuk simpul aktif (`getActiveNodeHints`), mengekstrak fakta baru (`user_memories`) beserta triple Knowledge Graph antarsimpul (`kg_nodes`/`kg_edges`) ke SQLite, menjalankan sinkronisasi sinyal perilaku 0-token (`BehavioralSignalSync` lintas modul termasuk relasi non-`SELF` `MEMOTIVASI`/`MENDUKUNG`), pemadatan berkala mingguan (`compactOldDeprecatedNodes`), serta memperbarui `MemoryProfileData` (kecuali bila `manuallyEdited == true`); lalu `compactSessionIfNeeded` memadatkan riwayat lama bila pesan sesi > 10.
 
 ### C. Manajemen Sesi, Kontrol Pesan, & Quick Replies
 * **Multi-Sesi & Log Obrolan:** Mendukung buat sesi baru (**Obrolan Baru**), pindah sesi, ubah judul sesi, hapus sesi, serta **Smart Auto-Rollover** (otomatis membuat sesi baru saat pergantian hari atau jeda >= 5 jam jika sesi sebelumnya sudah berisi percakapan).
@@ -123,11 +124,14 @@ Respons LLM dapat menyertakan tag tersembunyi berikut (dibersihkan dari bubble c
 
 | Tag | Fungsi & Keterangan |
 | --- | --- |
-| `[SEARCH:scope\|kata_kunci]` | Pencarian on-demand 2-tahap ke arsip lokal & info perangkat (`kronik`, `linkku`, `cuci`, `ideku`, `dailyos`, `kg`, `device`, `chat`, `all`); scope `cuci` mendukung filter terstruktur `book=...;month=...;from=...;to=...;cat=...;acc=...;dir=...;q=...`; scope `device` mendukung `battery`, `calendar [YYYY-MM-DD]`, `location`, `reminders`; scope `kg` mencari simpul & relasi Otak Digital |
+| `[SEARCH:scope\|kata_kunci]` | Pencarian on-demand 2-tahap ke arsip lokal & info perangkat (`kronik`, `linkku`, `cuci`, `ideku`, `dailyos`, `kg`, `device`, `chat`, `all`); scope `cuci` mendukung filter terstruktur `book=...;month=...;from=...;to=...;cat=...;acc=...;dir=...;q=...`; scope `ideku` mendukung filter `type=Idea\|Wishlist;status=...;pri=...;cat=...;q=...` atau query natural (mis. `Idea Belum`); scope `device` mendukung `battery`, `calendar [YYYY-MM-DD]`, `location`, `reminders`; scope `kg` mencari simpul & relasi Otak Digital |
 | `[CHOICES:single\|Opsi 1\|Opsi 2]` | Menampilkan chip pilihan tunggal di bawah pesan Rem (tap langsung kirim) |
 | `[CHOICES:multi\|Opsi 1\|Opsi 2]` | Menampilkan daftar checkbox pilihan ganda + tombol **Kirim** |
 | `[MEMORY:SET\|kategori\|fact_key\|nilai]` | Menyimpan atau memperbarui fakta memori personal dari obrolan |
-| `[MEMORY:DEL\|fact_key_atau_kata_kunci]` | Menghapus/melupakan fakta memori personal |
+| `[MEMORY:DEL\|fact_key_atau_kata_kunci]` | Menandai fakta memori personal sebagai usang (`deprecated`) tanpa menghapus riwayat |
+| `[KG:UPDATE\|target\|label\|ringkasan\|tipe\|alasan]` | Memperbarui label, ringkasan, atau tipe simpul aktif di Otak Digital (alias: `EDIT`, `UBAH`) |
+| `[KG:ARCHIVE\|target\|alasan]` | Menandai simpul Otak Digital usang (`deprecated`) tanpa menghapus riwayat (alias: `ARSIP`, `USANG`) |
+| `[KG:MERGE\|sumber\|tujuan\|alasan]` | Menggabungkan simpul duplikat ke simpul tujuan dan memindahkan sinapsisnya (alias: `GABUNG`) |
 | `[EXPR:nama]` | Mengubah ekspresi & motion Live2D (`happy`, `smile`, `shame`, `sad`, `cry`, `angry`, `surprise`, `serious`, `proud`, `doubt`, `puzzle`, `upset`, `appeal`, `navi`, `none`) |
 | `[OPEN:app]` | Membuka overlay modul (`kronik`, `linkku`, `cucimoney`, `ideku`, `dailyos`) dengan verifikasi perintah eksplisit (`shouldAllowOpenApp`) agar tidak terbuka tidak sengaja saat obrolan biasa |
 | `[DEVICE:ALARM\|HH:mm\|label]` | Memasang alarm sistem Android lewat `AlarmClock.ACTION_SET_ALARM` (alias: `SET_ALARM`) |
@@ -138,6 +142,9 @@ Respons LLM dapat menyertakan tag tersembunyi berikut (dibersihkan dari bubble c
 | `[DEVICE:OPEN_URL\|https://...]` | Membuka URL `http`/`https` di browser perangkat (alias: `URL`, `BROWSE`) |
 | `[DEVICE:SHARE\|teks]` | Membuka Android Share Sheet (`Intent.ACTION_SEND`) (alias: `SHARE_TEXT`, `BAGIKAN`) |
 | `[KRONIK:ADD\|judul\|isi\|mood]` | Menambah entri jurnal baru ke Kronik |
+| `[KRONIK:EDIT\|id_atau_query\|judul\|isi\|mood\|tgl]` | Mengubah judul, isi, mood (`-` untuk hapus mood), atau tanggal entri Kronik yang ada (alias: `UPDATE`, `FIX`) |
+| `[KRONIK:DEL\|id_atau_query]` / `[KRONIK:ARCHIVE\|...]` | Menghapus atau mengarsipkan entri Kronik (alias: `DELETE`, `REMOVE`, `HAPUS`, `ARSIP`) |
+| `[KRONIK:MERGE\|sumber\|tujuan]` | Menggabungkan isi catatan sumber ke catatan tujuan lalu mengarsipkan catatan sumber (alias: `GABUNG`) |
 | `[LINKKU:ADD\|url\|judul\|catatan\|kategori\|tag1,tag2]` | Menyimpan bookmark publik ke LinkKu + auto-fetch metadata URL |
 | `[CUCI:ADD\|out/in\|nominal\|judul\|kategori\|akun]` | Mencatat transaksi pengeluaran/pemasukan ke CuciMoney+ (dukungan multi-buku & kategori resmi) |
 | `[CUCI:EDIT\|id_atau_query\|nominal\|judul\|kategori\|akun\|tgl]` | Mengubah transaksi CuciMoney+ yang ada beserta koreksi saldo otomatis (alias: `UPDATE`, `FIX`; mengecualikan `savingsPot` & `transferPair`) |
@@ -148,6 +155,8 @@ Respons LLM dapat menyertakan tag tersembunyi berikut (dibersihkan dari bubble c
 | `[IDEKU:ADD\|Wishlist\|nama\|harga\|Belanja\|prioritas\|catatan]` | Menambah wishlist ke IdeKu dan menyinkronkannya ke CuciMoney+ |
 | `[IDEKU:STATUS\|id_atau_query\|status]` | Mengubah status ide/wishlist (`Belum`, `Proses`, `Parkir`, `Selesai`) + sinkron wishlist ke CuciMoney+ (alias: `DONE`, `SELESAI`, `SET_STATUS`) |
 | `[IDEKU:EDIT\|id_atau_query\|judul\|kategori\|prioritas\|catatan\|jalur\|harga]` | Memperbarui detail ide/wishlist di IdeKu (alias: `UPDATE`) |
+| `[IDEKU:ARCHIVE\|id_atau_query]` | Memarkir (`status = "Parkir"`) ide/wishlist tanpa menghapus data (alias: `ARSIP`) |
+| `[IDEKU:MERGE\|sumber\|tujuan]` | Menggabungkan catatan item sumber ke item tujuan dan memarkir item sumber (alias: `GABUNG`) |
 | `[IDEKU:DEL\|id_atau_query]` | Menghapus ide/wishlist dari IdeKu (alias: `DELETE`, `REMOVE`, `HAPUS`) |
 | `[DAILYOS:HABIT\|nama\|kategori\|ikon]` | Menambah habit baru di Daily OS |
 | `[DAILYOS:TODO\|judul\|priority\|YYYY-MM-DD]` | Menambah tugas to-do di Daily OS (`urgent`, `soon`, `normal`) |
@@ -180,9 +189,9 @@ Respons LLM dapat menyertakan tag tersembunyi berikut (dibersihkan dari bubble c
 ### 5. LinkKu (`linkku/`)
 * **Fitur:** Pengelola bookmark dengan kategori, tag bebas, auto-fetch judul & `og:image`/thumbnail YouTube (`LinkkuMetaClient`), serta **Mode Privat ber-PIN 4-digit** yang mengenkripsi payload privat menggunakan **PBKDF2 (100.000 iterasi, `linkku-salt-v1`) + AES-GCM** (`LinkkuCrypto`).
 
-### 6. Setelan, Otak Digital, & Backup Ecosystem ZIP v3 (`SetelanScreen.kt`, `KnowledgeGraphScreen.kt`)
+### 6. Setelan, Otak Digital, & Backup Ecosystem ZIP v3 (`SetelanScreen.kt`, `KnowledgeGraphScreen.kt`, `SimilarityBenchmark.kt`)
 * **Profil & Konfigurasi AI:** Nama panggilan pengguna, input & uji koneksi LLM + Fish Audio TTS (disimpan terenkripsi di `ApiKeyStore`).
-* **Manajemen Memori & Otak Digital:** Lihat, tambah/ubah/hapus `user_memories`, aktifkan/matikan *auto-learn memory* serta toggle **Pertanyaan Refleksi Ringan** (`kgMicroQuestionsEnabled`), edit/tambah/hapus bagian pada **Ringkasan Memori** naratif (dilindungi `manuallyEdited`), serta buka peta jaringan interaktif **Otak Digital (`KnowledgeGraphScreen`)** untuk menjelajah simpul/relasi, memulai **Sesi Kenali Aku**, menambah/mengedit/menghapus simpul & koneksi, atau mengekspor skema portabel **Digital Twin JSON (`rem-digital-twin-kg-v1`)**.
+* **Manajemen Memori & Otak Digital:** Lihat, tambah/ubah/tandai usang `user_memories` (lengkap dengan badge `USANG`), aktifkan/matikan *auto-learn memory* serta toggle **Pertanyaan Refleksi Ringan** (`kgMicroQuestionsEnabled`), edit/tambah/hapus bagian pada **Ringkasan Memori** naratif (dilindungi `manuallyEdited`), serta buka peta jaringan interaktif **Otak Digital (`KnowledgeGraphScreen`)** untuk menjelajah simpul/relasi, memulai **Sesi Kenali Aku**, menambah/mengedit/menghapus simpul & koneksi, memvalidasi simpul secara manual (**Benar** / **Salah** / **Sudah Berubah** + `MENGGANTIKAN`), memadatkan riwayat usang (`>90 hari`, menjaga `SELF` & `NILAI`), menjalankan **Uji Kemiripan (25 Skenario)** (`SimilarityBenchmark`: cek cakupan offline 0-token maupun uji LLM + Graph lintas 5 domain), atau mengekspor skema portabel **Digital Twin JSON (`rem-digital-twin-kg-v1`)**. Tampilan graph dioptimasi untuk skala 500–1.000 simpul lewat batas render terfilter (maks 120 simpul), perhitungan layout di `Dispatchers.Default`, cache pengukuran label `TextLayoutResult`, dan lookup tetangga `O(1)`.
 * **Notifikasi & Akses Perangkat:** Pengaturan jadwal harian Daily OS + izin runtime **Baca Kalender (`READ_CALENDAR`)** dan toggle opt-in **Lokasi Perkiraan (`ACCESS_COARSE_LOCATION`)**.
 * **Tampilan & Stage:** Mode tema (`system` / `light` / `dark`), pemilihan gambar **Wallpaper Rem** dari galeri + slider *dim* latar belakang, dan reset stage.
 * **Export / Import ZIP v3 (`EcosystemBackupRepository`):** Ekspor seluruh data (chat sessions, memori, `knowledge_graph.json`, Daily OS, CuciMoney+, IdeKu, Kronik, LinkKu) ke satu arsip `.zip` dan impor kembali dengan mode **Merge** atau **Replace** (termasuk dialog dekripsi PIN untuk tautan privat LinkKu).
@@ -190,18 +199,18 @@ Respons LLM dapat menyertakan tag tersembunyi berikut (dibersihkan dari bubble c
 
 ---
 
-## 5. Skema Database Android (Room v15)
+## 5. Skema Database Android (Room v16)
 
-`AssistantDatabase` (`version = 15`, `exportSchema = false`) mengelola **20 Entity** dalam satu SQLite lokal dengan migrasi eksplisit `MIGRATION_1_2` hingga `MIGRATION_14_15`:
+`AssistantDatabase` (`version = 16`, `exportSchema = false`) mengelola **20 Entity** dalam satu SQLite lokal dengan migrasi eksplisit `MIGRATION_1_2` hingga `MIGRATION_15_16`:
 
 | Domain | Entity | Peran Utama |
 | --- | --- | --- |
 | **Chat & Memori** | `ChatSessionEntity` | Sesi obrolan (`id`, `title`, `rollingSummary`, `createdAt`, `updatedAt`) |
 | | `ChatMessageEntity` | Pesan per sesi (`role`, `content`, `expressionTag`, `choicesJson`, `createdAt`) |
-| | `UserMemoryEntity` | Fakta personal unik berdasarkan `factKey`, kategori, dan `confidence` |
+| | `UserMemoryEntity` | Fakta personal unik berdasarkan `factKey`, kategori, `confidence`, `status` (`active`/`deprecated`), `deprecatedAt`, `supersededBy` |
 | | `ConversationSummaryEntity` | Ringkasan sesi percakapan terdahulu |
-| **Knowledge Graph** | `KgNodeEntity` | Simpul konsep diri/pola pikir/kebiasaan/nilai/tujuan (`nodeKey` unik, `nodeType`, `salience`, `sourceType`) |
-| | `KgEdgeEntity` | Relasi berarah antar-simpul (`fromNodeId`, `toNodeId`, `relation`, `evidence`, `weight`, `confidence`) |
+| **Knowledge Graph** | `KgNodeEntity` | Simpul konsep diri/pola pikir/kebiasaan/nilai/tujuan (`nodeKey` unik, `nodeType`, `salience`, `sourceType`, `sourceRef`, `confidence`, `status`, `lastConfirmedAt`, `validationState`) |
+| | `KgEdgeEntity` | Relasi berarah antar-simpul (`fromNodeId`, `toNodeId`, `relation`, `evidence`, `weight`, `confidence`, `status`, `createdAt`, `lastConfirmedAt`, `sourceType`, `sourceRef`) |
 | **Perangkat & Pengingat** | `RemReminderEntity` | Pengingat notifikasi lokal sekali jalan (`id`, `title`, `triggerAtMs`, `fired`, `createdAt`) |
 | **Kronik** | `KronikEntryEntity` | Entri jurnal, pin, arsip, `moodStatus`, `moodSvgKey`, `habitsLogJson` |
 | **LinkKu** | `LinkkuLinkEntity` | URL, judul, catatan, kategori, `tagsJson`, `isPrivate`, `thumb` |
@@ -235,8 +244,8 @@ Respons LLM dapat menyertakan tag tersembunyi berikut (dibersihkan dari bubble c
 │               ├── data/audio/        # TtsAudioManager (ExoPlayer + RMS lip-sync + mute terpisah)
 │               ├── data/backup/       # EcosystemBackupRepository (ZIP v3 export & import mandiri + knowledge_graph.json)
 │               ├── data/cloud/        # CloudBackupCrypto, GoogleDriveBackupClient, & CloudBackupWorker
-│               ├── data/kg/           # KnowledgeGraphModels, KnowledgeGraphRepository, & BehavioralSignalSync
-│               ├── data/local/        # AssistantDatabase (v15), ApiKeyStore, Entities & DAOs
+│               ├── data/kg/           # KnowledgeGraphModels, KnowledgeGraphRepository, BehavioralSignalSync, & SimilarityBenchmark
+│               ├── data/local/        # AssistantDatabase (v16), ApiKeyStore, Entities & DAOs
 │               ├── data/network/      # ChatSseClient, DirectLlmClient, MemoryClient, SseTagParser, & *Client modul
 │               ├── device/            # AndroidDeviceBridge (Alarm, Timer, Calendar, URL, Share, Battery, Location)
 │               ├── live2d/            # Live2DStageController (JS <-> Kotlin bridge)
@@ -244,7 +253,7 @@ Respons LLM dapat menyertakan tag tersembunyi berikut (dibersihkan dari bubble c
 │               └── ui/
 │                   ├── asisten/       # AsistenScreen, RemVoiceInputDialog, & AsistenViewModel (otak ekosistem)
 │                   ├── apps/          # AppsHubScreen + cucimoney/, dailyos/, ideku/, kronik/, linkku/
-│                   ├── kg/            # KnowledgeGraphScreen (Canvas peta Otak Digital, Kenali Aku, Digital Twin export)
+│                   ├── kg/            # KnowledgeGraphScreen (Canvas peta Otak Digital, validasi, uji kemiripan, Digital Twin)
 │                   ├── navigation/    # BottomNavBar (Asisten, Apps, Setelan)
 │                   ├── setelan/       # SetelanScreen (AI config, memori & edit ringkasan, cloud backup, tema, ZIP v3)
 │                   └── theme/         # Color, Theme, Type (EditorialSerif & UiSans)
@@ -276,13 +285,13 @@ Bagian ini merangkum posisi proyek saat ini sebagai konteks bagi kontributor ata
 
 ### Yang Sudah Berjalan Baik
 * Arsitektur standalone BYOK Android dengan enkripsi key lokal, streaming SSE, dan fallback suara berlapis (Fish Audio TTS -> Voice Klip kontekstual sesuai aksi/ekspresi).
-* **Personal Knowledge Graph ("Otak Digital" — Room v15):** Ekstraksi triple relasional (`kg_nodes` & `kg_edges`) dari percakapan maupun sinyal perilaku 0-token (`BehavioralSignalSync` lintas Daily OS, Kronik, IdeKu, CuciMoney+, dan LinkKu publik), injeksi konteks graf ke prompt (`queryContextForMessage`), `[SEARCH:kg|...]`, **Sesi Kenali Aku**, visualisasi jaringan interaktif (`KnowledgeGraphScreen`), edit manual **Ringkasan Memori** (dilindungi `manuallyEdited`), serta ekspor portabel **Digital Twin JSON (`rem-digital-twin-kg-v1`)**.
-* Sinkronisasi dua arah antara percakapan Rem dan 5 modul produktivitas (termasuk `[SEARCH:...]` arsip lokal 2-tahap, `[CHOICES:...]`, rolling context compaction, dan realisasi wishlist CuciMoney+ <-> IdeKu).
-* Eksekusi fungsi perangkat Android (`AndroidDeviceBridge` + pengingat persisten `RemReminderEntity`).
+* **Personal Knowledge Graph ("Otak Digital" — Room v16):** Ekstraksi triple relasional (`kg_nodes` & `kg_edges`) beserta relasi policy antarsimpul (`MENYEBABKAN`, `BERTENTANGAN`, `MEMOTIVASI`, `CONTOH_DARI`, `MENGGANTIKAN`), deduplikasi semantik (`findSimilarActiveNode`), metadata sumber/tanggal/confidence, status `active`/`deprecated`/`compacted`, validasi manual per simpul (**Benar** / **Salah** / **Sudah Berubah**), pemadatan riwayat lama (>90 hari tanpa menyentuh `SELF` & `NILAI`), optimasi skala 500–1.000 simpul, **Uji Kemiripan (25 Skenario)** (`SimilarityBenchmark`), injeksi konteks graf aktif ke prompt (`queryContextForMessage`), `[SEARCH:kg|...]`, tag `[KG:UPDATE/ARCHIVE/MERGE]`, **Sesi Kenali Aku**, dan ekspor portabel **Digital Twin JSON (`rem-digital-twin-kg-v1`)**.
+* Sinkronisasi dua arah antara percakapan Rem dan 5 modul produktivitas (termasuk `[SEARCH:...]` arsip lokal 2-tahap, `[CHOICES:...]`, rolling context compaction, `[IDEKU:ARCHIVE/MERGE]`, `[KRONIK:MERGE]`, dan realisasi wishlist CuciMoney+ <-> IdeKu).
+* Eksekusi fungsi perangkat Android (`AndroidDeviceBridge` + pengingat persisten `RemReminderEntity`), dengan batasan keamanan tegas (tanpa akses internet chat bebas dan tanpa kirim pesan atas nama pengguna).
 * Backup/Restore portabel lintas-modul via ZIP v3 (termasuk `knowledge_graph.json`) maupun **Cloud Backup Google Drive (`appDataFolder`)** + Auto-Backup `WorkManager` & enkripsi passphrase AES-256-GCM.
 
 ### Area Terbuka & Kandidat Pengembangan Berikutnya
-1. **Automated Testing:** Telah tersedia unit test untuk `CloudBackupCryptoTest`, `KnowledgeGraphModelsTest`, `BehavioralSignalSyncTest`, dan `SseTagParserTest` — kandidat prioritas berikutnya adalah unit test untuk `CuciMoney` saldo/realisasi wishlist, `LinkkuCrypto`, dan migrasi Room (`MigrationTestHelper`).
+1. **Automated Testing:** Telah tersedia unit test untuk `CloudBackupCryptoTest`, `KnowledgeGraphModelsTest`, `BehavioralSignalSyncTest`, `SimilarityBenchmarkTest`, dan `SseTagParserTest` — kandidat prioritas berikutnya adalah unit test untuk `CuciMoney` saldo/realisasi wishlist, `LinkkuCrypto`, dan migrasi Room (`MigrationTestHelper`).
 2. **Modularisasi `AsistenViewModel.kt`:** Ekosistem ZIP sudah dipisahkan ke `EcosystemBackupRepository`; memecah orkestrasi AI, prompt builder, tag executor, dan action 5 sub-app menjadi use-case per modul akan meningkatkan keterbacaan dan testability.
 3. **Voice Interaction Dua Arah & TTS Fallback Sistem:** Menambah mode percakapan hands-free (STT mic kontinu) serta opsi Android `TextToSpeech` lokal sebagai opsi tambahan di luar Fish Audio & voice klip bawaan.
 4. **Pembersihan Legacy:** Menghapus parameter `API_BASE_URL` yang sudah tidak terpakai (`@Suppress("unused")`) di client jaringan Android.

@@ -75,7 +75,6 @@ import com.ecosystemku.assistant.ui.theme.UiSans
 
 import android.Manifest
 import android.app.Activity
-import android.app.TimePickerDialog
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -99,6 +98,7 @@ import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.RestartAlt
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -119,10 +119,15 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.ecosystemku.assistant.ui.components.RemAlertDialog
+import com.ecosystemku.assistant.ui.components.RemAlertTone
+import com.ecosystemku.assistant.ui.components.RemInputDialog
+import com.ecosystemku.assistant.ui.components.RemTimePickerDialog
 import com.ecosystemku.assistant.BuildConfig
 import com.ecosystemku.assistant.data.backup.EcosystemZipImportResult
 import com.ecosystemku.assistant.data.cloud.CloudAuthResult
@@ -314,19 +319,26 @@ fun SetelanScreen(
         }
     }
 
-    fun pickTime(current: String, onPicked: (String) -> Unit) {
-        val parts = current.split(":")
-        val initH = parts.getOrNull(0)?.toIntOrNull()?.coerceIn(0, 23) ?: 7
-        val initM = parts.getOrNull(1)?.toIntOrNull()?.coerceIn(0, 59) ?: 0
-        TimePickerDialog(
-            context,
-            { _, h, m ->
-                onPicked(String.format(Locale.US, "%02d:%02d", h, m))
-            },
-            initH,
-            initM,
-            true
-        ).show()
+    var activeTimePicker by remember { mutableStateOf<Triple<String, String, (String) -> Unit>?>(null) }
+
+    fun pickTime(
+        current: String,
+        subtitle: String = "Rem akan mengingatkan $profileName setiap hari",
+        onPicked: (String) -> Unit
+    ) {
+        activeTimePicker = Triple(current, subtitle, onPicked)
+    }
+
+    activeTimePicker?.let { (initialTime, pickerSubtitle, onPicked) ->
+        RemTimePickerDialog(
+            initialTime = initialTime,
+            subtitle = pickerSubtitle,
+            onDismiss = { activeTimePicker = null },
+            onConfirm = { formatted ->
+                activeTimePicker = null
+                onPicked(formatted)
+            }
+        )
     }
 
     val exportZipLauncher = rememberLauncherForActivityResult(
@@ -379,278 +391,102 @@ fun SetelanScreen(
     }
 
     if (showProfileDialog) {
-        AlertDialog(
-            onDismissRequest = { showProfileDialog = false },
-            containerColor = SecondarySurface,
-            titleContentColor = TextPrimary,
-            textContentColor = TextPrimary,
-            title = {
-                Text("Ubah Nama Profil", fontFamily = EditorialSerif, fontSize = 20.sp, color = TextPrimary)
+        RemInputDialog(
+            subtitle = "Ubah Nama Profil",
+            value = profileInput,
+            onValueChange = { profileInput = it },
+            placeholder = "Nama panggilan...",
+            helperText = "Nama ini digunakan pada sapaan dashboard Apps dan panggilan Rem kepadamu.",
+            maxLength = 40,
+            confirmText = "Simpan",
+            dismissText = "Batal",
+            onConfirm = {
+                onUpdateProfileName(profileInput)
+                showProfileDialog = false
             },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        "Nama ini digunakan pada sapaan dashboard Apps dan panggilan Rem kepada Tuan.",
-                        fontFamily = UiSans,
-                        fontSize = 12.sp,
-                        color = TextMuted
-                    )
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(ElevatedSurface)
-                            .border(1.dp, BorderLight, RoundedCornerShape(10.dp))
-                            .padding(horizontal = 12.dp, vertical = 10.dp)
-                    ) {
-                        if (profileInput.isEmpty()) {
-                            Text("Nama panggilan...", fontFamily = UiSans, fontSize = 13.sp, color = TextSubtle)
-                        }
-                        BasicTextField(
-                            value = profileInput,
-                            onValueChange = { profileInput = it },
-                            singleLine = true,
-                            textStyle = TextStyle(fontFamily = UiSans, fontSize = 13.5.sp, color = TextPrimary),
-                            cursorBrush = SolidColor(AccentBlue),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        onUpdateProfileName(profileInput)
-                        showProfileDialog = false
-                    }
-                ) {
-                    Text("Simpan", color = AccentBlue, fontFamily = UiSans, fontWeight = FontWeight.SemiBold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showProfileDialog = false }) {
-                    Text("Batal", color = TextMuted, fontFamily = UiSans)
-                }
-            }
+            onDismiss = { showProfileDialog = false }
         )
     }
 
     editingAiField?.let { field ->
-        AlertDialog(
-            onDismissRequest = { editingAiField = null },
-            containerColor = SecondarySurface,
-            titleContentColor = TextPrimary,
-            textContentColor = TextPrimary,
-            title = {
-                Text(field.title, fontFamily = EditorialSerif, fontSize = 20.sp, color = TextPrimary)
-            },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        field.helper,
-                        fontFamily = UiSans,
-                        fontSize = 12.sp,
-                        lineHeight = 17.sp,
-                        color = TextMuted
-                    )
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(ElevatedSurface)
-                            .border(1.dp, BorderLight, RoundedCornerShape(10.dp))
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Box(modifier = Modifier.weight(1f)) {
-                            if (aiFieldInput.isEmpty()) {
-                                Text(
-                                    field.placeholder,
-                                    fontFamily = UiSans,
-                                    fontSize = 13.sp,
-                                    color = TextSubtle,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            BasicTextField(
-                                value = aiFieldInput,
-                                onValueChange = { aiFieldInput = it },
-                                singleLine = true,
-                                visualTransformation = if (field.isSecret && !revealKeyInput) {
-                                    PasswordVisualTransformation()
-                                } else {
-                                    VisualTransformation.None
-                                },
-                                textStyle = TextStyle(fontFamily = UiSans, fontSize = 13.sp, color = TextPrimary),
-                                cursorBrush = SolidColor(AccentBlue),
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
-                        if (field.isSecret) {
-                            Icon(
-                                imageVector = if (revealKeyInput) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
-                                contentDescription = if (revealKeyInput) "Sembunyikan" else "Tampilkan",
-                                tint = TextMuted,
-                                modifier = Modifier
-                                    .size(18.dp)
-                                    .clickable { revealKeyInput = !revealKeyInput }
-                            )
-                        }
-                    }
+        RemInputDialog(
+            subtitle = field.title,
+            value = aiFieldInput,
+            onValueChange = { aiFieldInput = it },
+            placeholder = field.placeholder,
+            helperText = field.helper,
+            isSecret = field.isSecret,
+            confirmText = "Simpan",
+            dismissText = "Batal",
+            destructiveActionText = if (aiFieldInput.isNotBlank()) "Hapus" else null,
+            onDestructiveAction = if (aiFieldInput.isNotBlank()) {
+                {
+                    onSaveAiConfigValue(field, "")
+                    editingAiField = null
                 }
+            } else null,
+            onConfirm = {
+                onSaveAiConfigValue(field, aiFieldInput)
+                editingAiField = null
             },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        onSaveAiConfigValue(field, aiFieldInput)
-                        editingAiField = null
-                    }
-                ) {
-                    Text("Simpan", color = AccentBlue, fontFamily = UiSans, fontWeight = FontWeight.SemiBold)
-                }
-            },
-            dismissButton = {
-                Row {
-                    if (aiFieldInput.isNotBlank()) {
-                        TextButton(
-                            onClick = {
-                                onSaveAiConfigValue(field, "")
-                                editingAiField = null
-                            }
-                        ) {
-                            Text("Hapus", color = SemanticDanger, fontFamily = UiSans)
-                        }
-                    }
-                    TextButton(onClick = { editingAiField = null }) {
-                        Text("Batal", color = TextMuted, fontFamily = UiSans)
-                    }
-                }
-            }
+            onDismiss = { editingAiField = null }
         )
     }
 
     if (showImportModeDialog) {
-        AlertDialog(
-            onDismissRequest = { showImportModeDialog = false },
-            containerColor = SecondarySurface,
-            titleContentColor = TextPrimary,
-            textContentColor = TextPrimary,
-            title = {
-                Text("Mode Import ZIP v3", fontFamily = EditorialSerif, fontSize = 20.sp, color = TextPrimary)
+        RemAlertDialog(
+            title = "Mode Import ZIP v3",
+            description = "Pilih 'Merge' untuk menggabungkan data baru tanpa menghapus data lama, atau 'Replace' untuk mengganti seluruh data dengan isi file ZIP.",
+            confirmText = "Merge",
+            secondaryConfirmText = "Replace",
+            dismissText = "Batal",
+            tone = RemAlertTone.INFO,
+            badgeIcon = Icons.Outlined.Settings,
+            onConfirm = {
+                importReplaceMode = false
+                showImportModeDialog = false
+                importZipLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
             },
-            text = {
-                Text(
-                    "Pilih 'Merge' untuk menggabungkan data baru tanpa menghapus data lama, atau 'Replace' untuk mengganti seluruh data dengan isi file ZIP.",
-                    fontFamily = UiSans,
-                    fontSize = 12.5.sp,
-                    lineHeight = 18.sp,
-                    color = TextMuted
-                )
+            onSecondaryConfirm = {
+                importReplaceMode = true
+                showImportModeDialog = false
+                importZipLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
             },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        importReplaceMode = false
-                        showImportModeDialog = false
-                        importZipLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
-                    }
-                ) {
-                    Text("Merge (Gabung)", color = AccentBlue, fontFamily = UiSans, fontWeight = FontWeight.SemiBold)
-                }
-            },
-            dismissButton = {
-                Row {
-                    TextButton(onClick = { showImportModeDialog = false }) {
-                        Text("Batal", color = TextMuted, fontFamily = UiSans)
-                    }
-                    TextButton(
-                        onClick = {
-                            importReplaceMode = true
-                            showImportModeDialog = false
-                            importZipLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
-                        }
-                    ) {
-                        Text("Replace (Ganti)", color = SemanticWarning, fontFamily = UiSans, fontWeight = FontWeight.SemiBold)
-                    }
-                }
-            }
+            onDismiss = { showImportModeDialog = false }
         )
     }
 
     pendingPinPayload?.let { payload ->
-        AlertDialog(
-            onDismissRequest = { pendingPinPayload = null },
-            containerColor = SecondarySurface,
-            titleContentColor = TextPrimary,
-            textContentColor = TextPrimary,
-            title = {
-                Text("PIN Tautan Privat LinkKu", fontFamily = EditorialSerif, fontSize = 20.sp, color = TextPrimary)
-            },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        "Backup ZIP ini berisi tautan privat LinkKu terenkripsi AES-GCM. Masukkan PIN 4-digit untuk mendekripsi, atau lewati jika hanya ingin memulihkan data publik.",
-                        fontFamily = UiSans,
-                        fontSize = 12.sp,
-                        lineHeight = 17.sp,
-                        color = TextMuted
-                    )
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(ElevatedSurface)
-                            .border(1.dp, BorderLight, RoundedCornerShape(10.dp))
-                            .padding(horizontal = 12.dp, vertical = 10.dp)
-                    ) {
-                        if (pinInput.isEmpty()) {
-                            Text("PIN 4-digit...", fontFamily = UiSans, fontSize = 13.sp, color = TextSubtle)
-                        }
-                        BasicTextField(
-                            value = pinInput,
-                            onValueChange = { pinInput = it.filter { ch -> ch.isDigit() }.take(8) },
-                            singleLine = true,
-                            textStyle = TextStyle(fontFamily = UiSans, fontSize = 14.sp, color = TextPrimary),
-                            cursorBrush = SolidColor(AccentBlue),
-                            modifier = Modifier.fillMaxWidth()
-                        )
+        RemInputDialog(
+            subtitle = "PIN Tautan Privat LinkKu",
+            value = pinInput,
+            onValueChange = { pinInput = it.filter { ch -> ch.isDigit() }.take(8) },
+            placeholder = "PIN 4-digit...",
+            helperText = "Backup ZIP ini berisi tautan privat LinkKu terenkripsi AES-GCM. Masukkan PIN untuk mendekripsi, atau lewati untuk data publik saja.",
+            keyboardType = KeyboardType.NumberPassword,
+            maxLength = 8,
+            confirmText = "Dekripsi",
+            dismissText = "Lewati",
+            confirmEnabled = pinInput.isNotBlank(),
+            onConfirm = {
+                val pin = pinInput
+                pendingPinPayload = null
+                scope.launch {
+                    when (val res = onImportZip(payload.zipBytes, payload.replaceAll, pin)) {
+                        is EcosystemZipImportResult.Success -> onShowBanner(res.summary)
+                        is EcosystemZipImportResult.Error -> onShowBanner(res.message)
+                        is EcosystemZipImportResult.NeedsPin -> onShowBanner("PIN diperlukan")
                     }
                 }
             },
-            confirmButton = {
-                TextButton(
-                    enabled = pinInput.isNotBlank(),
-                    onClick = {
-                        val pin = pinInput
-                        pendingPinPayload = null
-                        scope.launch {
-                            when (val res = onImportZip(payload.zipBytes, payload.replaceAll, pin)) {
-                                is EcosystemZipImportResult.Success -> onShowBanner(res.summary)
-                                is EcosystemZipImportResult.Error -> onShowBanner(res.message)
-                                is EcosystemZipImportResult.NeedsPin -> onShowBanner("PIN diperlukan")
-                            }
-                        }
+            onDismiss = {
+                pendingPinPayload = null
+                scope.launch {
+                    when (val res = onImportZip(payload.zipBytes, payload.replaceAll, "")) {
+                        is EcosystemZipImportResult.Success -> onShowBanner("${res.summary} (tanpa link privat)")
+                        is EcosystemZipImportResult.Error -> onShowBanner(res.message)
+                        is EcosystemZipImportResult.NeedsPin -> Unit
                     }
-                ) {
-                    Text("Dekripsi & Import", color = AccentBlue, fontFamily = UiSans, fontWeight = FontWeight.SemiBold)
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = {
-                        pendingPinPayload = null
-                        scope.launch {
-                            when (val res = onImportZip(payload.zipBytes, payload.replaceAll, "")) {
-                                is EcosystemZipImportResult.Success -> onShowBanner("${res.summary} (tanpa link privat)")
-                                is EcosystemZipImportResult.Error -> onShowBanner(res.message)
-                                is EcosystemZipImportResult.NeedsPin -> Unit
-                            }
-                        }
-                    }
-                ) {
-                    Text("Lewati Privat", color = TextMuted, fontFamily = UiSans)
                 }
             }
         )
@@ -659,50 +495,29 @@ fun SetelanScreen(
     pendingResetTarget?.let { target ->
         val isAll = target == "ALL"
         val label = if (isAll) "Seluruh Data Asisten Rem" else "Data $target"
-        AlertDialog(
-            onDismissRequest = { pendingResetTarget = null },
-            containerColor = SecondarySurface,
-            titleContentColor = TextPrimary,
-            textContentColor = TextPrimary,
-            title = {
-                Text("Reset $label?", fontFamily = EditorialSerif, fontSize = 20.sp, color = TextPrimary)
+        RemAlertDialog(
+            title = "Reset $label?",
+            description = if (isAll) {
+                "Tindakan ini akan menghapus semua data Daily OS, IdeKu, Kronik, CuciMoney+, LinkKu, serta riwayat obrolan & memori Asisten Rem, $profileName."
+            } else {
+                "Semua data lokal untuk modul $target akan dikosongkan dan dikembalikan ke kondisi awal, $profileName."
             },
-            text = {
-                Text(
-                    if (isAll) {
-                        "Tindakan ini akan menghapus semua data Daily OS, IdeKu, Kronik, CuciMoney+, LinkKu, serta riwayat obrolan & memori Asisten Rem di perangkat ini."
-                    } else {
-                        "Semua data lokal untuk modul $target akan dikosongkan dan dikembalikan ke kondisi awal."
-                    },
-                    fontFamily = UiSans,
-                    fontSize = 12.5.sp,
-                    lineHeight = 18.sp,
-                    color = TextMuted
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        when (target) {
-                            "Daily OS" -> onResetDailyOs()
-                            "IdeKu" -> onResetIdeku()
-                            "Kronik" -> onResetKronik()
-                            "CuciMoney+" -> onResetCuciMoney()
-                            "LinkKu" -> onResetLinkku()
-                            "Asisten" -> onResetAssistantData()
-                            "ALL" -> onResetAllData()
-                        }
-                        pendingResetTarget = null
-                    }
-                ) {
-                    Text("Ya, Reset", color = SemanticDanger, fontFamily = UiSans, fontWeight = FontWeight.SemiBold)
+            confirmText = "Ya, Reset",
+            dismissText = "Batal",
+            tone = RemAlertTone.DANGER,
+            onConfirm = {
+                when (target) {
+                    "Daily OS" -> onResetDailyOs()
+                    "IdeKu" -> onResetIdeku()
+                    "Kronik" -> onResetKronik()
+                    "CuciMoney+" -> onResetCuciMoney()
+                    "LinkKu" -> onResetLinkku()
+                    "Asisten" -> onResetAssistantData()
+                    "ALL" -> onResetAllData()
                 }
+                pendingResetTarget = null
             },
-            dismissButton = {
-                TextButton(onClick = { pendingResetTarget = null }) {
-                    Text("Batal", color = TextMuted, fontFamily = UiSans)
-                }
-            }
+            onDismiss = { pendingResetTarget = null }
         )
     }
 
@@ -1178,19 +993,12 @@ fun SetelanScreen(
                                         .background(ElevatedSurface)
                                         .border(1.dp, BorderSubtle, RoundedCornerShape(8.dp))
                                         .clickable {
-                                            val parts = kgWeeklyReflectionTime.split(":")
-                                            val h = parts.getOrNull(0)?.toIntOrNull()?.coerceIn(0, 23) ?: 20
-                                            val m = parts.getOrNull(1)?.toIntOrNull()?.coerceIn(0, 59) ?: 0
-                                            TimePickerDialog(
-                                                context,
-                                                { _, pickedH, pickedM ->
-                                                    val formatted = String.format(Locale.US, "%02d:%02d", pickedH, pickedM)
-                                                    onSetKgWeeklyReflectionSchedule(kgWeeklyReflectionDay, formatted)
-                                                },
-                                                h,
-                                                m,
-                                                true
-                                            ).show()
+                                            pickTime(
+                                                current = kgWeeklyReflectionTime,
+                                                subtitle = "Rem akan mengundang $profileName refleksi mingguan"
+                                            ) { formatted ->
+                                                onSetKgWeeklyReflectionSchedule(kgWeeklyReflectionDay, formatted)
+                                            }
                                         }
                                         .padding(horizontal = 10.dp, vertical = 4.dp)
                                 ) {
@@ -2704,33 +2512,17 @@ private fun MemoryProfileSummaryDialog(
     }
 
     if (confirmOverwriteRefresh) {
-        AlertDialog(
-            onDismissRequest = { confirmOverwriteRefresh = false },
-            containerColor = SecondarySurface,
-            title = {
-                Text("Timpa Editan Manual?", color = TextPrimary, fontFamily = UiSans, fontWeight = FontWeight.SemiBold)
+        RemAlertDialog(
+            title = "Timpa Editan Manual?",
+            description = "Ringkasan Memori memiliki editan manual. Memperbarui ringkasan lewat AI akan menggantikan seluruh isi ringkasan saat ini. Lanjutkan?",
+            confirmText = "Perbarui",
+            dismissText = "Batal",
+            tone = RemAlertTone.WARNING,
+            onConfirm = {
+                confirmOverwriteRefresh = false
+                onRefresh()
             },
-            text = {
-                Text(
-                    "Ringkasan Memori memiliki editan manual. Memperbarui ringkasan lewat AI akan menggantikan seluruh isi ringkasan saat ini. Lanjutkan?",
-                    color = TextMuted,
-                    fontFamily = UiSans,
-                    fontSize = 13.sp
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmOverwriteRefresh = false
-                    onRefresh()
-                }) {
-                    Text("Perbarui", color = AccentBlue, fontFamily = UiSans, fontWeight = FontWeight.SemiBold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmOverwriteRefresh = false }) {
-                    Text("Batal", color = TextMuted, fontFamily = UiSans)
-                }
-            }
+            onDismiss = { confirmOverwriteRefresh = false }
         )
     }
 }
@@ -2771,33 +2563,17 @@ private fun MemoryManagerDialog(
     }
 
     if (confirmClearAll) {
-        AlertDialog(
-            onDismissRequest = { confirmClearAll = false },
-            containerColor = SecondarySurface,
-            title = {
-                Text("Hapus Semua Memori?", fontFamily = UiSans, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+        RemAlertDialog(
+            title = "Hapus Semua Memori?",
+            description = "Seluruh fakta personal (${memories.size}) dan rangkuman sesi (${summaries.size}) akan dihapus permanen dari SQLite.",
+            confirmText = "Hapus Semua",
+            dismissText = "Batal",
+            tone = RemAlertTone.DANGER,
+            onConfirm = {
+                confirmClearAll = false
+                onClearAll()
             },
-            text = {
-                Text(
-                    text = "Seluruh fakta personal (${memories.size}) dan rangkuman sesi (${summaries.size}) akan dihapus permanen dari SQLite.",
-                    fontFamily = UiSans,
-                    fontSize = 13.sp,
-                    color = TextMuted
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmClearAll = false
-                    onClearAll()
-                }) {
-                    Text("Hapus Semua", color = SemanticDanger, fontFamily = UiSans, fontWeight = FontWeight.SemiBold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmClearAll = false }) {
-                    Text("Batal", color = TextMuted, fontFamily = UiSans)
-                }
-            }
+            onDismiss = { confirmClearAll = false }
         )
     }
 
@@ -3109,6 +2885,7 @@ private fun MemoryFactCard(
     dateFormatter: SimpleDateFormat,
     onDelete: () -> Unit
 ) {
+    val isDeprecated = item.status != "active"
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -3124,12 +2901,28 @@ private fun MemoryFactCard(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                if (isDeprecated) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(SemanticWarning.copy(alpha = 0.2f))
+                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                    ) {
+                        Text(
+                            text = "USANG",
+                            fontFamily = UiSans,
+                            fontSize = 8.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = SemanticWarning
+                        )
+                    }
+                }
                 Text(
                     text = item.category.uppercase(),
                     fontFamily = UiSans,
                     fontSize = 9.5.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = AccentBlue
+                    color = if (isDeprecated) TextMuted else AccentBlue
                 )
                 Text(
                     text = "• ${item.factKey}",
@@ -3155,7 +2948,7 @@ private fun MemoryFactCard(
                 fontFamily = UiSans,
                 fontSize = 13.sp,
                 lineHeight = 18.sp,
-                color = TextPrimary
+                color = if (isDeprecated) TextMuted else TextPrimary
             )
         }
         Icon(
@@ -3251,142 +3044,65 @@ private fun CloudBackupDialog(
         }
     }
 
-    if (showRestoreModeDialog) {
-        AlertDialog(
-            onDismissRequest = { showRestoreModeDialog = false },
-            containerColor = SecondarySurface,
-            title = {
-                Text("Mode Restore Cloud", fontFamily = EditorialSerif, fontSize = 20.sp, color = TextPrimary)
-            },
-            text = {
-                Text(
-                    "Pilih cara menggabungkan data dari Google Drive dengan database lokal:\n\n• Merge: Tambahkan data dari cloud yang belum ada di HP.\n• Replace: Kosongkan data modul saat ini lalu ganti total dengan backup cloud.",
-                    fontFamily = UiSans,
-                    fontSize = 12.5.sp,
-                    lineHeight = 18.sp,
-                    color = TextMuted
-                )
-            },
-            confirmButton = {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(
-                        onClick = {
-                            showRestoreModeDialog = false
-                            pendingRestoreReplace = false
-                            scope.launch {
-                                when (val res = onPrepareRestore()) {
-                                    is CloudRestoreFetchResult.Ready -> onImportPlainZip(res.zipBytes, false)
-                                    is CloudRestoreFetchResult.NeedsPassphrase -> {
-                                        restorePassInput = ""
-                                        restorePassError = if (res.wrongSavedPassphrase) "Passphrase tersimpan tidak cocok." else null
-                                        pendingEncryptedPayload = res.encryptedBytes
-                                    }
-                                    CloudRestoreFetchResult.NeedsReauth -> onShowBanner("Sesi Google Drive berakhir, silakan hubungkan ulang.")
-                                    is CloudRestoreFetchResult.Error -> onShowBanner(res.message)
-                                }
-                            }
-                        }
-                    ) {
-                        Text("Merge", color = AccentBlue, fontFamily = UiSans, fontWeight = FontWeight.SemiBold)
-                    }
-                    TextButton(
-                        onClick = {
-                            showRestoreModeDialog = false
-                            pendingRestoreReplace = true
-                            scope.launch {
-                                when (val res = onPrepareRestore()) {
-                                    is CloudRestoreFetchResult.Ready -> onImportPlainZip(res.zipBytes, true)
-                                    is CloudRestoreFetchResult.NeedsPassphrase -> {
-                                        restorePassInput = ""
-                                        restorePassError = if (res.wrongSavedPassphrase) "Passphrase tersimpan tidak cocok." else null
-                                        pendingEncryptedPayload = res.encryptedBytes
-                                    }
-                                    CloudRestoreFetchResult.NeedsReauth -> onShowBanner("Sesi Google Drive berakhir, silakan hubungkan ulang.")
-                                    is CloudRestoreFetchResult.Error -> onShowBanner(res.message)
-                                }
-                            }
-                        }
-                    ) {
-                        Text("Replace", color = SemanticWarning, fontFamily = UiSans, fontWeight = FontWeight.SemiBold)
-                    }
+    fun launchCloudRestore(replaceAll: Boolean) {
+        showRestoreModeDialog = false
+        pendingRestoreReplace = replaceAll
+        scope.launch {
+            when (val res = onPrepareRestore()) {
+                is CloudRestoreFetchResult.Ready -> onImportPlainZip(res.zipBytes, replaceAll)
+                is CloudRestoreFetchResult.NeedsPassphrase -> {
+                    restorePassInput = ""
+                    restorePassError = if (res.wrongSavedPassphrase) "Passphrase tersimpan tidak cocok." else null
+                    pendingEncryptedPayload = res.encryptedBytes
                 }
-            },
-            dismissButton = {
-                TextButton(onClick = { showRestoreModeDialog = false }) {
-                    Text("Batal", color = TextMuted, fontFamily = UiSans)
-                }
+                CloudRestoreFetchResult.NeedsReauth -> onShowBanner("Sesi Google Drive berakhir, silakan hubungkan ulang.")
+                is CloudRestoreFetchResult.Error -> onShowBanner(res.message)
             }
+        }
+    }
+
+    if (showRestoreModeDialog) {
+        RemAlertDialog(
+            title = "Mode Restore Cloud",
+            description = "Merge: tambahkan data cloud yang belum ada di HP.\nReplace: ganti total data modul saat ini dengan backup cloud.",
+            confirmText = "Merge",
+            secondaryConfirmText = "Replace",
+            dismissText = "Batal",
+            tone = RemAlertTone.INFO,
+            badgeIcon = Icons.Outlined.Settings,
+            onConfirm = { launchCloudRestore(replaceAll = false) },
+            onSecondaryConfirm = { launchCloudRestore(replaceAll = true) },
+            onDismiss = { showRestoreModeDialog = false }
         )
     }
 
     pendingEncryptedPayload?.let { encBytes ->
-        AlertDialog(
-            onDismissRequest = { pendingEncryptedPayload = null },
-            containerColor = SecondarySurface,
-            title = {
-                Text("Passphrase Cadangan Cloud", fontFamily = EditorialSerif, fontSize = 20.sp, color = TextPrimary)
+        RemInputDialog(
+            subtitle = "Passphrase Cadangan Cloud",
+            value = restorePassInput,
+            onValueChange = {
+                restorePassInput = it
+                restorePassError = null
             },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        "File backup di Google Drive terenkripsi AES-256-GCM. Masukkan passphrase untuk mendekripsi.",
-                        fontFamily = UiSans,
-                        fontSize = 12.sp,
-                        lineHeight = 17.sp,
-                        color = TextMuted
-                    )
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(ElevatedSurface)
-                            .border(1.dp, BorderLight, RoundedCornerShape(10.dp))
-                            .padding(horizontal = 12.dp, vertical = 10.dp)
-                    ) {
-                        if (restorePassInput.isEmpty()) {
-                            Text("Passphrase…", fontFamily = UiSans, fontSize = 13.sp, color = TextSubtle)
-                        }
-                        BasicTextField(
-                            value = restorePassInput,
-                            onValueChange = {
-                                restorePassInput = it
-                                restorePassError = null
-                            },
-                            singleLine = true,
-                            visualTransformation = PasswordVisualTransformation(),
-                            textStyle = TextStyle(fontFamily = UiSans, fontSize = 13.sp, color = TextPrimary),
-                            cursorBrush = SolidColor(AccentBlue),
-                            modifier = Modifier.fillMaxWidth()
-                        )
+            placeholder = "Passphrase…",
+            helperText = "File backup di Google Drive terenkripsi AES-256-GCM. Masukkan passphrase untuk mendekripsi.",
+            errorText = restorePassError,
+            isSecret = true,
+            confirmText = "Buka & Restore",
+            dismissText = "Batal",
+            confirmEnabled = restorePassInput.isNotBlank(),
+            onConfirm = {
+                val decRes = onDecryptBytes(encBytes, restorePassInput)
+                decRes.onSuccess { plainZip ->
+                    pendingEncryptedPayload = null
+                    scope.launch {
+                        onImportPlainZip(plainZip, pendingRestoreReplace)
                     }
-                    if (!restorePassError.isNullOrBlank()) {
-                        Text(restorePassError!!, fontFamily = UiSans, fontSize = 11.sp, color = SemanticDanger)
-                    }
+                }.onFailure {
+                    restorePassError = "Passphrase salah atau file rusak."
                 }
             },
-            confirmButton = {
-                TextButton(
-                    enabled = restorePassInput.isNotBlank(),
-                    onClick = {
-                        val decRes = onDecryptBytes(encBytes, restorePassInput)
-                        decRes.onSuccess { plainZip ->
-                            pendingEncryptedPayload = null
-                            scope.launch {
-                                onImportPlainZip(plainZip, pendingRestoreReplace)
-                            }
-                        }.onFailure {
-                            restorePassError = "Passphrase salah atau file rusak."
-                        }
-                    }
-                ) {
-                    Text("Buka & Restore", color = AccentBlue, fontFamily = UiSans, fontWeight = FontWeight.SemiBold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingEncryptedPayload = null }) {
-                    Text("Batal", color = TextMuted, fontFamily = UiSans)
-                }
-            }
+            onDismiss = { pendingEncryptedPayload = null }
         )
     }
 

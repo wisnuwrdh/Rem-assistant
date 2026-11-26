@@ -16,5 +16,9 @@ data class UserMemoryEntity(
     val factValue: String,
     val confidence: Float = 0.8f,
     val sourceMessageId: Long? = null,
-    val updatedAt: Long = System.currentTimeMillis()
+    val updatedAt: Long = System.currentTimeMillis(),
+    val status: String = "active", // "active" | "deprecated"
+    val createdAt: Long = System.currentTimeMillis(),
+    val deprecatedAt: Long? = null,
+    val supersededBy: String? = null
 )

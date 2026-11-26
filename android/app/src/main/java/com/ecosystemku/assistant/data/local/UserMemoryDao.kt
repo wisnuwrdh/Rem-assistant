@@ -9,11 +9,14 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface UserMemoryDao {
-    @Query("SELECT * FROM user_memories ORDER BY updatedAt DESC, id DESC")
+    @Query("SELECT * FROM user_memories ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END, updatedAt DESC, id DESC")
     fun observeAll(): Flow<List<UserMemoryEntity>>
 
-    @Query("SELECT * FROM user_memories ORDER BY confidence DESC, updatedAt DESC LIMIT :limit")
+    @Query("SELECT * FROM user_memories WHERE status = 'active' ORDER BY confidence DESC, updatedAt DESC LIMIT :limit")
     suspend fun getTopMemories(limit: Int = 24): List<UserMemoryEntity>
+
+    @Query("SELECT * FROM user_memories WHERE status = 'active' ORDER BY updatedAt ASC, id ASC")
+    suspend fun getActiveMemories(): List<UserMemoryEntity>
 
     @Query("SELECT * FROM user_memories WHERE factKey = :factKey LIMIT 1")
     suspend fun getByFactKey(factKey: String): UserMemoryEntity?
@@ -32,13 +35,33 @@ interface UserMemoryDao {
         val existing = getByFactKey(factKey)
         val now = System.currentTimeMillis()
         if (existing != null) {
+            if (existing.status == "active" && !existing.factValue.equals(factValue.trim(), ignoreCase = true)) {
+                insertMemory(
+                    UserMemoryEntity(
+                        id = 0L,
+                        category = existing.category,
+                        factKey = "${factKey}__hist_${now}".take(80),
+                        factValue = existing.factValue,
+                        confidence = existing.confidence,
+                        sourceMessageId = existing.sourceMessageId,
+                        updatedAt = existing.updatedAt,
+                        status = "deprecated",
+                        createdAt = if (existing.createdAt > 0L) existing.createdAt else existing.updatedAt,
+                        deprecatedAt = now,
+                        supersededBy = factKey
+                    )
+                )
+            }
             insertMemory(
                 existing.copy(
                     category = category,
                     factValue = factValue,
                     confidence = confidence,
                     sourceMessageId = sourceMessageId ?: existing.sourceMessageId,
-                    updatedAt = now
+                    updatedAt = now,
+                    status = "active",
+                    deprecatedAt = null,
+                    supersededBy = null
                 )
             )
         } else {
@@ -49,7 +72,9 @@ interface UserMemoryDao {
                     factValue = factValue,
                     confidence = confidence,
                     sourceMessageId = sourceMessageId,
-                    updatedAt = now
+                    updatedAt = now,
+                    status = "active",
+                    createdAt = now
                 )
             )
         }
@@ -57,6 +82,9 @@ interface UserMemoryDao {
 
     @Query("SELECT * FROM user_memories ORDER BY updatedAt ASC, id ASC")
     suspend fun getAllMemories(): List<UserMemoryEntity>
+
+    @Query("UPDATE user_memories SET status = 'deprecated', deprecatedAt = :deprecatedAt, supersededBy = :supersededBy, updatedAt = :deprecatedAt WHERE id = :id")
+    suspend fun deprecateById(id: Long, deprecatedAt: Long = System.currentTimeMillis(), supersededBy: String? = null)
 
     @Query("DELETE FROM user_memories WHERE id = :id")
     suspend fun deleteById(id: Long)

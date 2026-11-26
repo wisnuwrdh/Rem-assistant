@@ -30,7 +30,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         KgNodeEntity::class,
         KgEdgeEntity::class
     ],
-    version = 15,
+    version = 16,
     exportSchema = false
 )
 abstract class AssistantDatabase : RoomDatabase() {
@@ -420,6 +420,33 @@ abstract class AssistantDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `kg_nodes` ADD COLUMN `status` TEXT NOT NULL DEFAULT 'active'")
+                db.execSQL("ALTER TABLE `kg_nodes` ADD COLUMN `confidence` REAL NOT NULL DEFAULT 0.8")
+                db.execSQL("ALTER TABLE `kg_nodes` ADD COLUMN `lastConfirmedAt` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `kg_nodes` ADD COLUMN `sourceRef` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE `kg_nodes` ADD COLUMN `validationState` TEXT NOT NULL DEFAULT 'unverified'")
+                db.execSQL("UPDATE `kg_nodes` SET `lastConfirmedAt` = `lastSeenAt` WHERE `lastConfirmedAt` = 0")
+                db.execSQL("UPDATE `kg_nodes` SET `validationState` = 'confirmed' WHERE `sourceType` = 'manual'")
+
+                db.execSQL("ALTER TABLE `kg_edges` ADD COLUMN `status` TEXT NOT NULL DEFAULT 'active'")
+                db.execSQL("ALTER TABLE `kg_edges` ADD COLUMN `createdAt` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `kg_edges` ADD COLUMN `lastConfirmedAt` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `kg_edges` ADD COLUMN `sourceType` TEXT NOT NULL DEFAULT 'chat'")
+                db.execSQL("ALTER TABLE `kg_edges` ADD COLUMN `sourceRef` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("UPDATE `kg_edges` SET `createdAt` = `updatedAt` WHERE `createdAt` = 0")
+                db.execSQL("UPDATE `kg_edges` SET `lastConfirmedAt` = `updatedAt` WHERE `lastConfirmedAt` = 0")
+                db.execSQL("UPDATE `kg_edges` SET `status` = 'historical' WHERE `weight` < 0.4 OR `evidence` LIKE '[Historis%'")
+
+                db.execSQL("ALTER TABLE `user_memories` ADD COLUMN `status` TEXT NOT NULL DEFAULT 'active'")
+                db.execSQL("ALTER TABLE `user_memories` ADD COLUMN `createdAt` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `user_memories` ADD COLUMN `deprecatedAt` INTEGER")
+                db.execSQL("ALTER TABLE `user_memories` ADD COLUMN `supersededBy` TEXT")
+                db.execSQL("UPDATE `user_memories` SET `createdAt` = `updatedAt` WHERE `createdAt` = 0")
+            }
+        }
+
         fun getInstance(context: Context): AssistantDatabase {
             return instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
@@ -441,7 +468,8 @@ abstract class AssistantDatabase : RoomDatabase() {
                         MIGRATION_11_12,
                         MIGRATION_12_13,
                         MIGRATION_13_14,
-                        MIGRATION_14_15
+                        MIGRATION_14_15,
+                        MIGRATION_15_16
                     )
                     .fallbackToDestructiveMigrationOnDowngrade()
                     .build()

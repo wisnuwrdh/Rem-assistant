@@ -50,11 +50,14 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import com.ecosystemku.assistant.ui.components.RemAlertDialog
+import com.ecosystemku.assistant.ui.components.RemAlertTone
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -70,6 +73,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
@@ -79,6 +83,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ecosystemku.assistant.data.kg.KnowledgeGraphHelpers
+import com.ecosystemku.assistant.data.kg.SimilarityRunReport
 import com.ecosystemku.assistant.data.local.KgEdgeEntity
 import com.ecosystemku.assistant.data.local.KgNodeEntity
 import com.ecosystemku.assistant.ui.theme.AccentBlue
@@ -134,6 +139,13 @@ fun KnowledgeGraphScreen(
     onDeleteEdge: (edgeId: Long) -> Unit,
     onClearGraph: () -> Unit,
     onExportDigitalTwinJson: suspend () -> String,
+    onValidateNodeCorrect: (nodeId: Long) -> Unit = {},
+    onValidateNodeWrong: (nodeId: Long) -> Unit = {},
+    onReplaceNodeEvolution: (oldNodeId: Long, newType: String, newLabel: String, relationToSelf: String, evidence: String) -> Unit = { _, _, _, _, _ -> },
+    onCompactOldNodes: () -> Unit = {},
+    onRunOfflineSimilarity: suspend () -> SimilarityRunReport? = { null },
+    onRunLiveSimilarity: suspend () -> Result<SimilarityRunReport> = { Result.failure(IllegalStateException("Belum tersedia")) },
+    lastSimilarityLabel: String = "Belum pernah diuji",
     onShowBanner: (String) -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier
@@ -147,11 +159,14 @@ fun KnowledgeGraphScreen(
 
     var searchQuery by remember { mutableStateOf("") }
     var selectedTypeFilter by remember { mutableStateOf("SEMUA") }
+    var showHistorical by remember { mutableStateOf(false) }
     var selectedNodeId by remember { mutableStateOf<Long?>(null) }
     var menuOpen by remember { mutableStateOf(false) }
     var showAddEdgeDialog by remember { mutableStateOf(false) }
     var editingNode by remember { mutableStateOf<KgNodeEntity?>(null) }
+    var replacingNode by remember { mutableStateOf<KgNodeEntity?>(null) }
     var confirmClearGraph by remember { mutableStateOf(false) }
+    var showBenchmarkDialog by remember { mutableStateOf(false) }
     var isExporting by remember { mutableStateOf(false) }
 
     var scale by remember { mutableFloatStateOf(1f) }
@@ -190,22 +205,40 @@ fun KnowledgeGraphScreen(
         counts
     }
 
-    val (visibleNodes, visibleEdges, isCapped) = remember(nodes, edges, searchQuery, selectedTypeFilter, selectedNodeId) {
+    val (visibleNodes, visibleEdges, isCapped) = remember(nodes, edges, searchQuery, selectedTypeFilter, selectedNodeId, showHistorical) {
         filterVisibleGraph(
             nodes = nodes,
             edges = edges,
             degreeMap = degreeMap,
             query = searchQuery,
             typeFilter = selectedTypeFilter,
-            selectedNodeId = selectedNodeId
+            selectedNodeId = selectedNodeId,
+            includeHistorical = showHistorical
         )
     }
 
-    val positionedNodes = remember(visibleNodes) {
-        computeWorldLayout(visibleNodes)
+    val positionedNodes by produceState<List<PositionedKgNode>>(
+        initialValue = emptyList(),
+        key1 = visibleNodes
+    ) {
+        value = withContext(Dispatchers.Default) {
+            computeWorldLayout(visibleNodes)
+        }
     }
     val posById = remember(positionedNodes) {
         positionedNodes.associateBy { it.node.id }
+    }
+    val selectedNeighborIds = remember(visibleEdges, selectedNodeId) {
+        if (selectedNodeId == null) {
+            emptySet()
+        } else {
+            buildSet {
+                visibleEdges.forEach { e ->
+                    if (e.fromNodeId == selectedNodeId) add(e.toNodeId)
+                    if (e.toNodeId == selectedNodeId) add(e.fromNodeId)
+                }
+            }
+        }
     }
 
     val selectedNode = remember(nodes, selectedNodeId) {
@@ -326,6 +359,27 @@ fun KnowledgeGraphScreen(
                             onClick = {
                                 menuOpen = false
                                 showAddEdgeDialog = true
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = {
+                                Column {
+                                    Text("Uji Kemiripan (25 Skenario)", fontFamily = UiSans, fontSize = 13.sp, color = TextPrimary)
+                                    Text("Skor: $lastSimilarityLabel", fontFamily = UiSans, fontSize = 10.5.sp, color = TextMuted)
+                                }
+                            },
+                            leadingIcon = { Icon(Icons.Outlined.Psychology, null, tint = AccentBlue, modifier = Modifier.size(18.dp)) },
+                            onClick = {
+                                menuOpen = false
+                                showBenchmarkDialog = true
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Padatkan Riwayat Lama (>90h)", fontFamily = UiSans, fontSize = 13.sp, color = TextPrimary) },
+                            leadingIcon = { Icon(Icons.Outlined.Schedule, null, tint = SemanticWarning, modifier = Modifier.size(18.dp)) },
+                            onClick = {
+                                menuOpen = false
+                                onCompactOldNodes()
                             }
                         )
                         DropdownMenuItem(
@@ -455,6 +509,27 @@ fun KnowledgeGraphScreen(
                         )
                     }
                 }
+                val histTint = SemanticWarning
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (showHistorical) histTint.copy(alpha = 0.2f) else ElevatedSurface)
+                        .border(
+                            1.dp,
+                            if (showHistorical) histTint.copy(alpha = 0.6f) else BorderSubtle,
+                            RoundedCornerShape(10.dp)
+                        )
+                        .clickable { showHistorical = !showHistorical }
+                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                ) {
+                    Text(
+                        text = if (showHistorical) "Riwayat: Tampil" else "Riwayat: Sembunyi",
+                        fontFamily = UiSans,
+                        fontSize = 11.sp,
+                        fontWeight = if (showHistorical) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (showHistorical) histTint else TextMuted
+                    )
+                }
             }
         }
 
@@ -505,6 +580,27 @@ fun KnowledgeGraphScreen(
                 val textMeasurer = rememberTextMeasurer()
                 val surfaceBg = SecondarySurface
                 val labelColor = TextPrimary
+                val labelCache = remember(positionedNodes, textMeasurer) {
+                    val map = HashMap<Long, TextLayoutResult>(positionedNodes.size.coerceAtLeast(1))
+                    positionedNodes.forEach { p ->
+                        val shortLabel = if (p.node.label.length > 18) {
+                            p.node.label.take(16) + "…"
+                        } else {
+                            p.node.label
+                        }
+                        val isSelfNode = p.node.nodeType == "SELF"
+                        map[p.node.id] = textMeasurer.measure(
+                            text = shortLabel,
+                            style = TextStyle(
+                                color = Color.White,
+                                fontSize = if (isSelfNode) 12.sp else 10.5.sp,
+                                fontWeight = if (isSelfNode) FontWeight.Bold else FontWeight.Medium,
+                                fontFamily = UiSans
+                            )
+                        )
+                    }
+                    map
+                }
 
                 Canvas(
                     modifier = Modifier
@@ -585,10 +681,7 @@ fun KnowledgeGraphScreen(
                         }
                         val color = nodeTypeColor(p.node.nodeType)
                         val isSel = p.node.id == selectedNodeId
-                        val isNeighbor = selectedNodeId != null && visibleEdges.any {
-                            (it.fromNodeId == selectedNodeId && it.toNodeId == p.node.id) ||
-                                (it.toNodeId == selectedNodeId && it.fromNodeId == p.node.id)
-                        }
+                        val isNeighbor = selectedNodeId != null && p.node.id in selectedNeighborIds
                         val dimmed = selectedNodeId != null && !isSel && !isNeighbor
                         val r = p.radiusPx * scale.coerceIn(0.65f, 1.55f)
                         val alpha = if (dimmed) 0.25f else 1f
@@ -617,24 +710,13 @@ fun KnowledgeGraphScreen(
                             style = Stroke(width = if (isSel) 3.dp.toPx() else 1.8.dp.toPx())
                         )
 
-                        val shortLabel = if (p.node.label.length > 18) {
-                            p.node.label.take(16) + "…"
-                        } else {
-                            p.node.label
-                        }
-                        val measured = textMeasurer.measure(
-                            text = shortLabel,
-                            style = TextStyle(
-                                color = labelColor.copy(alpha = if (dimmed) 0.35f else 0.94f),
-                                fontSize = if (p.node.nodeType == "SELF") 12.sp else 10.5.sp,
-                                fontWeight = if (isSel || p.node.nodeType == "SELF") FontWeight.Bold else FontWeight.Medium,
-                                fontFamily = UiSans
-                            )
-                        )
+                        val measured = labelCache[p.node.id] ?: return@forEach
                         val labelX = (sx - measured.size.width / 2f).coerceIn(4f, (size.width - measured.size.width - 4f).coerceAtLeast(4f))
                         val labelY = (sy + r + 5f).coerceIn(4f, (size.height - measured.size.height - 4f).coerceAtLeast(4f))
                         drawText(
                             textLayoutResult = measured,
+                            color = labelColor,
+                            alpha = if (dimmed) 0.35f else 0.94f,
                             topLeft = Offset(labelX, labelY)
                         )
                     }
@@ -747,8 +829,55 @@ fun KnowledgeGraphScreen(
                                     color = tColor
                                 )
                             }
+                            if (!KnowledgeGraphHelpers.isActiveNode(selectedNode)) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(SemanticWarning.copy(alpha = 0.2f))
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = if (selectedNode.status == "compacted") "RINGKASAN" else "USANG",
+                                        fontFamily = UiSans,
+                                        fontSize = 9.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = SemanticWarning
+                                    )
+                                }
+                            }
+                            if (selectedNode.validationState == "confirmed" || selectedNode.validationState == "verified") {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(SemanticSuccess.copy(alpha = 0.2f))
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = "TERVERIFIKASI",
+                                        fontFamily = UiSans,
+                                        fontSize = 9.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = SemanticSuccess
+                                    )
+                                }
+                            } else if (selectedNode.validationState == "rejected" || selectedNode.validationState == "wrong") {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(SemanticDanger.copy(alpha = 0.2f))
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = "KELIRU",
+                                        fontFamily = UiSans,
+                                        fontSize = 9.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = SemanticDanger
+                                    )
+                                }
+                            }
                             Text(
-                                text = "sumber: ${selectedNode.sourceType}",
+                                text = "sumber: ${selectedNode.sourceType} • yakin ${(selectedNode.confidence * 100).toInt()}%",
                                 fontFamily = UiSans,
                                 fontSize = 10.5.sp,
                                 color = TextMuted
@@ -769,6 +898,41 @@ fun KnowledgeGraphScreen(
                                 fontSize = 12.sp,
                                 color = TextMuted
                             )
+                        }
+                        val metaDateFmt = remember { SimpleDateFormat("dd MMM yy", Locale("in", "ID")) }
+                        val firstLbl = if (selectedNode.firstSeenAt > 0L) metaDateFmt.format(Date(selectedNode.firstSeenAt)) else "-"
+                        val confLbl = if (selectedNode.lastConfirmedAt > 0L) metaDateFmt.format(Date(selectedNode.lastConfirmedAt)) else "belum"
+                        val refPart = if (selectedNode.sourceRef.isNotBlank()) " • asal: ${selectedNode.sourceRef}" else ""
+                        Text(
+                            text = "Dibuat: $firstLbl • Dikonfirmasi: $confLbl$refPart",
+                            fontFamily = UiSans,
+                            fontSize = 10.sp,
+                            color = TextSubtle,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (selectedNode.nodeType != "SELF") {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                KgValidationPill(
+                                    label = "Benar",
+                                    accent = SemanticSuccess,
+                                    onClick = { onValidateNodeCorrect(selectedNode.id) }
+                                )
+                                KgValidationPill(
+                                    label = "Salah",
+                                    accent = SemanticDanger,
+                                    onClick = { onValidateNodeWrong(selectedNode.id) }
+                                )
+                                KgValidationPill(
+                                    label = "Sudah Berubah",
+                                    accent = AccentBlue,
+                                    onClick = { replacingNode = selectedNode }
+                                )
+                            }
                         }
                     }
 
@@ -885,35 +1049,362 @@ fun KnowledgeGraphScreen(
         )
     }
 
-    if (confirmClearGraph) {
-        AlertDialog(
-            onDismissRequest = { confirmClearGraph = false },
-            containerColor = SecondarySurface,
-            title = { Text("Bersihkan Otak Digital?", color = TextPrimary, fontFamily = UiSans, fontWeight = FontWeight.SemiBold) },
-            text = {
-                Text(
-                    "Seluruh simpul dan relasi di Knowledge Graph akan dihapus. Memori flat dan catatan modul lain tetap aman.",
-                    color = TextMuted,
-                    fontFamily = UiSans,
-                    fontSize = 13.sp
-                )
+    replacingNode?.let { oldNode ->
+        ReplaceKgNodeDialog(
+            oldNode = oldNode,
+            onSave = { newType, newLabel, relToSelf, evidence ->
+                onReplaceNodeEvolution(oldNode.id, newType, newLabel, relToSelf, evidence)
+                replacingNode = null
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmClearGraph = false
-                    selectedNodeId = null
-                    onClearGraph()
-                }) {
-                    Text("Bersihkan", color = SemanticDanger, fontFamily = UiSans, fontWeight = FontWeight.SemiBold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmClearGraph = false }) {
-                    Text("Batal", color = TextMuted, fontFamily = UiSans)
-                }
-            }
+            onDismiss = { replacingNode = null }
         )
     }
+
+    if (showBenchmarkDialog) {
+        SimilarityBenchmarkDialog(
+            lastSimilarityLabel = lastSimilarityLabel,
+            onRunOffline = onRunOfflineSimilarity,
+            onRunLive = onRunLiveSimilarity,
+            onDismiss = { showBenchmarkDialog = false }
+        )
+    }
+
+    if (confirmClearGraph) {
+        RemAlertDialog(
+            title = "Bersihkan Otak Digital?",
+            description = "Seluruh simpul dan relasi di Knowledge Graph akan dihapus permanen. Memori flat dan catatan modul lain tetap aman, $profileName.",
+            confirmText = "Bersihkan",
+            dismissText = "Batal",
+            tone = RemAlertTone.DANGER,
+            onConfirm = {
+                confirmClearGraph = false
+                selectedNodeId = null
+                onClearGraph()
+            },
+            onDismiss = { confirmClearGraph = false }
+        )
+    }
+}
+
+@Composable
+private fun KgValidationPill(
+    label: String,
+    accent: Color,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(accent.copy(alpha = 0.14f))
+            .border(1.dp, accent.copy(alpha = 0.45f), RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 9.dp, vertical = 5.dp)
+    ) {
+        Text(
+            text = label,
+            fontFamily = UiSans,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = accent
+        )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ReplaceKgNodeDialog(
+    oldNode: KgNodeEntity,
+    onSave: (newType: String, newLabel: String, relationToSelf: String, evidence: String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var newType by remember { mutableStateOf(oldNode.nodeType) }
+    var newLabel by remember { mutableStateOf("") }
+    var evidence by remember { mutableStateOf("") }
+    val types = remember { KnowledgeGraphHelpers.VALID_NODE_TYPES.filter { it != "SELF" } }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = SecondarySurface,
+        title = {
+            Text(
+                "Catat Perubahan / Evolusi",
+                color = TextPrimary,
+                fontFamily = UiSans,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 16.sp
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    "Simpul lama \"${oldNode.label}\" akan ditandai usang dan dihubungkan dengan relasi MENGGANTIKAN.",
+                    color = TextMuted,
+                    fontFamily = UiSans,
+                    fontSize = 11.5.sp
+                )
+                Text("Tipe Baru", color = TextMuted, fontSize = 11.sp, fontFamily = UiSans)
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    types.forEach { t ->
+                        val active = newType == t
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (active) AccentBlue.copy(alpha = 0.2f) else ElevatedSurface)
+                                .border(1.dp, if (active) AccentBlue else BorderSubtle, RoundedCornerShape(8.dp))
+                                .clickable { newType = t }
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = formatNodeTypeLabel(t),
+                                color = if (active) AccentBlue else TextMuted,
+                                fontSize = 10.5.sp,
+                                fontFamily = UiSans
+                            )
+                        }
+                    }
+                }
+                KgDialogField(
+                    value = newLabel,
+                    onValueChange = { newLabel = it },
+                    placeholder = "Kondisi/pandangan baru sekarang"
+                )
+                KgDialogField(
+                    value = evidence,
+                    onValueChange = { evidence = it },
+                    placeholder = "Alasan perubahan (opsional)",
+                    singleLine = false
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = newLabel.isNotBlank(),
+                onClick = { onSave(newType, newLabel.trim(), "MENJALANKAN", evidence.trim()) }
+            ) {
+                Text(
+                    "Simpan Evolusi",
+                    color = if (newLabel.isNotBlank()) AccentBlue else TextSubtle,
+                    fontFamily = UiSans,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Batal", color = TextMuted, fontFamily = UiSans)
+            }
+        }
+    )
+}
+
+@Composable
+private fun SimilarityBenchmarkDialog(
+    lastSimilarityLabel: String,
+    onRunOffline: suspend () -> SimilarityRunReport?,
+    onRunLive: suspend () -> Result<SimilarityRunReport>,
+    onDismiss: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    var report by remember { mutableStateOf<SimilarityRunReport?>(null) }
+    var isRunning by remember { mutableStateOf(false) }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(Unit) {
+        isRunning = true
+        report = onRunOffline()
+        isRunning = false
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = SecondarySurface,
+        title = {
+            Column {
+                Text(
+                    "Uji Kemiripan Kembaran Digital",
+                    color = TextPrimary,
+                    fontFamily = UiSans,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 16.sp
+                )
+                Text(
+                    "Riwayat terakhir: $lastSimilarityLabel",
+                    color = TextMuted,
+                    fontFamily = UiSans,
+                    fontSize = 11.sp
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 390.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(ElevatedSurface)
+                            .border(1.dp, BorderLight, RoundedCornerShape(10.dp))
+                            .clickable(enabled = !isRunning) {
+                                scope.launch {
+                                    isRunning = true
+                                    errorMsg = null
+                                    report = onRunOffline()
+                                    isRunning = false
+                                }
+                            }
+                            .padding(vertical = 8.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "Cek Graph (Offline)",
+                            color = TextPrimary,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Medium,
+                            fontFamily = UiSans
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(AccentBlue.copy(alpha = 0.18f))
+                            .border(1.dp, AccentBlue.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                            .clickable(enabled = !isRunning) {
+                                scope.launch {
+                                    isRunning = true
+                                    errorMsg = null
+                                    onRunLive()
+                                        .onSuccess { report = it }
+                                        .onFailure { errorMsg = it.message ?: "Gagal menjalankan uji LLM" }
+                                    isRunning = false
+                                }
+                            }
+                            .padding(vertical = 8.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "Uji LLM (25 Skenario)",
+                            color = AccentBlue,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            fontFamily = UiSans
+                        )
+                    }
+                }
+
+                if (isRunning) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = AccentBlue)
+                        Text("Menjalankan evaluasi 25 skenario...", color = TextMuted, fontSize = 12.sp, fontFamily = UiSans)
+                    }
+                }
+
+                errorMsg?.let { err ->
+                    Text(err, color = SemanticDanger, fontSize = 11.5.sp, fontFamily = UiSans)
+                }
+
+                report?.let { rep ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(ElevatedSurface)
+                            .border(1.dp, BorderSubtle, RoundedCornerShape(10.dp))
+                            .padding(10.dp)
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(
+                                rep.summaryText,
+                                color = TextPrimary,
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                fontFamily = UiSans
+                            )
+                            rep.domainScores.forEach { (domain, score) ->
+                                val barColor = when {
+                                    score >= 70 -> SemanticSuccess
+                                    score >= 45 -> SemanticWarning
+                                    else -> SemanticDanger
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(domain, color = TextMuted, fontSize = 11.sp, fontFamily = UiSans)
+                                    Text("$score%", color = barColor, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, fontFamily = UiSans)
+                                }
+                            }
+                        }
+                    }
+
+                    rep.results.forEach { item ->
+                        val itemScore = if (rep.mode == "live_llm") {
+                            item.llmConfidencePercent ?: item.offlineCoveragePercent
+                        } else {
+                            item.offlineCoveragePercent
+                        }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(ElevatedSurface.copy(alpha = 0.65f))
+                                .padding(8.dp)
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        item.scenario.domain,
+                                        color = AccentBlue,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontFamily = UiSans
+                                    )
+                                    Text(
+                                        "$itemScore%",
+                                        color = if (itemScore >= 70) SemanticSuccess else if (itemScore >= 45) SemanticWarning else SemanticDanger,
+                                        fontSize = 10.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = UiSans
+                                    )
+                                }
+                                Text(item.scenario.situation, color = TextPrimary, fontSize = 11.5.sp, fontFamily = UiSans)
+                                Text(item.predictedBehavior, color = TextMuted, fontSize = 11.sp, fontFamily = UiSans)
+                                if (item.rationale.isNotBlank()) {
+                                    Text(item.rationale, color = TextSubtle, fontSize = 10.sp, fontFamily = UiSans)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Tutup", color = AccentBlue, fontFamily = UiSans, fontWeight = FontWeight.SemiBold)
+            }
+        }
+    )
 }
 
 @Composable
@@ -1175,43 +1666,62 @@ private fun filterVisibleGraph(
     degreeMap: Map<Long, Int>,
     query: String,
     typeFilter: String,
-    selectedNodeId: Long?
+    selectedNodeId: Long?,
+    includeHistorical: Boolean = false
 ): Triple<List<KgNodeEntity>, List<KgEdgeEntity>, Boolean> {
     if (nodes.isEmpty()) return Triple(emptyList(), emptyList(), false)
+    val baseNodes = if (includeHistorical) nodes else nodes.filter { KnowledgeGraphHelpers.isActiveNode(it) || it.id == selectedNodeId }
+    if (baseNodes.isEmpty()) return Triple(emptyList(), emptyList(), false)
+    val baseNodeIds = baseNodes.map { it.id }.toSet()
+    val baseEdges = if (includeHistorical) {
+        edges
+    } else {
+        edges.filter {
+            !KnowledgeGraphHelpers.isHistoricalEdge(it) &&
+                it.fromNodeId in baseNodeIds &&
+                it.toNodeId in baseNodeIds
+        }
+    }
+
     val q = query.trim().lowercase()
     val isFiltered = q.isNotBlank() || typeFilter != "SEMUA"
     val selectedSet = mutableSetOf<Long>()
-    val selfNode = nodes.firstOrNull { it.nodeType == "SELF" }
+    val selfNode = baseNodes.firstOrNull { it.nodeType == "SELF" }
 
     val matchingNodes = if (!isFiltered) {
-        nodes.sortedByDescending {
+        baseNodes.sortedByDescending {
             (if (it.nodeType == "SELF") 100f else 0f) + it.salience * 3f + (degreeMap[it.id] ?: 0) * 0.4f
         }
     } else {
-        nodes.filter { n ->
+        baseNodes.filter { n ->
             val typeOk = typeFilter == "SEMUA" || n.nodeType == typeFilter
             val qOk = q.isBlank() ||
                 n.label.lowercase().contains(q) ||
                 n.summary.lowercase().contains(q) ||
                 n.nodeType.lowercase().contains(q)
             typeOk && qOk
+        }.sortedByDescending {
+            (if (it.nodeType == "SELF") 100f else 0f) + it.salience * 3f + (degreeMap[it.id] ?: 0) * 0.4f
         }
     }
 
-    val cap = 35
-    val capped = !isFiltered && matchingNodes.size > cap
-    matchingNodes.take(if (isFiltered) nodes.size else cap).forEach { selectedSet.add(it.id) }
+    val effectiveCap = if (isFiltered) 120 else 35
+    val hardCeiling = effectiveCap + 20
+    val capped = matchingNodes.size > effectiveCap
+    matchingNodes.take(effectiveCap).forEach { selectedSet.add(it.id) }
 
-    if (selectedNodeId != null) {
+    if (selectedNodeId != null && selectedNodeId in baseNodeIds) {
         selectedSet.add(selectedNodeId)
-        edges.forEach { e ->
+        for (e in baseEdges) {
+            if (selectedSet.size >= hardCeiling) break
             if (e.fromNodeId == selectedNodeId) selectedSet.add(e.toNodeId)
             if (e.toNodeId == selectedNodeId) selectedSet.add(e.fromNodeId)
         }
     }
     if (isFiltered && selectedSet.isNotEmpty() && selfNode != null) {
-        // Keep SELF + direct connected nodes when a filter hits to retain visual anchor
-        edges.forEach { e ->
+        selectedSet.add(selfNode.id)
+        for (e in baseEdges) {
+            if (selectedSet.size >= hardCeiling) break
             if (e.fromNodeId in selectedSet || e.toNodeId in selectedSet) {
                 selectedSet.add(e.fromNodeId)
                 selectedSet.add(e.toNodeId)
@@ -1219,8 +1729,8 @@ private fun filterVisibleGraph(
         }
     }
 
-    val visibleNodes = nodes.filter { it.id in selectedSet }
-    val visibleEdges = edges.filter { it.fromNodeId in selectedSet && it.toNodeId in selectedSet }
+    val visibleNodes = baseNodes.filter { it.id in selectedSet }
+    val visibleEdges = baseEdges.filter { it.fromNodeId in selectedSet && it.toNodeId in selectedSet }
     return Triple(visibleNodes, visibleEdges, capped)
 }
 

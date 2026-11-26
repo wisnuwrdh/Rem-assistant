@@ -1,7 +1,7 @@
 package com.ecosystemku.assistant.ui.apps.ideku
 
 import android.content.Intent
-import android.widget.Toast
+import com.ecosystemku.assistant.ui.components.LocalRemToast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -98,6 +98,7 @@ fun IdekuScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val remToast = LocalRemToast.current
 
     var filterType by remember { mutableStateOf("Idea") }
     var filterStatus by remember { mutableStateOf<String?>(null) }
@@ -132,14 +133,14 @@ fun IdekuScreen(
                     context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
                 }.getOrNull()
                 if (raw.isNullOrBlank()) {
-                    Toast.makeText(context, "Gagal membaca file JSON", Toast.LENGTH_SHORT).show()
+                    remToast?.warning("Gagal membaca file JSON")
                     return@launch
                 }
                 val res = actions.onImportJson(raw)
                 res.onSuccess { added ->
-                    Toast.makeText(context, "$added ide baru berhasil diimpor", Toast.LENGTH_SHORT).show()
+                    remToast?.success("$added ide baru berhasil diimpor")
                 }.onFailure {
-                    Toast.makeText(context, "Format JSON tidak valid", Toast.LENGTH_SHORT).show()
+                    remToast?.warning("Format JSON tidak valid")
                 }
             }
         }
@@ -289,7 +290,7 @@ fun IdekuScreen(
                                 onClick = {
                                     menuOpen = false
                                     if (ideas.isEmpty()) {
-                                        Toast.makeText(context, "Tidak ada ide untuk diekspor", Toast.LENGTH_SHORT).show()
+                                        remToast?.warning("Tidak ada ide untuk diekspor")
                                         return@DropdownMenuItem
                                     }
                                     scope.launch {
@@ -305,7 +306,7 @@ fun IdekuScreen(
                                             }
                                             context.startActivity(Intent.createChooser(shareIntent, "Export IdeKu JSON"))
                                         }.onFailure {
-                                            Toast.makeText(context, "Gagal mengekspor JSON", Toast.LENGTH_SHORT).show()
+                                            remToast?.warning("Gagal mengekspor JSON")
                                         }
                                     }
                                 }
@@ -322,7 +323,7 @@ fun IdekuScreen(
                                 onClick = {
                                     menuOpen = false
                                     if (ideas.isEmpty()) {
-                                        Toast.makeText(context, "Tidak ada data untuk dihapus", Toast.LENGTH_SHORT).show()
+                                        remToast?.warning("Tidak ada data untuk dihapus")
                                     } else {
                                         showDeleteAll = true
                                     }
@@ -917,7 +918,7 @@ fun IdekuScreen(
                 onSaveMeta = { jalur, next ->
                     scope.launch {
                         actions.onUpdateMeta(detailItem.id, jalur, next)
-                        Toast.makeText(context, "Tersimpan", Toast.LENGTH_SHORT).show()
+                        remToast?.success("Tersimpan")
                     }
                 },
                 onPerkaya = { triggerAiModal(detailItem, isBreakdown = false) },
@@ -950,7 +951,7 @@ fun IdekuScreen(
                             target.price,
                             target.image
                         )
-                        Toast.makeText(context, "Ide berhasil diperkaya", Toast.LENGTH_SHORT).show()
+                        remToast?.success("Ide berhasil diperkaya")
                     }
                 },
                 onDismiss = { aiDialogItem = null }
@@ -976,7 +977,7 @@ fun IdekuScreen(
                     focusSwapTarget = null
                     scope.launch {
                         actions.onSwapFocus(newTarget.id, parkId)
-                        Toast.makeText(context, "Fokus diperbarui", Toast.LENGTH_SHORT).show()
+                        remToast?.success("Fokus diperbarui")
                     }
                 },
                 onDismiss = { focusSwapTarget = null }
@@ -1019,7 +1020,7 @@ fun IdekuScreen(
                     detailItemId = null
                     scope.launch {
                         actions.onDeleteAll()
-                        Toast.makeText(context, "Semua data IdeKu dihapus", Toast.LENGTH_SHORT).show()
+                        remToast?.success("Semua data IdeKu dihapus")
                     }
                 },
                 onDismiss = { showDeleteAll = false }

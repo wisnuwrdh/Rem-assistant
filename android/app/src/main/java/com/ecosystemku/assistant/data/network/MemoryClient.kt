@@ -16,6 +16,13 @@ data class ExistingFactDto(
 )
 
 @Serializable
+data class ExistingKgNodeDto(
+    val nodeKey: String,
+    val nodeType: String,
+    val label: String
+)
+
+@Serializable
 data class ExtractedFactDto(
     val category: String = "catatan",
     val factKey: String = "",
@@ -52,7 +59,8 @@ class MemoryClient(
 
     suspend fun extractMemories(
         messages: List<ChatTurnDto>,
-        existingFacts: List<ExistingFactDto>
+        existingFacts: List<ExistingFactDto>,
+        existingKgNodes: List<ExistingKgNodeDto> = emptyList()
     ): MemoryExtractResponseDto? {
         val sanitizedTurns = messages
             .filter { it.content.isNotBlank() }
@@ -65,6 +73,12 @@ class MemoryClient(
             existingFacts.take(35).joinToString("\n") { "- ${it.factKey}: ${it.factValue}" }
         } else {
             "(belum ada memori tersimpan)"
+        }
+
+        val knownKgText = if (existingKgNodes.isNotEmpty()) {
+            existingKgNodes.take(35).joinToString("\n") { "- [${it.nodeType}] ${it.label} (${it.nodeKey})" }
+        } else {
+            "(belum ada simpul Otak Digital)"
         }
 
         val systemPrompt = """
@@ -81,20 +95,22 @@ Kategori facts valid:
 Tipe node triples valid:
 SELF, NILAI, POLA_PIKIR, KEBIASAAN, TUJUAN, EMOSI_PEMICU, KEPUTUSAN, MINAT, ORANG, KONTEKS
 Relasi triples valid:
-MENGUTAMAKAN, MEMICU, MENURUNKAN, MENDUKUNG, CENDERUNG_SAAT, ALASANNYA, MENGHINDARI, TERCERMIN_DI, TERKAIT
+MENGUTAMAKAN, MEMICU, MENYEBABKAN, MENURUNKAN, MENDUKUNG, MEMOTIVASI, BERTENTANGAN, CONTOH_DARI, CENDERUNG_SAAT, ALASANNYA, MENGHINDARI, TERCERMIN_DI, TERKAIT
 
 Aturan ketat:
 1. Jawab HANYA dengan objek JSON valid tanpa teks tambahan atau markdown.
-2. Format JSON: {"facts":[{"category":"identitas|preferensi|kebiasaan|tujuan|catatan","factKey":"snake_case_singkat","factValue":"nilai ringkas bahasa Indonesia","confidence":0.85}],"deleteKeys":["fact_key_yang_diminta_dihapus"],"summary":"ringkasan 1 kalimat singkat topik obrolan atau null","triples":[{"fromType":"SELF|...","fromLabel":"Tuan|label singkat","relation":"MENGUTAMAKAN|ALASANNYA|...","toType":"NILAI|POLA_PIKIR|...","toLabel":"label singkat","evidence":"alasan/konteks singkat dari chat","confidence":0.85,"replacesLabel":""}]}
+2. Format JSON: {"facts":[{"category":"identitas|preferensi|kebiasaan|tujuan|catatan","factKey":"snake_case_singkat","factValue":"nilai ringkas bahasa Indonesia","confidence":0.85}],"deleteKeys":["fact_key_yang_diminta_dihapus"],"summary":"ringkasan 1 kalimat singkat topik obrolan atau null","triples":[{"fromType":"NILAI|EMOSI_PEMICU|SELF|...","fromLabel":"label singkat","relation":"MENYEBABKAN|BERTENTANGAN|MEMOTIVASI|CONTOH_DARI|MENGUTAMAKAN|ALASANNYA|...","toType":"KEPUTUSAN|KEBIASAAN|POLA_PIKIR|...","toLabel":"label singkat","evidence":"alasan/konteks singkat dari chat","confidence":0.85,"replacesLabel":""}]}
 3. Isi "triples" (maks 4 item) HANYA untuk pola pikir, nilai hidup, keputusan beserta alasannya, pemicu emosi, atau kaitan kebiasaan nyata. Jika tidak ada, isi "triples": [].
-4. Jika User menyatakan perubahan/evolusi dari pola lama ke pola baru (mis. dulu begadang, sekarang tidur jam 10; dulu fokus X, sekarang beralih ke Y), isi "replacesLabel" dengan label pola lama agar node lama ditandai historis.
-5. Jika User mengubah atau mengoreksi fakta yang sudah ada, gunakan factKey yang sama dengan factValue baru.
-6. Jika User secara eksplisit meminta melupakan/menghapus info tertentu atau menyatakan suatu fakta lama tidak lagi berlaku dan harus dihapus, masukkan factKey yang cocok dari daftar Memori saat ini ke "deleteKeys". Jika tidak ada yang dihapus, isi "deleteKeys": [].
-7. Jika tidak ada info baru yang layak disimpan dari percakapan ini, kembalikan {"facts":[],"deleteKeys":[],"summary":null,"triples":[]}.
-8. Jangan ulangi fakta yang nilainya persis sama dengan memori yang sudah ada.
+4. Prioritaskan koneksi ANTAR-SIMPUL non-SELF bila ada hubungan nyata (mis. EMOSI_PEMICU -> MENYEBABKAN -> KEPUTUSAN, NILAI -> BERTENTANGAN -> KEBIASAAN, NILAI -> MEMOTIVASI -> TUJUAN, KEPUTUSAN -> CONTOH_DARI -> POLA_PIKIR), jangan semuanya ditarik dari SELF.
+5. PENCEGAHAN DUPLIKAT: Periksa daftar "Simpul Otak Digital saat ini". Jika konsep yang disebut User bermakna sama atau hanya menegaskan simpul yang sudah ada, GUNAKAN "nodeType" dan "label" yang PERSIS SAMA dengan simpul yang sudah ada itu (jangan membuat variasi frasa baru).
+6. Jika User menyatakan perubahan/evolusi dari pola lama ke pola baru (mis. dulu begadang, sekarang tidur jam 10; dulu fokus X, sekarang beralih ke Y), isi "replacesLabel" dengan label pola lama agar node lama ditandai historis.
+7. Jika User mengubah atau mengoreksi fakta yang sudah ada, gunakan factKey yang sama dengan factValue baru.
+8. Jika User secara eksplisit meminta menonaktifkan/melupakan info tertentu atau menyatakan suatu fakta lama tidak lagi berlaku, masukkan factKey yang cocok dari daftar Memori saat ini ke "deleteKeys". Jika tidak ada, isi "deleteKeys": [].
+9. Jika tidak ada info baru yang layak disimpan dari percakapan ini, kembalikan {"facts":[],"deleteKeys":[],"summary":null,"triples":[]}.
+10. Jangan ulangi fakta yang nilainya persis sama dengan memori yang sudah ada.
         """.trimIndent()
 
-        val userPayload = "Memori saat ini:\n$knownFactsText\n\nPercakapan terbaru:\n${sanitizedTurns.joinToString("\n")}"
+        val userPayload = "Memori saat ini:\n$knownFactsText\n\nSimpul Otak Digital saat ini:\n$knownKgText\n\nPercakapan terbaru:\n${sanitizedTurns.joinToString("\n")}"
 
         val rawContent = DirectLlmClient.complete(
             httpClient = httpClient,

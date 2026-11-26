@@ -78,11 +78,13 @@ import com.ecosystemku.assistant.ui.theme.UiSans
  */
 @Composable
 fun RemVoiceInputDialog(
+    profileName: String = "Tuan",
     onDismiss: () -> Unit,
     onResult: (String) -> Unit,
     onFallbackSystemVoice: () -> Unit
 ) {
     val context = LocalContext.current
+    val callerName = profileName.trim().ifBlank { "Tuan" }
     var retrySeed by remember { mutableIntStateOf(0) }
     var isListening by remember { mutableStateOf(false) }
     var statusText by remember { mutableStateOf("Menyiapkan mikrofon...") }
@@ -150,7 +152,7 @@ fun RemVoiceInputDialog(
                     isListening = false
                     rawRms = 0f
                     val msg = when (error) {
-                        SpeechRecognizer.ERROR_NO_MATCH -> "Rem belum menangkap ucapan Tuan."
+                        SpeechRecognizer.ERROR_NO_MATCH -> "Rem belum menangkap ucapan $callerName."
                         SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Tidak ada suara terdeteksi."
                         SpeechRecognizer.ERROR_AUDIO -> "Gagal merekam audio dari mikrofon."
                         SpeechRecognizer.ERROR_NETWORK,
@@ -176,7 +178,7 @@ fun RemVoiceInputDialog(
                     } else if (liveTranscript.isNotBlank()) {
                         onResult(liveTranscript.trim())
                     } else {
-                        errorText = "Rem belum menangkap ucapan Tuan."
+                        errorText = "Rem belum menangkap ucapan $callerName."
                         statusText = "Ketuk Coba Lagi untuk berbicara"
                     }
                 }
@@ -352,7 +354,7 @@ fun RemVoiceInputDialog(
             ) {
                 Text(
                     text = liveTranscript.ifBlank {
-                        if (errorText != null) "Tidak ada teks tertangkap." else "Ucapan Tuan akan muncul di sini..."
+                        if (errorText != null) "Tidak ada teks tertangkap." else "Ucapan $callerName akan muncul di sini..."
                     },
                     fontFamily = UiSans,
                     fontSize = 13.sp,

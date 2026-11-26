@@ -6,7 +6,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
-import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
@@ -48,7 +47,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -64,14 +62,11 @@ import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Snackbar
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -101,6 +96,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -113,6 +109,10 @@ import com.ecosystemku.assistant.data.local.ChatChoicesData
 import com.ecosystemku.assistant.data.local.ChatMessageEntity
 import com.ecosystemku.assistant.data.local.ChatSessionEntity
 import com.ecosystemku.assistant.live2d.WebViewLive2DStageController
+import com.ecosystemku.assistant.ui.components.LocalRemToast
+import com.ecosystemku.assistant.ui.components.RemAlertDialog
+import com.ecosystemku.assistant.ui.components.RemAlertTone
+import com.ecosystemku.assistant.ui.components.RemInputDialog
 import com.ecosystemku.assistant.ui.theme.AccentBlue
 import com.ecosystemku.assistant.ui.theme.BorderLight
 import com.ecosystemku.assistant.ui.theme.BorderSubtle
@@ -374,6 +374,7 @@ fun AsistenScreen(
 
                     var menuExpanded by remember { mutableStateOf(false) }
                     var showSessionsDialog by remember { mutableStateOf(false) }
+                    var confirmClearChat by remember { mutableStateOf(false) }
                     val activeSession = uiState.chatSessions.firstOrNull { it.id == uiState.currentSessionId }
 
                     Row(
@@ -566,7 +567,7 @@ fun AsistenScreen(
                                         },
                                         onClick = {
                                             menuExpanded = false
-                                            onClearChat()
+                                            confirmClearChat = true
                                         }
                                     )
                                 }
@@ -574,10 +575,26 @@ fun AsistenScreen(
                         }
                     }
 
+                    if (confirmClearChat) {
+                        RemAlertDialog(
+                            title = "Bersihkan Obrolan?",
+                            description = "Semua pesan di sesi ini akan dihapus dari layar obrolan. Lanjutkan, ${uiState.profileName}?",
+                            confirmText = "Bersihkan",
+                            dismissText = "Batal",
+                            tone = RemAlertTone.DANGER,
+                            onConfirm = {
+                                confirmClearChat = false
+                                onClearChat()
+                            },
+                            onDismiss = { confirmClearChat = false }
+                        )
+                    }
+
                     if (showSessionsDialog) {
                         ChatSessionsDialog(
                             sessions = uiState.chatSessions,
                             currentSessionId = uiState.currentSessionId,
+                            profileName = uiState.profileName,
                             isThinking = uiState.isThinking,
                             onDismiss = { showSessionsDialog = false },
                             onNewSession = {
@@ -600,6 +617,7 @@ fun AsistenScreen(
                 ChatMessageList(
                     messages = uiState.messages,
                     isThinking = uiState.isThinking,
+                    profileName = uiState.profileName,
                     streamingTextFlow = streamingTextFlow,
                     onSelectChoices = onSelectChoices,
                     onDeleteMessage = onDeleteMessage,
@@ -613,46 +631,11 @@ fun AsistenScreen(
                 ChatInputCapsule(
                     inputTextFlow = inputTextFlow,
                     isThinking = uiState.isThinking,
+                    profileName = uiState.profileName,
                     onInputChanged = onInputChanged,
                     onSend = onSend
                 )
             }
-            }
-        }
-
-        // Snackbar konfirmasi catatan Kronik dari chat Rem
-        if (uiState.kronikBannerMessage != null) {
-            Snackbar(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(16.dp),
-                containerColor = ElevatedSurface,
-                contentColor = TextPrimary,
-                action = {
-                    TextButton(onClick = onDismissKronikBanner) {
-                        Text("OK", color = AccentBlue)
-                    }
-                }
-            ) {
-                Text(uiState.kronikBannerMessage, fontSize = 12.5.sp)
-            }
-        }
-
-        // Error Snackbar
-        if (uiState.errorMessage != null) {
-            Snackbar(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(16.dp),
-                containerColor = ElevatedSurface,
-                contentColor = TextPrimary,
-                action = {
-                    TextButton(onClick = onDismissError) {
-                        Text("Tutup", color = AccentBlue)
-                    }
-                }
-            ) {
-                Text(uiState.errorMessage, fontSize = 12.5.sp)
             }
         }
     }
@@ -663,6 +646,7 @@ fun AsistenScreen(
 private fun ChatBubbleRow(
     isUser: Boolean,
     text: String,
+    profileName: String = "Tuan",
     messageId: Long? = null,
     choices: ChatChoicesData? = null,
     isThinking: Boolean = false,
@@ -672,7 +656,7 @@ private fun ChatBubbleRow(
 ) {
     var bubbleMenuExpanded by remember { mutableStateOf(false) }
     val clipboardManager = LocalClipboardManager.current
-    val context = LocalContext.current
+    val remToast = LocalRemToast.current
     val allowActions = messageId != null
 
     val bubbleActionMenu: @Composable () -> Unit = {
@@ -702,7 +686,7 @@ private fun ChatBubbleRow(
                     onClick = {
                         bubbleMenuExpanded = false
                         clipboardManager.setText(AnnotatedString(text))
-                        Toast.makeText(context, "Pesan disalin", Toast.LENGTH_SHORT).show()
+                        remToast?.success("Pesan sudah Rem salin untuk $profileName")
                     }
                 )
                 if (!isUser && onRegenerateMessage != null && !isThinking) {
@@ -1062,6 +1046,7 @@ private fun IdleThoughtBubble(
 private fun ChatMessageList(
     messages: List<ChatMessageEntity>,
     isThinking: Boolean,
+    profileName: String,
     streamingTextFlow: StateFlow<String>,
     onSelectChoices: (Long, List<String>) -> Unit,
     onDeleteMessage: (Long) -> Unit,
@@ -1098,6 +1083,7 @@ private fun ChatMessageList(
             ChatBubbleRow(
                 isUser = msg.role == "user",
                 text = msg.content,
+                profileName = profileName,
                 messageId = msg.id,
                 choices = decodedChoices,
                 isThinking = isThinking,
@@ -1109,11 +1095,11 @@ private fun ChatMessageList(
 
         if (streamingText.isNotEmpty()) {
             item(key = "streaming") {
-                ChatBubbleRow(isUser = false, text = streamingText)
+                ChatBubbleRow(isUser = false, text = streamingText, profileName = profileName)
             }
         } else if (isThinking) {
             item(key = "thinking") {
-                ChatBubbleRow(isUser = false, text = "…")
+                ChatBubbleRow(isUser = false, text = "…", profileName = profileName)
             }
         }
     }
@@ -1123,10 +1109,12 @@ private fun ChatMessageList(
 private fun ChatInputCapsule(
     inputTextFlow: StateFlow<String>,
     isThinking: Boolean,
+    profileName: String,
     onInputChanged: (String) -> Unit,
     onSend: () -> Unit
 ) {
     val context = LocalContext.current
+    val remToast = LocalRemToast.current
     val inputText by inputTextFlow.collectAsStateWithLifecycle()
     var showVoiceDialog by remember { mutableStateOf(false) }
 
@@ -1168,12 +1156,13 @@ private fun ChatInputCapsule(
                 launchSystemSpeechFallback()
             }
         } else {
-            Toast.makeText(context, "Izin mikrofon diperlukan untuk input suara", Toast.LENGTH_SHORT).show()
+            remToast?.warning("Izin mikrofon diperlukan agar Rem bisa mendengar $profileName")
         }
     }
 
     if (showVoiceDialog) {
         RemVoiceInputDialog(
+            profileName = profileName,
             onDismiss = { showVoiceDialog = false },
             onResult = { spoken ->
                 showVoiceDialog = false
@@ -1191,14 +1180,20 @@ private fun ChatInputCapsule(
             .fillMaxWidth()
             .padding(horizontal = 16.dp)
             .padding(bottom = 12.dp, top = 4.dp)
-            .height(48.dp)
-            .clip(RoundedCornerShape(50))
+            .heightIn(min = 48.dp, max = 140.dp)
+            .clip(RoundedCornerShape(24.dp))
             .background(ElevatedSurface)
-            .border(1.dp, BorderSubtle, RoundedCornerShape(50))
-            .padding(start = 16.dp, end = 7.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .border(1.dp, BorderSubtle, RoundedCornerShape(24.dp))
+            .padding(start = 16.dp, end = 7.dp, top = 7.dp, bottom = 7.dp),
+        verticalAlignment = Alignment.Bottom
     ) {
-        Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .heightIn(min = 34.dp, max = 126.dp)
+                .padding(vertical = 5.dp),
+            contentAlignment = Alignment.CenterStart
+        ) {
             if (inputText.isEmpty()) {
                 Text(
                     text = "Ketik pesan...",
@@ -1210,15 +1205,19 @@ private fun ChatInputCapsule(
             BasicTextField(
                 value = inputText,
                 onValueChange = onInputChanged,
-                singleLine = true,
+                singleLine = false,
+                maxLines = 5,
                 textStyle = TextStyle(
                     fontFamily = UiSans,
                     fontSize = 13.5.sp,
+                    lineHeight = 19.sp,
                     color = TextPrimary
                 ),
                 cursorBrush = SolidColor(AccentBlue),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = { onSend() }),
+                keyboardOptions = KeyboardOptions(
+                    capitalization = KeyboardCapitalization.Sentences,
+                    imeAction = ImeAction.Default
+                ),
                 modifier = Modifier.fillMaxWidth()
             )
         }
@@ -1287,6 +1286,7 @@ private fun ChatInputCapsule(
 private fun ChatSessionsDialog(
     sessions: List<ChatSessionEntity>,
     currentSessionId: Long,
+    profileName: String,
     isThinking: Boolean,
     onDismiss: () -> Unit,
     onNewSession: () -> Unit,
@@ -1297,6 +1297,7 @@ private fun ChatSessionsDialog(
     val formatter = remember { SimpleDateFormat("dd MMM, HH:mm", Locale.getDefault()) }
     var renamingSession by remember { mutableStateOf<ChatSessionEntity?>(null) }
     var renameDraft by remember { mutableStateOf("") }
+    var deletingSession by remember { mutableStateOf<ChatSessionEntity?>(null) }
 
     Dialog(onDismissRequest = onDismiss) {
         Column(
@@ -1438,7 +1439,7 @@ private fun ChatSessionsDialog(
                                     tint = if (isThinking) TextSubtle else TextMuted,
                                     modifier = Modifier
                                         .size(18.dp)
-                                        .clickable(enabled = !isThinking) { onDeleteSession(session.id) }
+                                        .clickable(enabled = !isThinking) { deletingSession = session }
                                 )
                             }
                         }
@@ -1464,40 +1465,35 @@ private fun ChatSessionsDialog(
 
     val targetRename = renamingSession
     if (targetRename != null) {
-        AlertDialog(
-            onDismissRequest = { renamingSession = null },
-            containerColor = ElevatedSurface,
-            title = {
-                Text(
-                    text = "Ubah Judul Obrolan",
-                    fontFamily = EditorialSerif,
-                    fontSize = 18.sp,
-                    color = TextPrimary
-                )
+        RemInputDialog(
+            subtitle = "Ubah Judul Obrolan",
+            value = renameDraft,
+            onValueChange = { renameDraft = it },
+            placeholder = "Judul sesi",
+            maxLength = 60,
+            confirmText = "Simpan",
+            dismissText = "Batal",
+            onConfirm = {
+                onRenameSession(targetRename.id, renameDraft)
+                renamingSession = null
             },
-            text = {
-                OutlinedTextField(
-                    value = renameDraft,
-                    onValueChange = { renameDraft = it.take(60) },
-                    singleLine = true,
-                    placeholder = { Text("Judul sesi", fontSize = 13.sp) }
-                )
+            onDismiss = { renamingSession = null }
+        )
+    }
+
+    val targetDelete = deletingSession
+    if (targetDelete != null) {
+        RemAlertDialog(
+            title = "Hapus Obrolan?",
+            description = "Semua riwayat chat di sesi \"${targetDelete.title.ifBlank { "Obrolan" }}\" akan dihapus permanen. Lanjutkan, $profileName?",
+            confirmText = "Hapus",
+            dismissText = "Batal",
+            tone = RemAlertTone.DANGER,
+            onConfirm = {
+                deletingSession = null
+                onDeleteSession(targetDelete.id)
             },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        onRenameSession(targetRename.id, renameDraft)
-                        renamingSession = null
-                    }
-                ) {
-                    Text("Simpan", color = AccentBlue)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { renamingSession = null }) {
-                    Text("Batal", color = TextMuted)
-                }
-            }
+            onDismiss = { deletingSession = null }
         )
     }
 }

@@ -131,6 +131,7 @@ class KnowledgeGraphModelsTest {
             userMessage = "kebiasaan tidurku belakangan ini",
             maxEdges = 2
         )
+        assertEquals(1, ranked.size)
         assertEquals(3L, ranked.first().toNode.id)
 
         val exported = KnowledgeGraphHelpers.buildDigitalTwinJson(
@@ -142,5 +143,105 @@ class KnowledgeGraphModelsTest {
         )
         assertTrue(exported.contains("\"isHistorical\": true"))
         assertTrue(exported.contains("\"decisionPolicyCount\": 1"))
+    }
+
+    @Test
+    fun deprecatedNodesAndMenggantikanEdgesAreExcludedFromActivePromptAndPolicies() {
+        val self = KgNodeEntity(id = 1L, nodeKey = "self", nodeType = "SELF", label = "Wisnu", salience = 1.0f, status = "active")
+        val oldNode = KgNodeEntity(
+            id = 2L,
+            nodeKey = "kebiasaan:begadang",
+            nodeType = "KEBIASAAN",
+            label = "Begadang",
+            status = "deprecated",
+            sourceRef = "chat:session=1:msg=2",
+            confidence = 0.7f
+        )
+        val newNode = KgNodeEntity(
+            id = 3L,
+            nodeKey = "kebiasaan:tidur_jam_10",
+            nodeType = "KEBIASAAN",
+            label = "Tidur jam 10",
+            status = "active",
+            sourceRef = "chat:session=2:msg=9",
+            lastConfirmedAt = 123456L,
+            confidence = 0.95f,
+            validationState = "confirmed"
+        )
+        val activeEdge = KgEdgeEntity(
+            id = 10L,
+            fromNodeId = 1L,
+            toNodeId = 3L,
+            relation = "KONSISTEN_PADA",
+            status = "active",
+            weight = 1.2f,
+            confidence = 0.9f
+        )
+        val replaceEdge = KgEdgeEntity(
+            id = 11L,
+            fromNodeId = 3L,
+            toNodeId = 2L,
+            relation = "MENGGANTIKAN",
+            status = "historical",
+            weight = 0.6f,
+            confidence = 0.9f
+        )
+
+        val selected = KnowledgeGraphHelpers.selectRelevantTriples(
+            nodes = listOf(self, oldNode, newNode),
+            edges = listOf(activeEdge, replaceEdge),
+            userMessage = "begadang tidur",
+            maxEdges = 5
+        )
+        assertEquals(1, selected.size)
+        assertEquals(3L, selected.first().toNode.id)
+
+        val backupRaw = KnowledgeGraphHelpers.json.encodeToString(
+            KnowledgeGraphHelpers.buildBackupDto(listOf(self, oldNode, newNode), listOf(activeEdge, replaceEdge))
+        )
+        val decoded = KnowledgeGraphHelpers.json.decodeFromString<KgBackupWrapperDto>(backupRaw)
+        assertEquals(3, decoded.nodes.size)
+        assertEquals("deprecated", decoded.nodes.first { it.nodeKey == "kebiasaan:begadang" }.status)
+        assertEquals("confirmed", decoded.nodes.first { it.nodeKey == "kebiasaan:tidur_jam_10" }.validationState)
+        assertEquals("MENGGANTIKAN", decoded.edges.first { it.relation == "MENGGANTIKAN" }.relation)
+    }
+
+    @Test
+    fun semanticDuplicateDetectionReusesSimilarActiveNodeAcrossSynonyms() {
+        val existing = KgNodeEntity(
+            id = 5L,
+            nodeKey = "emosi_pemicu:tekanan_keuangan",
+            nodeType = "EMOSI_PEMICU",
+            label = "Tekanan keuangan",
+            status = "active"
+        )
+        val deprecated = KgNodeEntity(
+            id = 6L,
+            nodeKey = "emosi_pemicu:stres_uang_lama",
+            nodeType = "EMOSI_PEMICU",
+            label = "Beban finansial lama",
+            status = "deprecated"
+        )
+
+        val matched = KnowledgeGraphHelpers.findSimilarActiveNode(
+            nodes = listOf(existing, deprecated),
+            candidateType = "EMOSI_PEMICU",
+            candidateLabel = "Stres finansial"
+        )
+        assertEquals(5L, matched?.id)
+
+        val unrelated = KnowledgeGraphHelpers.findSimilarActiveNode(
+            nodes = listOf(existing, deprecated),
+            candidateType = "MINAT",
+            candidateLabel = "Olahraga lari pagi"
+        )
+        assertEquals(null, unrelated)
+    }
+
+    @Test
+    fun decisionPolicyRelationsIncludeCausalConflictMotivationAndExampleTypes() {
+        val expected = setOf("MENYEBABKAN", "BERTENTANGAN", "MEMOTIVASI", "CONTOH_DARI")
+        assertTrue(KnowledgeGraphHelpers.VALID_RELATIONS.containsAll(expected))
+        assertTrue(KnowledgeGraphHelpers.DECISION_POLICY_RELATIONS.containsAll(expected))
     }
 }

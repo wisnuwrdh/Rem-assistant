@@ -36,7 +36,12 @@ data class DigitalTwinNodeDto(
     val salience: Float,
     val sourceType: String,
     val firstSeenAt: Long,
-    val lastSeenAt: Long
+    val lastSeenAt: Long,
+    val status: String = "active",
+    val confidence: Float = 0.8f,
+    val lastConfirmedAt: Long = 0L,
+    val sourceRef: String = "",
+    val validationState: String = "unverified"
 )
 
 @Serializable
@@ -48,7 +53,12 @@ data class DigitalTwinEdgeDto(
     val weight: Float,
     val confidence: Float,
     val updatedAt: Long,
-    val isHistorical: Boolean = false
+    val isHistorical: Boolean = false,
+    val status: String = "active",
+    val createdAt: Long = 0L,
+    val lastConfirmedAt: Long = 0L,
+    val sourceType: String = "chat",
+    val sourceRef: String = ""
 )
 
 @Serializable
@@ -65,7 +75,10 @@ data class DigitalTwinMemoryDto(
     val category: String,
     val key: String,
     val value: String,
-    val confidence: Float
+    val confidence: Float,
+    val status: String = "active",
+    val deprecatedAt: Long? = null,
+    val supersededBy: String? = null
 )
 
 @Serializable
@@ -100,7 +113,12 @@ data class KgBackupNodeDto(
     val salience: Float = 0.6f,
     val sourceType: String = "chat",
     val firstSeenAt: Long = 0L,
-    val lastSeenAt: Long = 0L
+    val lastSeenAt: Long = 0L,
+    val status: String = "active",
+    val confidence: Float = 0.8f,
+    val lastConfirmedAt: Long = 0L,
+    val sourceRef: String = "",
+    val validationState: String = "unverified"
 )
 
 @Serializable
@@ -111,7 +129,12 @@ data class KgBackupEdgeDto(
     val evidence: String = "",
     val weight: Float = 1.0f,
     val confidence: Float = 0.8f,
-    val updatedAt: Long = 0L
+    val updatedAt: Long = 0L,
+    val status: String = "active",
+    val createdAt: Long = 0L,
+    val lastConfirmedAt: Long = 0L,
+    val sourceType: String = "chat",
+    val sourceRef: String = ""
 )
 
 @Serializable
@@ -137,8 +160,12 @@ object KnowledgeGraphHelpers {
     val VALID_RELATIONS = setOf(
         "MENGUTAMAKAN",
         "MEMICU",
+        "MENYEBABKAN",
         "MENURUNKAN",
         "MENDUKUNG",
+        "MEMOTIVASI",
+        "BERTENTANGAN",
+        "CONTOH_DARI",
         "CENDERUNG_SAAT",
         "ALASANNYA",
         "MENGHINDARI",
@@ -146,6 +173,7 @@ object KnowledgeGraphHelpers {
         "KONSISTEN_PADA",
         "SEDANG_MEMBANGUN",
         "ALOKASI_UTAMA",
+        "MENGGANTIKAN",
         "TERKAIT"
     )
 
@@ -155,7 +183,45 @@ object KnowledgeGraphHelpers {
         "MENGUTAMAKAN",
         "MENGHINDARI",
         "MEMICU",
-        "MENURUNKAN"
+        "MENYEBABKAN",
+        "MENURUNKAN",
+        "MEMOTIVASI",
+        "BERTENTANGAN"
+    )
+
+    private val STOPWORDS = setOf(
+        "yang", "dan", "atau", "untuk", "dengan", "karena", "dari", "pada", "saat",
+        "dalam", "tentang", "merasa", "rasa", "selalu", "sering", "sangat", "lebih",
+        "kurang", "buat", "agar", "supaya", "jika", "bila", "kalau", "itu", "ini"
+    )
+
+    private val SYNONYM_CANON = mapOf(
+        "uang" to "keuangan",
+        "duit" to "keuangan",
+        "finansial" to "keuangan",
+        "keuangan" to "keuangan",
+        "stres" to "tekanan",
+        "stress" to "tekanan",
+        "tekanan" to "tekanan",
+        "tertekan" to "tekanan",
+        "beban" to "tekanan",
+        "berat" to "tekanan",
+        "cemas" to "cemas",
+        "khawatir" to "cemas",
+        "gelisah" to "cemas",
+        "capek" to "lelah",
+        "lelah" to "lelah",
+        "letih" to "lelah",
+        "burnout" to "lelah",
+        "tidur" to "tidur",
+        "begadang" to "tidur",
+        "kerja" to "kerja",
+        "pekerjaan" to "kerja",
+        "karier" to "kerja",
+        "karir" to "kerja",
+        "olahraga" to "olahraga",
+        "gym" to "olahraga",
+        "lari" to "olahraga"
     )
 
     val json = Json {
@@ -188,11 +254,55 @@ object KnowledgeGraphHelpers {
         return "${normType.lowercase()}:$slug"
     }
 
+    fun semanticTokens(label: String): Set<String> {
+        return label.lowercase()
+            .split(Regex("[^a-z0-9]+"))
+            .filter { it.length >= 3 && it !in STOPWORDS }
+            .map { tok -> SYNONYM_CANON[tok] ?: tok }
+            .toSet()
+    }
+
+    fun findSimilarActiveNode(
+        nodes: List<KgNodeEntity>,
+        candidateType: String,
+        candidateLabel: String
+    ): KgNodeEntity? {
+        val normType = normalizeNodeType(candidateType)
+        val exactKey = canonicalNodeKey(normType, candidateLabel)
+        val activeNodes = nodes.filter { isActiveNode(it) }
+        activeNodes.firstOrNull { it.nodeKey == exactKey }?.let { return it }
+        if (exactKey == "self") return null
+
+        val candTokens = semanticTokens(candidateLabel)
+        if (candTokens.isEmpty()) return null
+
+        var bestNode: KgNodeEntity? = null
+        var bestScore = 0f
+        activeNodes.forEach { node ->
+            if (node.nodeType == "SELF") return@forEach
+            val nodeTokens = semanticTokens(node.label)
+            if (nodeTokens.isEmpty()) return@forEach
+            val inter = candTokens.intersect(nodeTokens).size
+            if (inter == 0) return@forEach
+            val union = candTokens.union(nodeTokens).size.coerceAtLeast(1)
+            val jaccard = inter.toFloat() / union.toFloat()
+            val sameTypeBonus = if (node.nodeType == normType) 0.12f else 0f
+            val score = jaccard + sameTypeBonus
+            val minMatch = (minOf(candTokens.size, nodeTokens.size) >= 2 && inter >= 2) || jaccard >= 0.55f
+            if (minMatch && score > bestScore) {
+                bestScore = score
+                bestNode = node
+            }
+        }
+        return bestNode
+    }
+
     fun selectRelevantTriples(
         nodes: List<KgNodeEntity>,
         edges: List<KgEdgeEntity>,
         userMessage: String,
-        maxEdges: Int = 14
+        maxEdges: Int = 14,
+        includeHistorical: Boolean = false
     ): List<KgTripleSummary> {
         if (nodes.isEmpty() || edges.isEmpty()) return emptyList()
         val nodeById = nodes.associateBy { it.id }
@@ -206,7 +316,7 @@ object KnowledgeGraphHelpers {
             emptySet()
         } else {
             nodes.filter { node ->
-                if (node.nodeKey == "self") return@filter false
+                if (node.nodeKey == "self" || !isActiveNode(node)) return@filter false
                 val hay = "${node.label} ${node.summary}".lowercase()
                 queryTokens.any { token -> hay.contains(token) }
             }.map { it.id }.toSet()
@@ -215,6 +325,10 @@ object KnowledgeGraphHelpers {
         val hop2NodeIds = mutableSetOf<Long>().apply { addAll(hop1SeedIds) }
         if (hop1SeedIds.isNotEmpty()) {
             edges.forEach { edge ->
+                if (!includeHistorical && isHistoricalEdge(edge)) return@forEach
+                val from = nodeById[edge.fromNodeId] ?: return@forEach
+                val to = nodeById[edge.toNodeId] ?: return@forEach
+                if (!isActiveNode(from) || !isActiveNode(to)) return@forEach
                 if (edge.fromNodeId in hop1SeedIds) hop2NodeIds.add(edge.toNodeId)
                 if (edge.toNodeId in hop1SeedIds) hop2NodeIds.add(edge.fromNodeId)
             }
@@ -223,13 +337,17 @@ object KnowledgeGraphHelpers {
         val scored = edges.mapNotNull { edge ->
             val from = nodeById[edge.fromNodeId] ?: return@mapNotNull null
             val to = nodeById[edge.toNodeId] ?: return@mapNotNull null
+            val isHist = isHistoricalEdge(edge)
+            if (!includeHistorical && (isHist || !isActiveNode(from) || !isActiveNode(to))) {
+                return@mapNotNull null
+            }
             val baseScore = edge.weight * ((from.salience + to.salience) * 0.5f) * edge.confidence
             val hopBonus = when {
                 edge.fromNodeId in hop1SeedIds || edge.toNodeId in hop1SeedIds -> 4.0f
                 edge.fromNodeId in hop2NodeIds || edge.toNodeId in hop2NodeIds -> 1.6f
                 else -> 0f
             }
-            val factor = if (isHistoricalEdge(edge)) 0.25f else 1.0f
+            val factor = if (isHist) 0.25f else 1.0f
             Triple(KgTripleSummary(from, edge, to), (baseScore + hopBonus) * factor, edge.updatedAt)
         }
 
@@ -239,8 +357,15 @@ object KnowledgeGraphHelpers {
             .map { it.first }
     }
 
+    fun isActiveNode(node: KgNodeEntity): Boolean {
+        return node.status == "active"
+    }
+
     fun isHistoricalEdge(edge: KgEdgeEntity): Boolean {
-        return edge.weight < 0.4f || edge.evidence.startsWith("[Historis")
+        return edge.status != "active" ||
+            edge.relation == "MENGGANTIKAN" ||
+            edge.weight < 0.4f ||
+            edge.evidence.startsWith("[Historis")
     }
 
     fun searchTriples(
@@ -270,7 +395,11 @@ object KnowledgeGraphHelpers {
                 edge.relation.contains(clean, ignoreCase = true) ||
                 edge.evidence.contains(clean, ignoreCase = true)
             if (!matches) null else KgTripleSummary(from, edge, to)
-        }.sortedByDescending { it.edge.weight * it.edge.confidence }.take(maxResults)
+        }.sortedWith(
+            compareBy<KgTripleSummary> {
+                if (!isHistoricalEdge(it.edge) && isActiveNode(it.fromNode) && isActiveNode(it.toNode)) 0 else 1
+            }.thenByDescending { it.edge.weight * it.edge.confidence }
+        ).take(maxResults)
     }
 
     fun buildDigitalTwinJson(
@@ -290,7 +419,12 @@ object KnowledgeGraphHelpers {
                 salience = n.salience,
                 sourceType = n.sourceType,
                 firstSeenAt = n.firstSeenAt,
-                lastSeenAt = n.lastSeenAt
+                lastSeenAt = n.lastSeenAt,
+                status = n.status,
+                confidence = n.confidence,
+                lastConfirmedAt = n.lastConfirmedAt,
+                sourceRef = n.sourceRef,
+                validationState = n.validationState
             )
         }
         val edgeDtos = edges.mapNotNull { e ->
@@ -304,13 +438,19 @@ object KnowledgeGraphHelpers {
                 weight = e.weight,
                 confidence = e.confidence,
                 updatedAt = e.updatedAt,
-                isHistorical = isHistoricalEdge(e)
+                isHistorical = isHistoricalEdge(e),
+                status = e.status,
+                createdAt = e.createdAt,
+                lastConfirmedAt = e.lastConfirmedAt,
+                sourceType = e.sourceType,
+                sourceRef = e.sourceRef
             )
         }
         val policies = edges.mapNotNull { e ->
             if (isHistoricalEdge(e) || e.relation !in DECISION_POLICY_RELATIONS) return@mapNotNull null
             val from = nodeById[e.fromNodeId] ?: return@mapNotNull null
             val to = nodeById[e.toNodeId] ?: return@mapNotNull null
+            if (!isActiveNode(from) || !isActiveNode(to)) return@mapNotNull null
             DigitalTwinDecisionPolicyDto(
                 subject = from.label,
                 relation = e.relation,
@@ -333,7 +473,15 @@ object KnowledgeGraphHelpers {
             edges = edgeDtos,
             decisionPolicies = policies,
             flatMemories = memories.map {
-                DigitalTwinMemoryDto(it.category, it.factKey, it.factValue, it.confidence)
+                DigitalTwinMemoryDto(
+                    category = it.category,
+                    key = it.factKey,
+                    value = it.factValue,
+                    confidence = it.confidence,
+                    status = it.status,
+                    deprecatedAt = it.deprecatedAt,
+                    supersededBy = it.supersededBy
+                )
             },
             sessionSummaries = summaries.map { it.summaryText }
         )
@@ -353,7 +501,12 @@ object KnowledgeGraphHelpers {
                     salience = it.salience,
                     sourceType = it.sourceType,
                     firstSeenAt = it.firstSeenAt,
-                    lastSeenAt = it.lastSeenAt
+                    lastSeenAt = it.lastSeenAt,
+                    status = it.status,
+                    confidence = it.confidence,
+                    lastConfirmedAt = it.lastConfirmedAt,
+                    sourceRef = it.sourceRef,
+                    validationState = it.validationState
                 )
             },
             edges = edges.mapNotNull { e ->
@@ -366,7 +519,12 @@ object KnowledgeGraphHelpers {
                     evidence = e.evidence,
                     weight = e.weight,
                     confidence = e.confidence,
-                    updatedAt = e.updatedAt
+                    updatedAt = e.updatedAt,
+                    status = e.status,
+                    createdAt = e.createdAt,
+                    lastConfirmedAt = e.lastConfirmedAt,
+                    sourceType = e.sourceType,
+                    sourceRef = e.sourceRef
                 )
             }
         )
