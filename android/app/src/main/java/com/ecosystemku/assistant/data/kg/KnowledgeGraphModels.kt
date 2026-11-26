@@ -177,7 +177,7 @@ object KnowledgeGraphHelpers {
         "TERKAIT"
     )
 
-    private val DECISION_POLICY_RELATIONS = setOf(
+    internal val DECISION_POLICY_RELATIONS = setOf(
         "ALASANNYA",
         "CENDERUNG_SAAT",
         "MENGUTAMAKAN",
@@ -359,6 +359,10 @@ object KnowledgeGraphHelpers {
 
     fun isActiveNode(node: KgNodeEntity): Boolean {
         return node.status == "active"
+    }
+
+    fun isActiveEdge(edge: KgEdgeEntity): Boolean {
+        return !isHistoricalEdge(edge)
     }
 
     fun isHistoricalEdge(edge: KgEdgeEntity): Boolean {

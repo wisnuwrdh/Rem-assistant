@@ -202,11 +202,11 @@ fun EcosystemKuShell(
             val msg = asistenState.kronikBannerMessage ?: return@LaunchedEffect
             asistenViewModel.dismissKronikBanner()
             when {
-                msg.startsWith("Kronik:") -> toastController.action(msg, "Lihat") { showKronik = true }
-                msg.startsWith("LinkKu:") -> toastController.action(msg, "Lihat") { showLinkku = true }
-                msg.startsWith("CuciMoney+:") -> toastController.action(msg, "Lihat") { showCuciMoney = true }
-                msg.startsWith("IdeKu:") -> toastController.action(msg, "Lihat") { showIdeku = true }
-                msg.startsWith("Daily OS:") -> toastController.action(msg, "Lihat") { showDailyOs = true }
+                msg.startsWith("Kronik:") -> toastController.action(msg, "Lihat", onAction = { showKronik = true })
+                msg.startsWith("LinkKu:") -> toastController.action(msg, "Lihat", onAction = { showLinkku = true })
+                msg.startsWith("CuciMoney+:") -> toastController.action(msg, "Lihat", onAction = { showCuciMoney = true })
+                msg.startsWith("IdeKu:") -> toastController.action(msg, "Lihat", onAction = { showIdeku = true })
+                msg.startsWith("Daily OS:") -> toastController.action(msg, "Lihat", onAction = { showDailyOs = true })
                 msg.contains("Gagal", ignoreCase = true) ||
                     msg.contains("belum", ignoreCase = true) ||
                     msg.contains("ditolak", ignoreCase = true) ||

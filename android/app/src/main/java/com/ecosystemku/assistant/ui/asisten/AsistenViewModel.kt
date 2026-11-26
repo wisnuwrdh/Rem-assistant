@@ -1444,7 +1444,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
     suspend fun runOfflineSimilarityBenchmark(): SimilarityRunReport {
         val nodes = _uiState.value.kgNodes
         val edges = _uiState.value.kgEdges
-        val activeMemories = userMemoryDao.getActiveMemories(100)
+        val activeMemories = userMemoryDao.getTopMemories(100)
         val report = SimilarityBenchmark.evaluateOfflineCoverage(
             nodes = nodes,
             edges = edges,
@@ -1460,7 +1460,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         }
         val nodes = _uiState.value.kgNodes
         val edges = _uiState.value.kgEdges
-        val activeMemories = userMemoryDao.getActiveMemories(100)
+        val activeMemories = userMemoryDao.getTopMemories(100)
         val res = SimilarityBenchmark.evaluateWithLlm(
             httpClient = sseClient.httpClient,
             profileName = _uiState.value.profileName,
