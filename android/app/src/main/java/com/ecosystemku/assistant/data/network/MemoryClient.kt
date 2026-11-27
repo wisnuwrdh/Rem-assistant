@@ -83,14 +83,14 @@ class MemoryClient(
 
         val systemPrompt = """
 Kamu adalah modul ekstraksi memori personal & Knowledge Graph untuk asisten virtual bernama Rem.
-Tugasmu: baca potongan percakapan terbaru dan ekstrak HANYA informasi personal yang EKSPLISIT diungkapkan oleh User (bukan ucapan fiksi/roleplay Rem, bukan asumsi atau tebakan).
+Tugasmu: baca potongan percakapan terbaru dan ekstrak HANYA informasi personal JANGKA PANJANG yang EKSPLISIT diungkapkan oleh User (bukan ucapan fiksi/roleplay Rem, bukan asumsi atau tebakan).
 
 Kategori facts valid:
 - identitas (nama, panggilan, pekerjaan, domisili, umur, perangkat)
 - preferensi (kesukaan, ketidaksukaan, makanan/minuman, gaya bicara, musik, hobi)
 - kebiasaan (rutinitas harian, jam tidur/bangun, pola kerja)
 - tujuan (rencana, target belajar, proyek, cita-cita)
-- catatan (fakta penting lain yang layak diingat jangka panjang)
+- catatan (prinsip/aturan pribadi atau fakta penting jangka panjang)
 
 Tipe node triples valid:
 SELF, NILAI, POLA_PIKIR, KEBIASAAN, TUJUAN, EMOSI_PEMICU, KEPUTUSAN, MINAT, ORANG, KONTEKS
@@ -99,15 +99,19 @@ MENGUTAMAKAN, MEMICU, MENYEBABKAN, MENURUNKAN, MENDUKUNG, MEMOTIVASI, BERTENTANG
 
 Aturan ketat:
 1. Jawab HANYA dengan objek JSON valid tanpa teks tambahan atau markdown.
-2. Format JSON: {"facts":[{"category":"identitas|preferensi|kebiasaan|tujuan|catatan","factKey":"snake_case_singkat","factValue":"nilai ringkas bahasa Indonesia","confidence":0.85}],"deleteKeys":["fact_key_yang_diminta_dihapus"],"summary":"ringkasan 1 kalimat singkat topik obrolan atau null","triples":[{"fromType":"NILAI|EMOSI_PEMICU|SELF|...","fromLabel":"label singkat","relation":"MENYEBABKAN|BERTENTANGAN|MEMOTIVASI|CONTOH_DARI|MENGUTAMAKAN|ALASANNYA|...","toType":"KEPUTUSAN|KEBIASAAN|POLA_PIKIR|...","toLabel":"label singkat","evidence":"alasan/konteks singkat dari chat","confidence":0.85,"replacesLabel":""}]}
-3. Isi "triples" (maks 4 item) HANYA untuk pola pikir, nilai hidup, keputusan beserta alasannya, pemicu emosi, atau kaitan kebiasaan nyata. Jika tidak ada, isi "triples": [].
-4. Prioritaskan koneksi ANTAR-SIMPUL non-SELF bila ada hubungan nyata (mis. EMOSI_PEMICU -> MENYEBABKAN -> KEPUTUSAN, NILAI -> BERTENTANGAN -> KEBIASAAN, NILAI -> MEMOTIVASI -> TUJUAN, KEPUTUSAN -> CONTOH_DARI -> POLA_PIKIR), jangan semuanya ditarik dari SELF.
-5. PENCEGAHAN DUPLIKAT: Periksa daftar "Simpul Otak Digital saat ini". Jika konsep yang disebut User bermakna sama atau hanya menegaskan simpul yang sudah ada, GUNAKAN "nodeType" dan "label" yang PERSIS SAMA dengan simpul yang sudah ada itu (jangan membuat variasi frasa baru).
-6. Jika User menyatakan perubahan/evolusi dari pola lama ke pola baru (mis. dulu begadang, sekarang tidur jam 10; dulu fokus X, sekarang beralih ke Y), isi "replacesLabel" dengan label pola lama agar node lama ditandai historis.
-7. Jika User mengubah atau mengoreksi fakta yang sudah ada, gunakan factKey yang sama dengan factValue baru.
-8. Jika User secara eksplisit meminta menonaktifkan/melupakan info tertentu atau menyatakan suatu fakta lama tidak lagi berlaku, masukkan factKey yang cocok dari daftar Memori saat ini ke "deleteKeys". Jika tidak ada, isi "deleteKeys": [].
-9. Jika tidak ada info baru yang layak disimpan dari percakapan ini, kembalikan {"facts":[],"deleteKeys":[],"summary":null,"triples":[]}.
-10. Jangan ulangi fakta yang nilainya persis sama dengan memori yang sudah ada.
+2. Format JSON: {"facts":[{"category":"identitas|preferensi|kebiasaan|tujuan|catatan","factKey":"snake_case_singkat","factValue":"nilai ringkas bahasa Indonesia","confidence":0.85}],"deleteKeys":["fact_key_yang_diminta_dihapus"],"summary":"ringkasan 1 kalimat topik reflektif atau null","triples":[{"fromType":"NILAI|EMOSI_PEMICU|SELF|...","fromLabel":"label singkat","relation":"MENYEBABKAN|BERTENTANGAN|MEMOTIVASI|CONTOH_DARI|MENGUTAMAKAN|ALASANNYA|...","toType":"KEPUTUSAN|KEBIASAAN|POLA_PIKIR|...","toLabel":"label singkat","evidence":"alasan/konteks singkat dari chat","confidence":0.85,"replacesLabel":""}]}
+3. LARANGAN KERAS (JANGAN PERNAH EKSTRAK ke facts, summary, maupun triples):
+   - Status atau perasaan sesaat hari ini (mis. "hari ini uang aman", "pekerjaan hari ini selesai", "barusan capek").
+   - Angka saldo akun, aset bersih, atau nominal transaksi sesaat (mis. "Dana Cash Rp526.500", "pemasukan Rp10.000").
+   - Log aksi satuan yang sudah tersimpan di modul aplikasi (transaksi CuciMoney+, bookmark/URL LinkKu, entri Kronik, to-do/centang Daily OS, item satuan IdeKu).
+4. Isi "summary" dengan null untuk sapaan singkat, obrolan ringan, atau perintah catat/cari/ubah/hapus rutin; isi "summary" HANYA jika ada diskusi reflektif, perencanaan, atau sesi Kenali Aku yang bermakna jangka panjang.
+5. Isi "triples" (maks 4 item) HANYA untuk pola pikir, nilai hidup, keputusan jangka panjang beserta alasannya, pemicu emosi berulang, atau kebiasaan nyata — JANGAN membuat triples dari transaksi/kejadian sesaat. Jika tidak ada, isi "triples": [].
+6. Prioritaskan koneksi ANTAR-SIMPUL non-SELF bila ada hubungan nyata (mis. EMOSI_PEMICU -> MENYEBABKAN -> KEPUTUSAN, NILAI -> BERTENTANGAN -> KEBIASAAN, NILAI -> MEMOTIVASI -> TUJUAN, KEPUTUSAN -> CONTOH_DARI -> POLA_PIKIR), jangan semuanya ditarik dari SELF.
+7. PENCEGAHAN DUPLIKAT: Periksa daftar "Memori saat ini" dan "Simpul Otak Digital saat ini". Jika konsep yang disebut User bermakna sama atau hanya memperbarui fakta/simpul yang sudah ada, WAJIB gunakan "factKey" atau "nodeType"+"label" yang PERSIS SAMA (jangan membuat key sinonim baru).
+8. Jika User menyatakan perubahan/evolusi dari pola lama ke pola baru (mis. dulu begadang, sekarang tidur jam 10; dulu fokus X, sekarang beralih ke Y), isi "replacesLabel" dengan label pola lama agar node lama ditandai historis.
+9. Jika User secara eksplisit meminta menonaktifkan/melupakan info tertentu atau menyatakan suatu fakta lama tidak lagi berlaku, masukkan factKey yang cocok dari daftar Memori saat ini ke "deleteKeys". Jika tidak ada, isi "deleteKeys": [].
+10. Jika tidak ada info jangka panjang baru yang layak disimpan dari percakapan ini, kembalikan {"facts":[],"deleteKeys":[],"summary":null,"triples":[]}.
+11. Jangan ulangi fakta yang nilainya persis sama dengan memori yang sudah ada.
         """.trimIndent()
 
         val userPayload = "Memori saat ini:\n$knownFactsText\n\nSimpul Otak Digital saat ini:\n$knownKgText\n\nPercakapan terbaru:\n${sanitizedTurns.joinToString("\n")}"
@@ -139,6 +143,7 @@ Aturan ketat:
                 if (normalizedKey.length < 2 || value.isEmpty()) return@mapNotNull null
                 val catLower = f.category.trim().lowercase()
                 val category = if (catLower in VALID_CATEGORIES) catLower else "catatan"
+                if (MemoryNoiseFilter.isNoisyFact(category, normalizedKey, value)) return@mapNotNull null
                 val confidence = f.confidence.coerceIn(0.3f, 1.0f)
                 ExtractedFactDto(
                     category = category,
@@ -165,14 +170,16 @@ Aturan ketat:
             .mapNotNull { t ->
                 val fromLbl = sanitizePlainText(t.fromLabel).take(64)
                 val toLbl = sanitizePlainText(t.toLabel).take(64)
+                val ev = sanitizePlainText(t.evidence).take(200)
                 if (fromLbl.length < 2 || toLbl.length < 2) return@mapNotNull null
+                if (MemoryNoiseFilter.isNoisyTriple(fromLbl, toLbl, ev)) return@mapNotNull null
                 ExtractedTripleDto(
                     fromType = KnowledgeGraphHelpers.normalizeNodeType(t.fromType),
                     fromLabel = fromLbl,
                     relation = KnowledgeGraphHelpers.normalizeRelation(t.relation),
                     toType = KnowledgeGraphHelpers.normalizeNodeType(t.toType),
                     toLabel = toLbl,
-                    evidence = sanitizePlainText(t.evidence).take(200),
+                    evidence = ev,
                     confidence = t.confidence.coerceIn(0.3f, 1.0f),
                     replacesLabel = sanitizePlainText(t.replacesLabel).take(64)
                 )
@@ -183,6 +190,7 @@ Aturan ketat:
             ?.trim()
             ?.takeIf { it.length > 4 && !it.equals("null", ignoreCase = true) }
             ?.take(220)
+            ?.takeUnless { MemoryNoiseFilter.isNoisySummary(it) }
 
         return MemoryExtractResponseDto(
             facts = normalizedFacts,
@@ -313,3 +321,72 @@ Aturan ketat:
         private val VALID_CATEGORIES = setOf("identitas", "preferensi", "kebiasaan", "tujuan", "catatan")
     }
 }
+
+internal object MemoryNoiseFilter {
+    private val URL_OR_LINKKU_KEY_REGEX = Regex("""^(?:link|bookmark|tautan|url)_""")
+    private val URL_OR_LINKKU_VAL_REGEX = Regex("""https?://|\bdi\s+linkku\b|\bmenyimpan\s+(?:link|tautan|bookmark)\b""")
+    private val TRANSIENT_KEY_PREFIX_REGEX = Regex("""^(?:pemasukan|pengeluaran|transaksi|saldo|aset|dana_cash|dompet|pengingat|todo|tugas)_""")
+    private val TRANSIENT_KEY_SUFFIX_REGEX = Regex("""_(?:hari_ini|today|tadi|barusan|saat_ini|malam_ini|pagi_ini|siang_ini|sore_ini)$""")
+    private val RP_AMOUNT_REGEX = Regex("""\brp\.?\s*\d[\d.,]*""")
+    private val FINANCE_TRANSIENT_WORDS_REGEX = Regex(
+        """\b(?:pemasukan|pengeluaran|transaksi|kategori|ke\s+akun|dari\s+akun|saldo|aset\s+bersih|dana\s+cash|hari\s+ini|barusan|tadi|membeli|beli|bayar|dapat)\b"""
+    )
+    private val TODAY_EPHEMERAL_WORDS_REGEX = Regex(
+        """\b(?:aman|selesai|belum|merasa|uang|uangnya|pekerjaan|tugas|capek|lelah|bete|senang|sedih|lancar)\b"""
+    )
+    private val MODULE_ACTION_LOG_REGEX = Regex(
+        """\b(?:di\s+cucimoney|di\s+linkku|di\s+kronik|di\s+daily\s*os|di\s+ideku|mencatat\s+pemasukan|mencatat\s+pengeluaran|mendapat\s+pemasukan|menyimpan\s+link|menyimpan\s+catatan|menambahkan\s+to-?do|mencentang\s+habit)\b"""
+    )
+    private val REFLECTIVE_SUMMARY_KEEP_REGEX = Regex(
+        """\b(?:kenali\s+aku|pola\s+pikir|prinsip|nilai|alasan|strategi|evaluasi|trade-off|tujuan\s+jangka\s+panjang|refleksi|kebiasaan)\b"""
+    )
+    private val ROUTINE_SUMMARY_REGEX = Regex(
+        """\b(?:menambahkan\s+pemasukan|mencatat\s+pemasukan|mendapat\s+pemasukan|menambahkan\s+pengeluaran|mencatat\s+pengeluaran|menghapus\s+pengeluaran|membatalkan\s+pengeluaran|menyimpan\s+link|menyimpan\s+bookmark|menyapa\s+(?:pagi|siang|sore|malam)|pekerjaan\s+hari\s+ini\s+sudah\s+selesai|mengonfirmasi\s+pekerjaan\s+hari\s+ini|kondisi\s+keuangannya\s+hari\s+ini)\b"""
+    )
+
+    fun isNoisyFact(category: String, factKey: String, factValue: String): Boolean {
+        val cat = category.trim().lowercase()
+        val key = factKey.trim().lowercase()
+        val valLower = factValue.trim().lowercase()
+        if (valLower.isEmpty()) return true
+
+        if (URL_OR_LINKKU_KEY_REGEX.containsMatchIn(key) || URL_OR_LINKKU_VAL_REGEX.containsMatchIn(valLower)) {
+            return true
+        }
+        if (TRANSIENT_KEY_PREFIX_REGEX.containsMatchIn(key) || TRANSIENT_KEY_SUFFIX_REGEX.containsMatchIn(key)) {
+            return true
+        }
+        if (RP_AMOUNT_REGEX.containsMatchIn(valLower) && FINANCE_TRANSIENT_WORDS_REGEX.containsMatchIn(valLower)) {
+            return true
+        }
+        if (MODULE_ACTION_LOG_REGEX.containsMatchIn(valLower)) {
+            return true
+        }
+        if (cat == "catatan" &&
+            Regex("""\bhari\s+ini\b""").containsMatchIn(valLower) &&
+            TODAY_EPHEMERAL_WORDS_REGEX.containsMatchIn(valLower)
+        ) {
+            return true
+        }
+        return false
+    }
+
+    fun isNoisySummary(summaryText: String): Boolean {
+        val lower = summaryText.trim().lowercase()
+        if (lower.length <= 8) return true
+        if (REFLECTIVE_SUMMARY_KEEP_REGEX.containsMatchIn(lower)) return false
+        return ROUTINE_SUMMARY_REGEX.containsMatchIn(lower)
+    }
+
+    fun isNoisyTriple(fromLabel: String, toLabel: String, evidence: String): Boolean {
+        val combined = "$fromLabel $toLabel $evidence".lowercase()
+        if (combined.contains("http://") || combined.contains("https://")) return true
+        if (RP_AMOUNT_REGEX.containsMatchIn(combined) &&
+            Regex("""\b(?:pemasukan|pengeluaran|transaksi|saldo|dana\s+cash|aset\s+bersih|hari\s+ini)\b""").containsMatchIn(combined)
+        ) {
+            return true
+        }
+        return false
+    }
+}
+

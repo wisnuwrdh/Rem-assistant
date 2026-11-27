@@ -218,6 +218,7 @@ fun SetelanScreen(
     onAddManualMemory: (category: String, label: String, value: String) -> Unit = { _, _, _ -> },
     onDeleteMemory: (Long) -> Unit = {},
     onDeleteSummary: (Long) -> Unit = {},
+    onCleanupNoisyMemories: () -> Unit = {},
     onClearMemories: () -> Unit = {},
     onRefreshMemoryProfile: () -> Unit = {},
     onSaveMemoryProfileSection: (index: Int?, title: String, body: String) -> Unit = { _, _, _ -> },
@@ -557,6 +558,7 @@ fun SetelanScreen(
             summaries = summaries,
             onDeleteMemory = onDeleteMemory,
             onDeleteSummary = onDeleteSummary,
+            onCleanupNoisy = onCleanupNoisyMemories,
             onClearAll = onClearMemories,
             onDismiss = { showMemoryManagerDialog = false }
         )
@@ -2758,6 +2760,7 @@ private fun MemoryManagerDialog(
     summaries: List<ConversationSummaryEntity>,
     onDeleteMemory: (Long) -> Unit,
     onDeleteSummary: (Long) -> Unit,
+    onCleanupNoisy: () -> Unit = {},
     onClearAll: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -2766,6 +2769,7 @@ private fun MemoryManagerDialog(
     var selectedCategory by remember { mutableStateOf("semua") }
     var menuOpen by remember { mutableStateOf(false) }
     var confirmClearAll by remember { mutableStateOf(false) }
+    var confirmCleanupNoisy by remember { mutableStateOf(false) }
 
     val dateFormatter = remember { SimpleDateFormat("dd MMM, HH:mm", Locale("in", "ID")) }
     val categories = remember { listOf("semua", "identitas", "preferensi", "kebiasaan", "tujuan", "catatan") }
@@ -2785,6 +2789,21 @@ private fun MemoryManagerDialog(
         summaries.filter { item ->
             query.isEmpty() || item.summaryText.contains(query, ignoreCase = true)
         }
+    }
+
+    if (confirmCleanupNoisy) {
+        RemAlertDialog(
+            title = "Bersihkan Fakta Sementara?",
+            description = "Catatan transaksi satuan, saldo harian, link tersimpan, status harian, dan rangkuman rutin akan dihapus. Fakta identitas, preferensi, kebiasaan, dan tujuan tetap aman.",
+            confirmText = "Bersihkan",
+            dismissText = "Batal",
+            tone = RemAlertTone.WARNING,
+            onConfirm = {
+                confirmCleanupNoisy = false
+                onCleanupNoisy()
+            },
+            onDismiss = { confirmCleanupNoisy = false }
+        )
     }
 
     if (confirmClearAll) {
@@ -2880,6 +2899,29 @@ private fun MemoryManagerDialog(
                         onDismissRequest = { menuOpen = false },
                         modifier = Modifier.background(SecondarySurface)
                     ) {
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = "Bersihkan Fakta Sementara",
+                                    fontFamily = UiSans,
+                                    fontSize = 13.sp,
+                                    color = if (memories.isNotEmpty() || summaries.isNotEmpty()) TextPrimary else TextSubtle
+                                )
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Outlined.Refresh,
+                                    contentDescription = null,
+                                    tint = if (memories.isNotEmpty() || summaries.isNotEmpty()) AccentBlue else TextSubtle,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            },
+                            enabled = memories.isNotEmpty() || summaries.isNotEmpty(),
+                            onClick = {
+                                menuOpen = false
+                                confirmCleanupNoisy = true
+                            }
+                        )
                         DropdownMenuItem(
                             text = {
                                 Text(

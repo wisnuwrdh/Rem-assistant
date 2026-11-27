@@ -68,6 +68,7 @@ import com.ecosystemku.assistant.data.network.IdekuAiClient
 import com.ecosystemku.assistant.data.network.KronikMoodClient
 import com.ecosystemku.assistant.data.network.LinkkuMetaClient
 import com.ecosystemku.assistant.data.network.MemoryClient
+import com.ecosystemku.assistant.data.network.MemoryNoiseFilter
 import com.ecosystemku.assistant.data.network.MemoryProfileData
 import com.ecosystemku.assistant.data.network.MemoryProfileSectionDto
 import com.ecosystemku.assistant.data.network.SseTagParser
@@ -1209,6 +1210,25 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             userMemoryDao.deleteSummaryById(id)
             refreshMemoryProfile(force = true)
+        }
+    }
+
+    fun cleanupNoisyMemories() {
+        viewModelScope.launch {
+            val noisyFacts = userMemoryDao.getAllMemories().filter { m ->
+                MemoryNoiseFilter.isNoisyFact(m.category, m.factKey, m.factValue)
+            }
+            val noisySummaries = userMemoryDao.getAllSummaries().filter { s ->
+                MemoryNoiseFilter.isNoisySummary(s.summaryText)
+            }
+            noisyFacts.forEach { userMemoryDao.deleteById(it.id) }
+            noisySummaries.forEach { userMemoryDao.deleteSummaryById(it.id) }
+            if (noisyFacts.isNotEmpty() || noisySummaries.isNotEmpty()) {
+                showBannerMessage("Dibersihkan: ${noisyFacts.size} fakta sementara & ${noisySummaries.size} rangkuman rutin")
+                refreshMemoryProfile(force = false)
+            } else {
+                showBannerMessage("Tidak ada fakta sementara atau rangkuman rutin yang perlu dibersihkan")
+            }
         }
     }
 
@@ -4493,7 +4513,11 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
             }
 
             if (_uiState.value.autoLearnMemory && finalReplyText.isNotEmpty()) {
-                extractAndPersistMemories(sourceMessageId = sourceUserMsgId, sessionId = sessionId)
+                extractAndPersistMemories(
+                    sourceMessageId = sourceUserMsgId,
+                    sessionId = sessionId,
+                    didMutateModuleAction = didMutateModuleAction
+                )
             }
             if (finalReplyText.isNotEmpty()) {
                 compactSessionIfNeeded(sessionId = sessionId)
@@ -5027,7 +5051,11 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    private fun extractAndPersistMemories(sourceMessageId: Long, sessionId: Long) {
+    private fun extractAndPersistMemories(
+        sourceMessageId: Long,
+        sessionId: Long,
+        didMutateModuleAction: Boolean = false
+    ) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLearningMemory = true) }
             try {
@@ -5057,9 +5085,14 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                     }
                 }
                 val summary = result.summary?.trim().orEmpty()
-                if (summary.length > 8) {
-                    val lastSummary = userMemoryDao.getLatestSummaries(1).firstOrNull()?.summaryText
-                    if (summary != lastSummary) {
+                if (summary.length > 8 && !didMutateModuleAction && recentTurns.size >= 4) {
+                    val activeSessTitle = if (sessionId > 0L) chatDao.getSessionById(sessionId)?.title.orEmpty() else ""
+                    val isKenaliSession = activeSessTitle.contains("Kenali Aku", ignoreCase = true)
+                    val lastSummaryEntity = userMemoryDao.getLatestSummaries(1).firstOrNull()
+                    val tooSoon = lastSummaryEntity != null &&
+                        !isKenaliSession &&
+                        (System.currentTimeMillis() - lastSummaryEntity.createdAt) < 300_000L
+                    if (!tooSoon && !summary.equals(lastSummaryEntity?.summaryText, ignoreCase = true)) {
                         userMemoryDao.insertSummary(
                             ConversationSummaryEntity(
                                 summaryText = summary,

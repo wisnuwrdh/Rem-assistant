@@ -487,6 +487,7 @@ fun EcosystemKuShell(
                                 onAddManualMemory = asistenViewModel::addManualMemory,
                                 onDeleteMemory = asistenViewModel::deleteMemory,
                                 onDeleteSummary = asistenViewModel::deleteSummary,
+                                onCleanupNoisyMemories = asistenViewModel::cleanupNoisyMemories,
                                 onClearMemories = asistenViewModel::clearAllMemories,
                                 onRefreshMemoryProfile = { asistenViewModel.refreshMemoryProfile(force = true) },
                                 onSaveMemoryProfileSection = asistenViewModel::saveMemoryProfileSection,
