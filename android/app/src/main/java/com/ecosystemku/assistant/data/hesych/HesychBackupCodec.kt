@@ -15,8 +15,6 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 
 @Serializable
@@ -88,6 +86,7 @@ class HesychBackupNeedsPasswordException(
 object HesychBackupCodec {
     private val json = Json {
         ignoreUnknownKeys = true
+        coerceInputValues = true
         encodeDefaults = true
         prettyPrint = true
     }
@@ -282,9 +281,9 @@ object HesychBackupCodec {
             totpSecret = totp_secret,
             customFieldsJson = json.encodeToString(custom_fields),
             category = category,
-            tags = tags?.jsonPrimitive?.contentOrNull,
-            breachStatus = breachStatus?.jsonPrimitive?.contentOrNull,
-            breachCheckedAt = breachCheckedAt?.jsonPrimitive?.contentOrNull,
+            tags = (tags as? JsonPrimitive)?.contentOrNull,
+            breachStatus = (breachStatus as? JsonPrimitive)?.contentOrNull,
+            breachCheckedAt = (breachCheckedAt as? JsonPrimitive)?.contentOrNull,
             metaVersion = _metaV,
             createdAt = createdAt ?: now,
             updatedAt = updatedAt ?: now
@@ -307,20 +306,23 @@ object HesychBackupCodec {
         } else {
             row.category ?: "other"
         }
+        val tagsPrim = (row.tags as? JsonPrimitive)?.contentOrNull
         val plainTags = if (row._metaV == 6) {
-            HesychCrypto.decryptMetaValue(fromKey, row.tags?.jsonPrimitive?.contentOrNull, emptyList<String>())
+            HesychCrypto.decryptMetaValue<List<String>>(fromKey, tagsPrim, emptyList())
         } else {
-            runCatching { row.tags?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull } }.getOrNull() ?: emptyList()
+            runCatching { row.tags?.jsonArray?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull } }.getOrNull() ?: emptyList()
         }
+        val breachStatusPrim = (row.breachStatus as? JsonPrimitive)?.contentOrNull
         val plainBreachStatus = if (row._metaV == 6) {
-            HesychCrypto.decryptMetaValue<Int?>(fromKey, row.breachStatus?.jsonPrimitive?.contentOrNull, null)
+            HesychCrypto.decryptMetaValue<Int?>(fromKey, breachStatusPrim, null)
         } else {
-            row.breachStatus?.jsonPrimitive?.contentOrNull?.toIntOrNull()
+            breachStatusPrim?.toIntOrNull()
         }
+        val breachAtPrim = row.breachCheckedAt as? JsonPrimitive
         val plainBreachAt = if (row._metaV == 6) {
-            HesychCrypto.decryptMetaValue<Long?>(fromKey, row.breachCheckedAt?.jsonPrimitive?.contentOrNull, null)
+            HesychCrypto.decryptMetaValue<Long?>(fromKey, breachAtPrim?.contentOrNull, null)
         } else {
-            row.breachCheckedAt?.jsonPrimitive?.longOrNull
+            breachAtPrim?.longOrNull
         }
 
         val newFields = row.custom_fields.map { cf ->

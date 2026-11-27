@@ -29,6 +29,7 @@ class HesychVaultRepository(
 ) {
     private val json = Json {
         ignoreUnknownKeys = true
+        coerceInputValues = true
         encodeDefaults = true
     }
 
@@ -102,8 +103,8 @@ class HesychVaultRepository(
     }
 
     fun decryptRow(dek: SecretKey, row: HesychItemEntity): HesychVaultItem {
-        val title = HesychCrypto.decryptWith(dek, row.title)
-        val username = HesychCrypto.decryptWith(dek, row.username)
+        val title = if (row.title.isNotBlank()) HesychCrypto.decryptWith(dek, row.title) else "(Tanpa Judul)"
+        val username = if (row.username.isNotBlank()) HesychCrypto.decryptWith(dek, row.username) else ""
         val notes = if (row.notes.isNotBlank()) HesychCrypto.decryptWith(dek, row.notes) else ""
         val customFields = runCatching {
             json.decodeFromString<List<HesychCustomFieldDto>>(row.customFieldsJson)

@@ -415,14 +415,26 @@ fun HesychScreen(
                             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Icon(Icons.Outlined.Shield, contentDescription = null, tint = TextSubtle, modifier = Modifier.size(36.dp))
                                 Text(
-                                    text = if (uiState.items.isEmpty()) "Vault masih kosong" else "Tidak ada akun yang cocok",
+                                    text = when {
+                                        uiState.items.isEmpty() && uiState.storedItemCount > 0 ->
+                                            "${uiState.storedItemCount} akun gagal didekripsi"
+                                        uiState.items.isEmpty() -> "Vault masih kosong"
+                                        else -> "Tidak ada akun yang cocok"
+                                    },
                                     fontFamily = UiSans,
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color = TextPrimary
                                 )
                                 Text(
-                                    text = "Ketuk tombol + untuk menambah akun terenkripsi pertama.",
+                                    text = when {
+                                        uiState.items.isEmpty() && uiState.storedItemCount > 0 ->
+                                            "Akun tersimpan di database, tetapi tidak cocok dengan kunci vault yang aktif."
+                                        uiState.items.isEmpty() ->
+                                            "Ketuk tombol + untuk menambah akun terenkripsi pertama."
+                                        else ->
+                                            "Coba ubah pencarian, kategori, atau filter favorit."
+                                    },
                                     fontFamily = UiSans,
                                     fontSize = 12.sp,
                                     color = TextMuted

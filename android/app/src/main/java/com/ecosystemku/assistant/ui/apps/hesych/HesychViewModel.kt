@@ -511,21 +511,37 @@ class HesychViewModel(application: Application) : AndroidViewModel(application) 
         rawJson: String,
         replaceAll: Boolean,
         customPassword: String?
-    ): Result<Int> = withContext(Dispatchers.IO) {
+    ): Result<Int> = withContext(Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
         runCatching {
             val dek = activeDek ?: error("Vault harus dibuka terlebih dahulu")
             val parsed = HesychBackupCodec.parseImportRows(rawJson, dek, customPassword)
+            val toInsert = parsed.map { it.copy(id = 0L) }
             if (replaceAll) {
                 dao.clearHistory()
                 dao.clearItems()
-                val toInsert = parsed.map { it.copy(id = 0L) }
-                if (toInsert.isNotEmpty()) dao.upsertItems(toInsert)
-                toInsert.size
-            } else {
-                val toInsert = parsed.map { it.copy(id = 0L) }
-                if (toInsert.isNotEmpty()) dao.upsertItems(toInsert)
-                toInsert.size
             }
+            if (toInsert.isNotEmpty()) {
+                dao.upsertItems(toInsert)
+            }
+            val totalRows = dao.getAllItems().size
+            val refreshed = repo.loadDecryptedItems(dek)
+            val msg = if (replaceAll) {
+                "${toInsert.size} akun berhasil di-restore"
+            } else {
+                "${toInsert.size} akun berhasil diimpor"
+            }
+            _uiState.update {
+                it.copy(
+                    storedItemCount = totalRows,
+                    items = refreshed,
+                    selectedCategory = null,
+                    favoritesOnly = false,
+                    searchQuery = "",
+                    selectedTag = null,
+                    bannerMessage = msg
+                )
+            }
+            toInsert.size
         }
     }
 

@@ -361,6 +361,8 @@ internal fun HesychBackupBioDialog(
     var showImportModeDialog by remember { mutableStateOf(false) }
     var showImportPasswordDialog by remember { mutableStateOf(false) }
     var importPasswordInput by remember { mutableStateOf("") }
+    var importError by remember { mutableStateOf<String?>(null) }
+    var isImporting by remember { mutableStateOf(false) }
 
     val exportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json")
@@ -386,13 +388,14 @@ internal fun HesychBackupBioDialog(
     ) { uri ->
         if (uri != null) {
             scope.launch {
+                importError = null
                 val raw = withContext(Dispatchers.IO) {
                     runCatching {
                         context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
                     }.getOrNull()
                 }
                 if (raw.isNullOrBlank()) {
-                    onShowToast("Gagal membaca file backup")
+                    importError = "Gagal membaca file backup"
                     return@launch
                 }
                 pendingImportJson = raw
@@ -438,20 +441,25 @@ internal fun HesychBackupBioDialog(
         showImportModeDialog = false
         pendingImportReplace = replaceAll
         val raw = pendingImportJson ?: return
+        isImporting = true
+        importError = null
         scope.launch {
-            onImportBackupJson(raw, replaceAll, null)
-                .onSuccess { count ->
+            val result = onImportBackupJson(raw, replaceAll, null)
+            isImporting = false
+            result
+                .onSuccess {
                     pendingImportJson = null
-                    onShowToast(if (replaceAll) "$count akun berhasil di-restore" else "$count akun berhasil diimpor")
+                    onDismiss()
                 }
                 .onFailure { err ->
                     if (err is HesychBackupNeedsPasswordException) {
                         importNeedsMasterHint = err.isMasterBackup
                         importPasswordInput = ""
+                        importError = null
                         showImportPasswordDialog = true
                     } else {
                         pendingImportJson = null
-                        onShowToast(err.message ?: "Gagal impor")
+                        importError = err.message ?: "Gagal impor file backup"
                     }
                 }
         }
@@ -478,39 +486,54 @@ internal fun HesychBackupBioDialog(
         RemInputDialog(
             subtitle = if (importNeedsMasterHint) "Master Password Backup Lama" else "Password File Backup",
             value = importPasswordInput,
-            onValueChange = { importPasswordInput = it },
+            onValueChange = {
+                importPasswordInput = it
+                importError = null
+            },
             placeholder = if (importNeedsMasterHint) "Masukkan master password lama…" else "Masukkan password backup…",
             helperText = if (importNeedsMasterHint) {
                 "File backup Hesych Web ini dibuat dengan kunci vault lama. Masukkan master password lama untuk mendekripsi dan memindahkan ke vault ini."
             } else {
                 ""
             },
+            errorText = importError,
             isSecret = true,
-            confirmText = "Dekripsi & Impor",
+            confirmText = if (isImporting) "Mendekripsi…" else "Dekripsi & Impor",
             dismissText = "Batal",
-            confirmEnabled = importPasswordInput.isNotEmpty(),
+            confirmEnabled = importPasswordInput.isNotEmpty() && !isImporting,
             onConfirm = {
                 val pw = importPasswordInput
-                val raw = pendingImportJson!!
+                val raw = pendingImportJson ?: return@RemInputDialog
                 val replaceAll = pendingImportReplace
-                showImportPasswordDialog = false
-                pendingImportJson = null
-                importPasswordInput = ""
+                isImporting = true
+                importError = null
                 scope.launch {
-                    onImportBackupJson(raw, replaceAll, pw)
-                        .onSuccess { count -> onShowToast("$count akun berhasil diimpor") }
-                        .onFailure { err -> onShowToast(err.message ?: "Password salah") }
+                    val result = onImportBackupJson(raw, replaceAll, pw)
+                    isImporting = false
+                    result
+                        .onSuccess {
+                            showImportPasswordDialog = false
+                            pendingImportJson = null
+                            importPasswordInput = ""
+                            onDismiss()
+                        }
+                        .onFailure { err ->
+                            importError = err.message ?: "Master password backup salah"
+                        }
                 }
             },
             onDismiss = {
-                showImportPasswordDialog = false
-                pendingImportJson = null
-                importPasswordInput = ""
+                if (!isImporting) {
+                    showImportPasswordDialog = false
+                    pendingImportJson = null
+                    importPasswordInput = ""
+                    importError = null
+                }
             }
         )
     }
 
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(onDismissRequest = { if (!isImporting) onDismiss() }) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -526,7 +549,12 @@ internal fun HesychBackupBioDialog(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text("Keamanan & Backup", fontFamily = EditorialSerif, fontSize = 19.sp, color = TextPrimary)
-                Icon(Icons.Outlined.Close, contentDescription = "Tutup", tint = TextMuted, modifier = Modifier.size(20.dp).clickable(onClick = onDismiss))
+                Icon(
+                    Icons.Outlined.Close,
+                    contentDescription = "Tutup",
+                    tint = TextMuted,
+                    modifier = Modifier.size(20.dp).clickable(enabled = !isImporting, onClick = onDismiss)
+                )
             }
 
             // Biometric Toggle
@@ -571,12 +599,21 @@ internal fun HesychBackupBioDialog(
 
             Text("BACKUP FORMAT HESYCH (.JSON)", fontFamily = UiSans, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = TextSubtle, letterSpacing = 0.8.sp)
 
+            if (!importError.isNullOrBlank() && !showImportPasswordDialog) {
+                Text(
+                    text = importError.orEmpty(),
+                    fontFamily = UiSans,
+                    fontSize = 12.sp,
+                    color = SemanticDanger
+                )
+            }
+
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))
                     .background(AppHesych)
-                    .clickable {
+                    .clickable(enabled = !isImporting) {
                         scope.launch {
                             runCatching { onExportBackupJson(null) }
                                 .onSuccess { jsonStr ->
@@ -601,7 +638,7 @@ internal fun HesychBackupBioDialog(
                     .clip(RoundedCornerShape(12.dp))
                     .background(ElevatedSurface)
                     .border(1.dp, BorderSubtle, RoundedCornerShape(12.dp))
-                    .clickable { pendingExportCustom = true }
+                    .clickable(enabled = !isImporting) { pendingExportCustom = true }
                     .padding(vertical = 10.dp),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
@@ -617,14 +654,20 @@ internal fun HesychBackupBioDialog(
                     .clip(RoundedCornerShape(12.dp))
                     .background(ElevatedSurface)
                     .border(1.dp, BorderSubtle, RoundedCornerShape(12.dp))
-                    .clickable { importLauncher.launch(arrayOf("application/json", "*/*")) }
+                    .clickable(enabled = !isImporting) { importLauncher.launch(arrayOf("application/json", "*/*")) }
                     .padding(vertical = 10.dp),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Outlined.Upload, contentDescription = null, tint = AppHesych, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.size(6.dp))
-                Text("Import Backup Hesych (.json)", fontFamily = UiSans, fontSize = 12.5.sp, fontWeight = FontWeight.Medium, color = AppHesych)
+                if (isImporting) {
+                    CircularProgressIndicator(modifier = Modifier.size(15.dp), strokeWidth = 2.dp, color = AppHesych)
+                    Spacer(modifier = Modifier.size(8.dp))
+                    Text("Mendekripsi & Mengimpor…", fontFamily = UiSans, fontSize = 12.5.sp, fontWeight = FontWeight.Medium, color = AppHesych)
+                } else {
+                    Icon(Icons.Outlined.Upload, contentDescription = null, tint = AppHesych, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.size(6.dp))
+                    Text("Import Backup Hesych (.json)", fontFamily = UiSans, fontSize = 12.5.sp, fontWeight = FontWeight.Medium, color = AppHesych)
+                }
             }
 
             Text(
