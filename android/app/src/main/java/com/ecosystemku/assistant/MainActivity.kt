@@ -1,14 +1,16 @@
 package com.ecosystemku.assistant
 
+import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import android.view.WindowManager
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.fragment.app.FragmentActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -46,6 +48,8 @@ import com.ecosystemku.assistant.notifications.DailyOsNotificationHelper
 import com.ecosystemku.assistant.ui.apps.AppsHubScreen
 import com.ecosystemku.assistant.ui.apps.cucimoney.CuciMoneyScreen
 import com.ecosystemku.assistant.ui.apps.dailyos.DailyOsScreen
+import com.ecosystemku.assistant.ui.apps.hesych.HesychScreen
+import com.ecosystemku.assistant.ui.apps.hesych.HesychViewModel
 import com.ecosystemku.assistant.ui.apps.ideku.IdekuScreen
 import com.ecosystemku.assistant.ui.apps.kronik.KronikScreen
 import com.ecosystemku.assistant.ui.apps.linkku.LinkkuScreen
@@ -63,7 +67,7 @@ import com.ecosystemku.assistant.ui.setelan.SetelanScreen
 import com.ecosystemku.assistant.ui.theme.DominantBg
 import com.ecosystemku.assistant.ui.theme.EcosystemKuTheme
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
     private var pendingLaunchAction by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -99,6 +103,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun EcosystemKuShell(
     asistenViewModel: AsistenViewModel = viewModel(),
+    hesychViewModel: HesychViewModel = viewModel(),
     pendingLaunchAction: String? = null,
     onConsumeLaunchAction: () -> Unit = {}
 ) {
@@ -108,6 +113,7 @@ fun EcosystemKuShell(
     var showCuciMoney by rememberSaveable { mutableStateOf(false) }
     var showIdeku by rememberSaveable { mutableStateOf(false) }
     var showDailyOs by rememberSaveable { mutableStateOf(false) }
+    var showHesych by rememberSaveable { mutableStateOf(false) }
     var showKnowledgeGraph by rememberSaveable { mutableStateOf(false) }
     val asistenState by asistenViewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -134,11 +140,23 @@ fun EcosystemKuShell(
         val lifecycleOwner = LocalLifecycleOwner.current
         val focusManager = LocalFocusManager.current
         val keyboardController = LocalSoftwareKeyboardController.current
-        val isAsistenActive = selectedTab == AppTab.ASISTEN && !showKronik && !showLinkku && !showCuciMoney && !showIdeku && !showDailyOs && !showKnowledgeGraph
+        val isAsistenActive = selectedTab == AppTab.ASISTEN && !showKronik && !showLinkku && !showCuciMoney && !showIdeku && !showDailyOs && !showHesych && !showKnowledgeGraph
         val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
         var wasImeVisible by remember { mutableStateOf(false) }
         val toastController = remember { RemToastController() }
         var showLlmSetupAlert by remember { mutableStateOf(false) }
+
+        DisposableEffect(showHesych) {
+            val win = (context as? Activity)?.window
+            if (showHesych) {
+                win?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            } else {
+                win?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            }
+            onDispose {
+                win?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            }
+        }
 
         DisposableEffect(lifecycleOwner) {
             val observer = LifecycleEventObserver { _, event ->
@@ -186,6 +204,17 @@ fun EcosystemKuShell(
                     selectedTab = AppTab.ASISTEN
                     asistenViewModel.startKenaliAkuSession()
                 }
+                DailyOsNotificationHelper.ACTION_OPEN_CHECKIN -> {
+                    onConsumeLaunchAction()
+                    showKronik = false
+                    showLinkku = false
+                    showCuciMoney = false
+                    showIdeku = false
+                    showDailyOs = false
+                    showKnowledgeGraph = false
+                    selectedTab = AppTab.ASISTEN
+                    asistenViewModel.startProactiveCheckInSession()
+                }
                 DailyOsNotificationHelper.ACTION_OPEN_DAILYOS -> {
                     onConsumeLaunchAction()
                     showKronik = false
@@ -194,6 +223,33 @@ fun EcosystemKuShell(
                     showIdeku = false
                     showKnowledgeGraph = false
                     showDailyOs = true
+                }
+                DailyOsNotificationHelper.ACTION_OPEN_CUCIMONEY -> {
+                    onConsumeLaunchAction()
+                    showKronik = false
+                    showLinkku = false
+                    showIdeku = false
+                    showDailyOs = false
+                    showKnowledgeGraph = false
+                    showCuciMoney = true
+                }
+                DailyOsNotificationHelper.ACTION_OPEN_IDEKU -> {
+                    onConsumeLaunchAction()
+                    showKronik = false
+                    showLinkku = false
+                    showCuciMoney = false
+                    showDailyOs = false
+                    showKnowledgeGraph = false
+                    showIdeku = true
+                }
+                DailyOsNotificationHelper.ACTION_OPEN_KRONIK -> {
+                    onConsumeLaunchAction()
+                    showLinkku = false
+                    showCuciMoney = false
+                    showIdeku = false
+                    showDailyOs = false
+                    showKnowledgeGraph = false
+                    showKronik = true
                 }
             }
         }
@@ -357,6 +413,7 @@ fun EcosystemKuShell(
                                 onOpenCuciMoney = { showCuciMoney = true },
                                 onOpenIdeku = { showIdeku = true },
                                 onOpenDailyOs = { showDailyOs = true },
+                                onOpenHesych = { showHesych = true },
                                 onToggleCuciVisibility = cuciMoneyActions.onToggleVisibility,
                                 modifier = Modifier.fillMaxSize()
                             )
@@ -383,6 +440,13 @@ fun EcosystemKuShell(
                                 notifTodoEnabled = asistenState.notifTodoEnabled,
                                 notifHabitTime = asistenState.dailyOsState.notifHabitTime,
                                 notifTodoTime = asistenState.dailyOsState.notifTodoTime,
+                                proactiveNotifEnabled = asistenState.proactiveNotifEnabled,
+                                proactiveFinanceEnabled = asistenState.proactiveFinanceEnabled,
+                                proactiveHabitsEnabled = asistenState.proactiveHabitsEnabled,
+                                proactiveReflectionEnabled = asistenState.proactiveReflectionEnabled,
+                                proactiveIdeasEnabled = asistenState.proactiveIdeasEnabled,
+                                proactiveQuietStart = asistenState.proactiveQuietStart,
+                                proactiveQuietEnd = asistenState.proactiveQuietEnd,
                                 memories = asistenState.memories,
                                 summaries = asistenState.summaries,
                                 memoryProfile = asistenState.memoryProfile,
@@ -409,6 +473,10 @@ fun EcosystemKuShell(
                                 onSetNotifTodoEnabled = asistenViewModel::setNotifTodoEnabled,
                                 onSetNotifTimes = asistenViewModel::setNotifTimes,
                                 onTestNotification = asistenViewModel::triggerTestNotification,
+                                onSetProactiveNotifEnabled = asistenViewModel::setProactiveNotifEnabled,
+                                onSetProactiveCategoryEnabled = asistenViewModel::setProactiveCategoryEnabled,
+                                onSetProactiveQuietHours = asistenViewModel::setProactiveQuietHours,
+                                onTestProactiveCheck = asistenViewModel::triggerProactiveCheckNow,
                                 onToggleAutoLearn = asistenViewModel::setAutoLearnMemory,
                                 onOpenKnowledgeGraph = { showKnowledgeGraph = true },
                                 onToggleKgMicroQuestions = asistenViewModel::setKgMicroQuestionsEnabled,
@@ -541,6 +609,22 @@ fun EcosystemKuShell(
                     uiState = asistenState.dailyOsState,
                     actions = dailyOsActions,
                     onClose = { showDailyOs = false },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+        }
+
+        if (showHesych) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(14.5f)
+                    .background(DominantBg)
+                    .clickable(interactionSource = blockerInteraction, indication = null) {}
+            ) {
+                HesychScreen(
+                    viewModel = hesychViewModel,
+                    onClose = { showHesych = false },
                     modifier = Modifier.fillMaxSize()
                 )
             }

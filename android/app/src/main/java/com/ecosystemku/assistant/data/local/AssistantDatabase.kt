@@ -28,9 +28,12 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         DailyOsTodoEntity::class,
         RemReminderEntity::class,
         KgNodeEntity::class,
-        KgEdgeEntity::class
+        KgEdgeEntity::class,
+        HesychItemEntity::class,
+        HesychHistoryEntity::class,
+        HesychMetaEntity::class
     ],
-    version = 16,
+    version = 17,
     exportSchema = false
 )
 abstract class AssistantDatabase : RoomDatabase() {
@@ -43,6 +46,7 @@ abstract class AssistantDatabase : RoomDatabase() {
     abstract fun dailyOsDao(): DailyOsDao
     abstract fun remReminderDao(): RemReminderDao
     abstract fun knowledgeGraphDao(): KnowledgeGraphDao
+    abstract fun hesychDao(): HesychDao
 
     companion object {
         @Volatile
@@ -447,6 +451,54 @@ abstract class AssistantDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `hesych_items` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `title` TEXT NOT NULL,
+                        `username` TEXT NOT NULL,
+                        `password` TEXT NOT NULL,
+                        `notes` TEXT NOT NULL,
+                        `color` INTEGER NOT NULL,
+                        `favorite` INTEGER NOT NULL,
+                        `totpSecret` TEXT NOT NULL,
+                        `customFieldsJson` TEXT NOT NULL,
+                        `category` TEXT,
+                        `tags` TEXT,
+                        `breachStatus` TEXT,
+                        `breachCheckedAt` TEXT,
+                        `metaVersion` INTEGER NOT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `hesych_history` (
+                        `hid` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `itemId` INTEGER NOT NULL,
+                        `encPassword` TEXT NOT NULL,
+                        `changedAt` INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_hesych_history_itemId` ON `hesych_history` (`itemId`)"
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `hesych_meta` (
+                        `key` TEXT NOT NULL PRIMARY KEY,
+                        `value` TEXT NOT NULL
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
         fun getInstance(context: Context): AssistantDatabase {
             return instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
@@ -469,7 +521,8 @@ abstract class AssistantDatabase : RoomDatabase() {
                         MIGRATION_12_13,
                         MIGRATION_13_14,
                         MIGRATION_14_15,
-                        MIGRATION_15_16
+                        MIGRATION_15_16,
+                        MIGRATION_16_17
                     )
                     .fallbackToDestructiveMigrationOnDowngrade()
                     .build()

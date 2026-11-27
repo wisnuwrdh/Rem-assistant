@@ -25,8 +25,8 @@ import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Lightbulb
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.LocalFireDepartment
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.NorthEast
-import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.HorizontalDivider
@@ -60,6 +60,7 @@ import com.ecosystemku.assistant.ui.apps.linkku.LinkkuHelpers
 import com.ecosystemku.assistant.ui.theme.AppCuciMoney
 import com.ecosystemku.assistant.ui.theme.AppCuciMoneyLight
 import com.ecosystemku.assistant.ui.theme.AppDailyOs
+import com.ecosystemku.assistant.ui.theme.AppHesych
 import com.ecosystemku.assistant.ui.theme.AppIdeKu
 import com.ecosystemku.assistant.ui.theme.AppKronik
 import com.ecosystemku.assistant.ui.theme.AppLinkKu
@@ -95,6 +96,7 @@ fun AppsHubScreen(
     onOpenCuciMoney: () -> Unit = {},
     onOpenIdeku: () -> Unit = {},
     onOpenDailyOs: () -> Unit = {},
+    onOpenHesych: () -> Unit = {},
     onToggleCuciVisibility: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -122,54 +124,22 @@ fun AppsHubScreen(
     ) {
         // Editorial Greeting Header
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text(
-                        text = todayLabel,
-                        fontFamily = UiSans,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = TextMuted
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = "$timeGreeting, ${profileName.ifBlank { "Tuan" }}",
-                        fontFamily = EditorialSerif,
-                        fontSize = 24.sp,
-                        lineHeight = 28.sp,
-                        color = TextPrimary
-                    )
-                }
-
-                Box(modifier = Modifier.size(42.dp)) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .clip(CircleShape)
-                            .background(ElevatedSurface)
-                            .border(1.dp, BorderLight, CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.Person,
-                            contentDescription = "Profil",
-                            tint = TextPrimary.copy(alpha = 0.85f),
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .size(12.dp)
-                            .clip(CircleShape)
-                            .background(AppDailyOs)
-                            .border(2.dp, DominantBg, CircleShape)
-                    )
-                }
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = todayLabel,
+                    fontFamily = UiSans,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = TextMuted
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "$timeGreeting, ${profileName.ifBlank { "Tuan" }}",
+                    fontFamily = EditorialSerif,
+                    fontSize = 24.sp,
+                    lineHeight = 28.sp,
+                    color = TextPrimary
+                )
             }
         }
 
@@ -689,18 +659,19 @@ fun AppsHubScreen(
             }
         }
 
-        // Section 2: Aplikasi EcosystemKu (4-column grid, 5 modul)
+        // Section 2: Aplikasi EcosystemKu (4-column grid, 6 modul)
         item {
             val modules = listOf(
                 AppTileData("Daily OS", Icons.Outlined.CheckCircle, AppDailyOs, AppDailyOs.copy(alpha = 0.14f), onClick = onOpenDailyOs),
                 AppTileData("IdeKu", Icons.Outlined.Lightbulb, AppIdeKu, AppIdeKu.copy(alpha = 0.14f), onClick = onOpenIdeku),
                 AppTileData("Kronik", Icons.AutoMirrored.Outlined.MenuBook, AppKronik, AppKronik.copy(alpha = 0.14f), onClick = onOpenKronik),
                 AppTileData("CuciMoney+", Icons.Outlined.AccountBalanceWallet, Color(0xFF4D88C2), AppCuciMoney.copy(alpha = 0.16f), onClick = onOpenCuciMoney),
-                AppTileData("LinkKu", Icons.Outlined.Link, AppLinkKu, AppLinkKu.copy(alpha = 0.14f), onClick = onOpenLinkku)
+                AppTileData("LinkKu", Icons.Outlined.Link, AppLinkKu, AppLinkKu.copy(alpha = 0.14f), onClick = onOpenLinkku),
+                AppTileData("Hesych", Icons.Outlined.Lock, AppHesych, AppHesych.copy(alpha = 0.16f), onClick = onOpenHesych)
             )
 
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                SectionHeaderRow(title = "APLIKASI ASISTEN REM", subtitle = "5 Modul")
+                SectionHeaderRow(title = "APLIKASI ASISTEN REM", subtitle = "6 Modul")
 
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     modules.chunked(4).forEach { rowItems ->

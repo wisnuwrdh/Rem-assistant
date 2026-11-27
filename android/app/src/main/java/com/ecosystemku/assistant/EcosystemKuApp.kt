@@ -4,12 +4,14 @@ import android.app.Application
 import android.content.Intent
 import android.os.Process
 import android.util.Log
+import com.ecosystemku.assistant.notifications.ProactiveCheckScheduler
 import kotlin.system.exitProcess
 
 class EcosystemKuApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        runCatching { ProactiveCheckScheduler.syncFromPrefs(this) }
         val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             try {

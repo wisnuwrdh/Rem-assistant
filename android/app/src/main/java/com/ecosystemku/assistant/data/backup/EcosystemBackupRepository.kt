@@ -1,6 +1,8 @@
 package com.ecosystemku.assistant.data.backup
 
 import android.content.Context
+import com.ecosystemku.assistant.data.hesych.HesychBackupCodec
+import com.ecosystemku.assistant.data.hesych.HesychBackupCodec.toEntity
 import com.ecosystemku.assistant.data.kg.KgBackupWrapperDto
 import com.ecosystemku.assistant.data.kg.KnowledgeGraphHelpers
 import com.ecosystemku.assistant.data.local.AssistantDatabase
@@ -14,6 +16,8 @@ import com.ecosystemku.assistant.data.local.CuciMasterBudgetEntity
 import com.ecosystemku.assistant.data.local.CuciMemberEntity
 import com.ecosystemku.assistant.data.local.CuciTransactionEntity
 import com.ecosystemku.assistant.data.local.CuciWishlistEntity
+import com.ecosystemku.assistant.data.local.HesychHistoryEntity
+import com.ecosystemku.assistant.data.local.HesychMetaEntity
 import com.ecosystemku.assistant.data.local.IdekuIdeaEntity
 import com.ecosystemku.assistant.data.local.KgEdgeEntity
 import com.ecosystemku.assistant.data.local.KgNodeEntity
@@ -122,6 +126,7 @@ class EcosystemBackupRepository(private val appContext: Context) {
     private val idekuDao = db.idekuDao()
     private val dailyOsDao = db.dailyOsDao()
     private val kgDao = db.knowledgeGraphDao()
+    private val hesychDao = db.hesychDao()
 
     private val asistenPrefs = appContext.getSharedPreferences("asisten_prefs", Context.MODE_PRIVATE)
     private val linkkuPrefs = appContext.getSharedPreferences("linkku_prefs", Context.MODE_PRIVATE)
@@ -213,6 +218,11 @@ class EcosystemBackupRepository(private val appContext: Context) {
         val kgJson = DailyOsHelpers.json.encodeToString(
             KnowledgeGraphHelpers.buildBackupDto(kgDao.getAllNodes(), kgDao.getAllEdges())
         )
+        val hesychJson = HesychBackupCodec.encodeEcosystemZipDto(
+            items = hesychDao.getAllItems(),
+            history = hesychDao.getAllHistory(),
+            meta = hesychDao.getAllMeta()
+        )
 
         val entries = mapOf(
             "manifest.json" to manifestJson,
@@ -222,7 +232,8 @@ class EcosystemBackupRepository(private val appContext: Context) {
             "cucimoney.json" to cuciJson,
             "linkku.json" to linkkuJson,
             "asisten.json" to asistenJson,
-            "knowledge_graph.json" to kgJson
+            "knowledge_graph.json" to kgJson,
+            "hesych.json" to hesychJson
         )
 
         val baos = ByteArrayOutputStream()
@@ -610,6 +621,35 @@ class EcosystemBackupRepository(private val appContext: Context) {
                 }
             } else if (replaceAll && files["asisten.json"] != null) {
                 kgDao.clearAll()
+            }
+
+            files["hesych.json"]?.let { raw ->
+                HesychBackupCodec.decodeEcosystemZipDto(raw)?.let { dto ->
+                    val items = dto.items.map { it.toEntity() }
+                    val history = dto.history.map {
+                        HesychHistoryEntity(it.hid, it.itemId, it.encPassword, it.changedAt)
+                    }
+                    val meta = dto.meta.entries.map { HesychMetaEntity(it.key, it.value) }
+                    if (replaceAll) {
+                        hesychDao.replaceAllData(items, history, meta)
+                        restoredModules++
+                    } else {
+                        val existingEnv = hesychDao.getMeta("pw_envelope")?.value
+                        val incomingEnv = dto.meta["pw_envelope"]
+                        if (existingEnv == null || existingEnv == incomingEnv) {
+                            if (existingEnv == null && meta.isNotEmpty()) {
+                                hesychDao.upsertMetaAll(meta)
+                            }
+                            val existingIds = hesychDao.getAllItems().map { it.id }.toSet()
+                            val freshItems = items.filter { it.id !in existingIds }
+                            if (freshItems.isNotEmpty()) hesychDao.upsertItems(freshItems)
+                            val existingHistIds = hesychDao.getAllHistory().map { it.hid }.toSet()
+                            val freshHist = history.filter { it.hid !in existingHistIds }
+                            if (freshHist.isNotEmpty()) hesychDao.insertHistoryAll(freshHist)
+                            restoredModules++
+                        }
+                    }
+                }
             }
 
             if (restoredModules == 0) {

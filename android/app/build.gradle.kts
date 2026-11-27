@@ -14,8 +14,8 @@ android {
         applicationId = "com.ecosystemku.assistant"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "1.2.1"
+        versionCode = 5
+        versionName = "1.3.0"
 
         val apiBaseUrl = (providers.gradleProperty("API_BASE_URL").orNull
             ?: System.getenv("API_BASE_URL")
@@ -119,6 +119,8 @@ dependencies {
     implementation(libs.okhttp.sse)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.androidx.biometric)
+    implementation(libs.bcprov)
 
     testImplementation(libs.junit)
 }

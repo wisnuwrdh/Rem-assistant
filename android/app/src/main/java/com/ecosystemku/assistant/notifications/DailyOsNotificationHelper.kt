@@ -20,6 +20,7 @@ import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Shader
 import android.os.Build
+import android.view.View
 import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -37,9 +38,18 @@ import kotlinx.coroutines.launch
 
 object DailyOsNotificationHelper {
     const val CHANNEL_ID = "dailyos_reminders"
+    const val CHANNEL_PROACTIVE_FINANCE = "proactive_finance"
+    const val CHANNEL_PROACTIVE_HABITS = "proactive_habits"
+    const val CHANNEL_PROACTIVE_REFLECTION = "proactive_reflection"
+    const val CHANNEL_PROACTIVE_IDEAS = "proactive_ideas"
+
     const val EXTRA_LAUNCH_ACTION = "launch_action"
     const val ACTION_KENALI_AKU = "kenali_aku"
     const val ACTION_OPEN_DAILYOS = "open_dailyos"
+    const val ACTION_OPEN_CUCIMONEY = "open_cucimoney"
+    const val ACTION_OPEN_IDEKU = "open_ideku"
+    const val ACTION_OPEN_KRONIK = "open_kronik"
+    const val ACTION_OPEN_CHECKIN = "open_checkin"
 
     internal const val ACTION_SNOOZE_15M = "com.ecosystemku.assistant.ACTION_NOTIF_SNOOZE_15M"
     internal const val ACTION_MARK_DONE = "com.ecosystemku.assistant.ACTION_NOTIF_MARK_DONE"
@@ -61,15 +71,45 @@ object DailyOsNotificationHelper {
 
     fun ensureChannel(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Pengingat Daily OS",
-                NotificationManager.IMPORTANCE_DEFAULT
-            ).apply {
-                description = "Jadwal pengingat Habit & To-Do harian dari Rem"
-            }
-            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-            nm?.createNotificationChannel(channel)
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+            val channels = listOf(
+                NotificationChannel(
+                    CHANNEL_ID,
+                    "Pengingat Daily OS",
+                    NotificationManager.IMPORTANCE_DEFAULT
+                ).apply {
+                    description = "Jadwal pengingat Habit & To-Do harian dari Rem"
+                },
+                NotificationChannel(
+                    CHANNEL_PROACTIVE_FINANCE,
+                    "Proaktif · Keuangan (CuciMoney+)",
+                    NotificationManager.IMPORTANCE_DEFAULT
+                ).apply {
+                    description = "Peringatan budget dan progres tabungan wishlist dari Rem"
+                },
+                NotificationChannel(
+                    CHANNEL_PROACTIVE_HABITS,
+                    "Proaktif · Habit & To-Do",
+                    NotificationManager.IMPORTANCE_DEFAULT
+                ).apply {
+                    description = "Penyelamatan streak habit dan pengingat tugas mendesak"
+                },
+                NotificationChannel(
+                    CHANNEL_PROACTIVE_REFLECTION,
+                    "Proaktif · Refleksi & Kronik",
+                    NotificationManager.IMPORTANCE_DEFAULT
+                ).apply {
+                    description = "Sapaan refleksi saat jurnal vakum atau mood sedang berat"
+                },
+                NotificationChannel(
+                    CHANNEL_PROACTIVE_IDEAS,
+                    "Proaktif · IdeKu",
+                    NotificationManager.IMPORTANCE_LOW
+                ).apply {
+                    description = "Pengingat ringan untuk ide yang lama tertahan di tahap Proses"
+                }
+            )
+            nm.createNotificationChannels(channels)
         }
     }
 
@@ -90,7 +130,9 @@ object DailyOsNotificationHelper {
         title: String,
         body: String,
         launchAction: String? = null,
-        reminderId: Long = -1L
+        reminderId: Long = -1L,
+        channelId: String = CHANNEL_ID,
+        showActionButtons: Boolean = true
     ): Boolean {
         if (!hasNotificationPermission(context)) return false
         ensureChannel(context)
@@ -158,11 +200,16 @@ object DailyOsNotificationHelper {
             if (avatarBmp != null) {
                 setImageViewBitmap(R.id.notif_avatar, avatarBmp)
             }
-            setOnClickPendingIntent(R.id.btn_snooze, snoozePending)
-            setOnClickPendingIntent(R.id.btn_done, donePending)
+            if (showActionButtons) {
+                setViewVisibility(R.id.notif_actions_row, View.VISIBLE)
+                setOnClickPendingIntent(R.id.btn_snooze, snoozePending)
+                setOnClickPendingIntent(R.id.btn_done, donePending)
+            } else {
+                setViewVisibility(R.id.notif_actions_row, View.GONE)
+            }
         }
 
-        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+        val notification = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle(formattedTitle)
             .setContentText(body)

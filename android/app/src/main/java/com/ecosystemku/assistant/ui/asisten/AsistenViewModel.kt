@@ -75,6 +75,12 @@ import com.ecosystemku.assistant.device.AndroidDeviceBridge
 import com.ecosystemku.assistant.device.DeviceActionEvent
 import com.ecosystemku.assistant.live2d.Live2DStageCallbacks
 import com.ecosystemku.assistant.live2d.WebViewLive2DStageController
+import com.ecosystemku.assistant.notifications.DailyOsNotificationHelper
+import com.ecosystemku.assistant.notifications.ProactiveCategory
+import com.ecosystemku.assistant.notifications.ProactiveCheckRunner
+import com.ecosystemku.assistant.notifications.ProactiveCheckScheduler
+import com.ecosystemku.assistant.notifications.ProactivePrefsKeys
+import com.ecosystemku.assistant.notifications.ProactiveRunResult
 import com.ecosystemku.assistant.ui.apps.cucimoney.CuciMoneyActions
 import com.ecosystemku.assistant.ui.apps.cucimoney.CuciMoneyHelpers
 import com.ecosystemku.assistant.ui.apps.cucimoney.CuciMoneyUiState
@@ -141,6 +147,13 @@ data class AsistenUiState(
     val isTestingApi: Boolean = false,
     val notifHabitEnabled: Boolean = true,
     val notifTodoEnabled: Boolean = true,
+    val proactiveNotifEnabled: Boolean = true,
+    val proactiveFinanceEnabled: Boolean = true,
+    val proactiveHabitsEnabled: Boolean = true,
+    val proactiveReflectionEnabled: Boolean = true,
+    val proactiveIdeasEnabled: Boolean = true,
+    val proactiveQuietStart: String = "22:00",
+    val proactiveQuietEnd: String = "07:00",
     val chatSessions: List<ChatSessionEntity> = emptyList(),
     val currentSessionId: Long = 0L,
     val messages: List<ChatMessageEntity> = emptyList(),
@@ -410,6 +423,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         val themeMode = asistenPrefs.getString("asisten_theme_mode", "dark") ?: "dark"
         val habitNotifOn = asistenPrefs.getBoolean("asisten_notif_habit_on", true)
         val todoNotifOn = asistenPrefs.getBoolean("asisten_notif_todo_on", true)
+        val proactiveSnap = ProactivePrefsKeys.readPreferences(app)
         val autoLearn = asistenPrefs.getBoolean("asisten_auto_learn", true)
         val kgMicroQuestions = asistenPrefs.getBoolean("asisten_kg_micro_questions", true)
         val skillsOn = asistenPrefs.getBoolean("asisten_skills_enabled", true)
@@ -469,6 +483,13 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 },
                 notifHabitEnabled = habitNotifOn,
                 notifTodoEnabled = todoNotifOn,
+                proactiveNotifEnabled = proactiveSnap.enabled,
+                proactiveFinanceEnabled = proactiveSnap.financeEnabled,
+                proactiveHabitsEnabled = proactiveSnap.habitsEnabled,
+                proactiveReflectionEnabled = proactiveSnap.reflectionEnabled,
+                proactiveIdeasEnabled = proactiveSnap.ideasEnabled,
+                proactiveQuietStart = proactiveSnap.quietStart,
+                proactiveQuietEnd = proactiveSnap.quietEnd,
                 autoLearnMemory = autoLearn,
                 kgMicroQuestionsEnabled = kgMicroQuestions,
                 skillsEnabled = skillsOn,
@@ -485,18 +506,22 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         }
         val habitTime = dailyOsPrefs.getString("do_notif_habit", "07:00") ?: "07:00"
         val todoTime = dailyOsPrefs.getString("do_notif_todo", "15:00") ?: "15:00"
-        com.ecosystemku.assistant.notifications.DailyOsNotificationHelper.syncSchedules(
+        DailyOsNotificationHelper.syncSchedules(
             context = app,
             habitEnabled = habitNotifOn,
             habitTime = habitTime,
             todoEnabled = todoNotifOn,
             todoTime = todoTime
         )
-        com.ecosystemku.assistant.notifications.DailyOsNotificationHelper.syncWeeklyReflectionSchedule(
+        DailyOsNotificationHelper.syncWeeklyReflectionSchedule(
             context = app,
             enabled = kgWeeklyOn,
             dayOfWeek = kgWeeklyDay,
             timeStr = kgWeeklyTime
+        )
+        ProactiveCheckScheduler.syncSchedule(
+            context = app,
+            enabled = proactiveSnap.enabled
         )
         CloudBackupScheduler.syncSchedule(
             context = app,
@@ -1082,11 +1107,61 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
 
     fun triggerTestNotification() {
         val app = getApplication<Application>()
-        val ok = com.ecosystemku.assistant.notifications.DailyOsNotificationHelper.postTestNotification(app)
+        val ok = DailyOsNotificationHelper.postTestNotification(app)
         if (ok) {
             showBannerMessage("Notifikasi uji dikirim ke status bar")
         } else {
             showBannerMessage("Izin notifikasi belum diberikan di perangkat")
+        }
+    }
+
+    fun setProactiveNotifEnabled(enabled: Boolean) {
+        asistenPrefs.edit().putBoolean(ProactivePrefsKeys.PREF_ENABLED, enabled).apply()
+        refreshAsistenPrefsIntoState()
+        showBannerMessage(
+            if (enabled) "Notifikasi proaktif lintas modul diaktifkan"
+            else "Notifikasi proaktif lintas modul dimatikan"
+        )
+    }
+
+    fun setProactiveCategoryEnabled(category: ProactiveCategory, enabled: Boolean) {
+        val prefKey = when (category) {
+            ProactiveCategory.FINANCE -> ProactivePrefsKeys.PREF_FINANCE
+            ProactiveCategory.HABITS -> ProactivePrefsKeys.PREF_HABITS
+            ProactiveCategory.REFLECTION -> ProactivePrefsKeys.PREF_REFLECTION
+            ProactiveCategory.IDEAS -> ProactivePrefsKeys.PREF_IDEAS
+        }
+        asistenPrefs.edit().putBoolean(prefKey, enabled).apply()
+        refreshAsistenPrefsIntoState()
+    }
+
+    fun setProactiveQuietHours(start: String, end: String) {
+        val cleanStart = start.trim().takeIf { it.matches(Regex("\\d{2}:\\d{2}")) } ?: "22:00"
+        val cleanEnd = end.trim().takeIf { it.matches(Regex("\\d{2}:\\d{2}")) } ?: "07:00"
+        asistenPrefs.edit()
+            .putString(ProactivePrefsKeys.PREF_QUIET_START, cleanStart)
+            .putString(ProactivePrefsKeys.PREF_QUIET_END, cleanEnd)
+            .apply()
+        refreshAsistenPrefsIntoState()
+        showBannerMessage("Jam tenang diperbarui ($cleanStart – $cleanEnd)")
+    }
+
+    fun triggerProactiveCheckNow() {
+        val app = getApplication<Application>()
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                ProactiveCheckRunner.runOnce(app, manualTrigger = true)
+            }
+            when (result) {
+                is ProactiveRunResult.Notified ->
+                    showBannerMessage("Notifikasi proaktif dikirim: ${result.alert.title}")
+                ProactiveRunResult.NoAlertNeeded ->
+                    showBannerMessage("Semua modul aman, belum ada pengingat proaktif saat ini")
+                ProactiveRunResult.PermissionMissing ->
+                    showBannerMessage("Izin notifikasi belum diberikan di perangkat")
+                ProactiveRunResult.Disabled ->
+                    showBannerMessage("Notifikasi proaktif sedang dimatikan")
+            }
         }
     }
 
@@ -1495,6 +1570,20 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun startKenaliAkuSession() {
+        startGuidedSession(
+            sessionTitle = "Sesi Kenali Aku",
+            starterText = "Rem, ayo mulai Sesi Kenali Aku untuk memetakan pola pikir, nilai hidup, kebiasaan, dan tujuan jangka panjangku."
+        )
+    }
+
+    fun startProactiveCheckInSession() {
+        startGuidedSession(
+            sessionTitle = "Check-In Bersama Rem",
+            starterText = "Rem, akhir-akhir ini perasaanku terasa agak berat dan lelah. Bisa temani aku refleksi sebentar dari catatan Kronikku?"
+        )
+    }
+
+    private fun startGuidedSession(sessionTitle: String, starterText: String) {
         if (_uiState.value.isThinking) return
         if (!ApiKeyStore.isLlmConfigured(getApplication())) {
             _uiState.update {
@@ -1505,11 +1594,10 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         streamJob?.cancel()
         streamJob = viewModelScope.launch {
             audioManager.stop()
-            val sid = createSessionWithGreeting(title = "Sesi Kenali Aku")
+            val sid = createSessionWithGreeting(title = sessionTitle)
             asistenPrefs.edit().putLong("asisten_current_session_id", sid).apply()
             _activeSessionId.value = sid
             _uiState.update { it.copy(currentSessionId = sid) }
-            val starterText = "Rem, ayo mulai Sesi Kenali Aku untuk memetakan pola pikir, nilai hidup, kebiasaan, dan tujuan jangka panjangku."
             val userMsgId = chatDao.insert(
                 ChatMessageEntity(
                     sessionId = sid,

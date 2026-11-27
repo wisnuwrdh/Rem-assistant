@@ -140,6 +140,7 @@ import com.ecosystemku.assistant.data.local.UserMemoryEntity
 import com.ecosystemku.assistant.data.network.MemoryProfileData
 import com.ecosystemku.assistant.device.AndroidDeviceBridge
 import com.ecosystemku.assistant.notifications.DailyOsNotificationHelper
+import com.ecosystemku.assistant.notifications.ProactiveCategory
 import java.io.File
 import java.text.SimpleDateFormat
 import java.time.LocalDate
@@ -170,6 +171,13 @@ fun SetelanScreen(
     notifTodoEnabled: Boolean = true,
     notifHabitTime: String = "07:00",
     notifTodoTime: String = "15:00",
+    proactiveNotifEnabled: Boolean = true,
+    proactiveFinanceEnabled: Boolean = true,
+    proactiveHabitsEnabled: Boolean = true,
+    proactiveReflectionEnabled: Boolean = true,
+    proactiveIdeasEnabled: Boolean = true,
+    proactiveQuietStart: String = "22:00",
+    proactiveQuietEnd: String = "07:00",
     memories: List<UserMemoryEntity> = emptyList(),
     summaries: List<ConversationSummaryEntity> = emptyList(),
     memoryProfile: MemoryProfileData = MemoryProfileData(),
@@ -196,6 +204,10 @@ fun SetelanScreen(
     onSetNotifTodoEnabled: (Boolean) -> Unit = {},
     onSetNotifTimes: (String, String) -> Unit = { _, _ -> },
     onTestNotification: () -> Unit = {},
+    onSetProactiveNotifEnabled: (Boolean) -> Unit = {},
+    onSetProactiveCategoryEnabled: (ProactiveCategory, Boolean) -> Unit = { _, _ -> },
+    onSetProactiveQuietHours: (String, String) -> Unit = { _, _ -> },
+    onTestProactiveCheck: () -> Unit = {},
     onToggleAutoLearn: (Boolean) -> Unit = {},
     onOpenKnowledgeGraph: () -> Unit = {},
     onToggleKgMicroQuestions: (Boolean) -> Unit = {},
@@ -1485,11 +1497,11 @@ fun SetelanScreen(
                 }
             }
 
-            // 4. Notifikasi (AKTIF — AlarmManager & Runtime Permission Fase 2)
+            // 4. Notifikasi (AKTIF — AlarmManager, WorkManager Proaktif, & Runtime Permission)
             item {
                 SettingsSection(
                     title = "NOTIFIKASI",
-                    badgeText = if (hasNotifPerm && (notifHabitEnabled || notifTodoEnabled)) "Izin Aktif" else null
+                    badgeText = if (hasNotifPerm && (notifHabitEnabled || notifTodoEnabled || proactiveNotifEnabled)) "Izin Aktif" else null
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         NotificationRow(
@@ -1528,12 +1540,180 @@ fun SetelanScreen(
                             }
                         )
                         HorizontalDivider(thickness = 1.dp, color = BorderSubtle)
+
+                        // Notifikasi Proaktif Lintas Modul (0-token WorkManager)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    val next = !proactiveNotifEnabled
+                                    if (next && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotifPerm) {
+                                        notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                    }
+                                    onSetProactiveNotifEnabled(next)
+                                },
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
+                                Text(
+                                    text = "Notifikasi Proaktif Lintas Modul",
+                                    fontFamily = UiSans,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = TextPrimary
+                                )
+                                Text(
+                                    text = "Cek lokal tiap 4 jam • maks 2/hari (0-token)",
+                                    fontFamily = UiSans,
+                                    fontSize = 11.sp,
+                                    color = TextMuted
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .width(42.dp)
+                                    .height(24.dp)
+                                    .clip(RoundedCornerShape(50))
+                                    .background(if (proactiveNotifEnabled) AccentBlue else ElevatedSurface)
+                                    .border(1.dp, if (proactiveNotifEnabled) AccentBlue else BorderLight, RoundedCornerShape(50))
+                                    .padding(3.dp),
+                                contentAlignment = if (proactiveNotifEnabled) Alignment.CenterEnd else Alignment.CenterStart
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(18.dp)
+                                        .clip(CircleShape)
+                                        .background(if (proactiveNotifEnabled) DominantBg else TextMuted)
+                                )
+                            }
+                        }
+
+                        if (proactiveNotifEnabled) {
+                            val categoryOptions = listOf(
+                                Triple(ProactiveCategory.FINANCE, "Keuangan", proactiveFinanceEnabled),
+                                Triple(ProactiveCategory.HABITS, "Habit & To-Do", proactiveHabitsEnabled),
+                                Triple(ProactiveCategory.REFLECTION, "Kronik", proactiveReflectionEnabled),
+                                Triple(ProactiveCategory.IDEAS, "IdeKu", proactiveIdeasEnabled)
+                            )
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                categoryOptions.forEach { (cat, chipLabel, isOn) ->
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(if (isOn) AccentBlue.copy(alpha = 0.16f) else ElevatedSurface)
+                                            .border(
+                                                1.dp,
+                                                if (isOn) AccentBlue.copy(alpha = 0.5f) else BorderSubtle,
+                                                RoundedCornerShape(10.dp)
+                                            )
+                                            .clickable { onSetProactiveCategoryEnabled(cat, !isOn) }
+                                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                                    ) {
+                                        Text(
+                                            text = chipLabel,
+                                            fontFamily = UiSans,
+                                            fontSize = 11.sp,
+                                            fontWeight = if (isOn) FontWeight.SemiBold else FontWeight.Normal,
+                                            color = if (isOn) AccentBlue else TextMuted
+                                        )
+                                    }
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Jam Tenang (Quiet Hours)",
+                                    fontFamily = UiSans,
+                                    fontSize = 11.5.sp,
+                                    color = TextMuted
+                                )
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(ElevatedSurface)
+                                            .border(1.dp, BorderSubtle, RoundedCornerShape(8.dp))
+                                            .clickable {
+                                                pickTime(
+                                                    current = proactiveQuietStart,
+                                                    subtitle = "Mulai jam tenang notifikasi proaktif"
+                                                ) { picked ->
+                                                    onSetProactiveQuietHours(picked, proactiveQuietEnd)
+                                                }
+                                            }
+                                            .padding(horizontal = 9.dp, vertical = 4.dp)
+                                    ) {
+                                        Text(
+                                            text = proactiveQuietStart,
+                                            fontFamily = UiSans,
+                                            fontSize = 11.5.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = TextPrimary
+                                        )
+                                    }
+                                    Text("–", fontFamily = UiSans, fontSize = 11.5.sp, color = TextSubtle)
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(ElevatedSurface)
+                                            .border(1.dp, BorderSubtle, RoundedCornerShape(8.dp))
+                                            .clickable {
+                                                pickTime(
+                                                    current = proactiveQuietEnd,
+                                                    subtitle = "Selesai jam tenang notifikasi proaktif"
+                                                ) { picked ->
+                                                    onSetProactiveQuietHours(proactiveQuietStart, picked)
+                                                }
+                                            }
+                                            .padding(horizontal = 9.dp, vertical = 4.dp)
+                                    ) {
+                                        Text(
+                                            text = proactiveQuietEnd,
+                                            fontFamily = UiSans,
+                                            fontSize = 11.5.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = TextPrimary
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        HorizontalDivider(thickness = 1.dp, color = BorderSubtle)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Jadwal lokal perangkat", fontFamily = UiSans, fontSize = 11.sp, color = TextSubtle)
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        hasNotifPerm = DailyOsNotificationHelper.hasNotificationPermission(context)
+                                        if (!hasNotifPerm && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                            notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                        } else {
+                                            onTestProactiveCheck()
+                                        }
+                                    }
+                                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Icon(Icons.Outlined.Search, contentDescription = null, tint = TextMuted, modifier = Modifier.size(14.dp))
+                                Text("Cek Proaktif", fontFamily = UiSans, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = TextPrimary)
+                            }
                             Row(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(8.dp))

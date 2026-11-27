@@ -193,16 +193,16 @@ Respons LLM dapat menyertakan tag tersembunyi berikut (dibersihkan dari bubble c
 ### 6. Setelan, Otak Digital, & Backup Ecosystem ZIP v3 (`SetelanScreen.kt`, `KnowledgeGraphScreen.kt`, `SimilarityBenchmark.kt`)
 * **Profil & Konfigurasi AI:** Nama panggilan pengguna, input & uji koneksi LLM + Fish Audio TTS (disimpan terenkripsi di `ApiKeyStore`).
 * **Manajemen Memori & Otak Digital:** Lihat, tambah/ubah/tandai usang `user_memories` (lengkap dengan badge `USANG`), aktifkan/matikan *auto-learn memory* serta toggle **Pertanyaan Refleksi Ringan** (`kgMicroQuestionsEnabled`), edit/tambah/hapus bagian pada **Ringkasan Memori** naratif (dilindungi `manuallyEdited`), serta buka peta jaringan interaktif **Otak Digital (`KnowledgeGraphScreen`)** untuk menjelajah simpul/relasi, memulai **Sesi Kenali Aku**, menambah/mengedit/menghapus simpul & koneksi, memvalidasi simpul secara manual (**Benar** / **Salah** / **Sudah Berubah** + `MENGGANTIKAN`), memadatkan riwayat usang (`>90 hari`, menjaga `SELF` & `NILAI`), menjalankan **Uji Kemiripan (25 Skenario)** (`SimilarityBenchmark`: cek cakupan offline 0-token maupun uji LLM + Graph lintas 5 domain), atau mengekspor skema portabel **Digital Twin JSON (`rem-digital-twin-kg-v1`)**. Tampilan graph dioptimasi untuk skala 500–1.000 simpul lewat batas render terfilter (maks 120 simpul), perhitungan layout di `Dispatchers.Default`, cache pengukuran label `TextLayoutResult`, dan lookup tetangga `O(1)`.
-* **Notifikasi & Akses Perangkat:** Pengaturan jadwal harian Daily OS + izin runtime **Baca Kalender (`READ_CALENDAR`)** dan toggle opt-in **Lokasi Perkiraan (`ACCESS_COARSE_LOCATION`)**.
+* **Notifikasi & Akses Perangkat:** Pengaturan jadwal harian Daily OS, **Notifikasi Proaktif Lintas Modul** (`ProactiveCheckWorker` + `ProactiveEvaluator` 0-token setiap 4 jam dengan kontrol kategori Keuangan/Habit/Kronik/IdeKu, *Quiet Hours*, batas 2 notif/hari, tombol uji *"Cek Proaktif"*, dan `BootReceiver` pasca-restart) + izin runtime **Baca Kalender (`READ_CALENDAR`)** dan toggle opt-in **Lokasi Perkiraan (`ACCESS_COARSE_LOCATION`)**.
 * **Tampilan & Stage:** Mode tema (`system` / `light` / `dark`), pemilihan gambar **Wallpaper Rem** dari galeri + slider *dim* latar belakang, dan reset stage.
 * **Export / Import ZIP v3 (`EcosystemBackupRepository`):** Ekspor seluruh data (chat sessions, memori, `knowledge_graph.json`, Daily OS, CuciMoney+, IdeKu, Kronik, LinkKu) ke satu arsip `.zip` dan impor kembali dengan mode **Merge** atau **Replace** (termasuk dialog dekripsi PIN untuk tautan privat LinkKu).
 * **Cloud Backup (Google Drive `appDataFolder`):** Sinkronisasi manual maupun auto-backup terjadwal (`CloudBackupWorker` via `WorkManager`: Mati / Harian / Mingguan, opsi *Wi-Fi only*) ke ruang tersembunyi Google Drive pribadi, lengkap dengan enkripsi opsional passphrase **PBKDF2 + AES-256-GCM (`REMC1`)** (`CloudBackupCrypto`). *(Memerlukan OAuth 2.0 Android Client ID di Google Cloud Console dengan SHA-1 `rem-assistant.jks`.)*
 
 ---
 
-## 5. Skema Database Android (Room v16)
+## 5. Skema Database Android (Room v17)
 
-`AssistantDatabase` (`version = 16`, `exportSchema = false`) mengelola **20 Entity** dalam satu SQLite lokal dengan migrasi eksplisit `MIGRATION_1_2` hingga `MIGRATION_15_16`:
+`AssistantDatabase` (`version = 17`, `exportSchema = false`) mengelola **23 Entity** dalam satu SQLite lokal dengan migrasi eksplisit `MIGRATION_1_2` hingga `MIGRATION_16_17`:
 
 | Domain | Entity | Peran Utama |
 | --- | --- | --- |
@@ -226,6 +226,9 @@ Respons LLM dapat menyertakan tag tersembunyi berikut (dibersihkan dari bubble c
 | **IdeKu** | `IdekuIdeaEntity` | Ide & wishlist (`type`, `priority`, `status`, `price`, `jalur`) |
 | **Daily OS** | `DailyOsHabitEntity` | Habit, jadwal aktif, sub-tasks JSON, & history JSON |
 | | `DailyOsTodoEntity` | To-do, prioritas, deadline, status selesai, & sub-tasks JSON |
+| **Hesych (Password Vault)** | `HesychItemEntity` | Item vault terenkripsi AES-256-GCM (`title`, `username`, `password`, `totpSecret`, `customFieldsJson`, metadata v6) |
+| | `HesychHistoryEntity` | Riwayat password lama per item (maks 10 entri) |
+| | `HesychMetaEntity` | Envelope kunci Argon2id/PBKDF2 (`pw_envelope`) & verifier vault |
 
 ---
 
@@ -244,18 +247,19 @@ Respons LLM dapat menyertakan tag tersembunyi berikut (dibersihkan dari bubble c
 │           └── java/com/ecosystemku/assistant/
 │               ├── EcosystemKuApp.kt & MainActivity.kt & CrashActivity.kt
 │               ├── data/audio/        # TtsAudioManager (ExoPlayer + RMS lip-sync + mute terpisah)
-│               ├── data/backup/       # EcosystemBackupRepository (ZIP v3 export & import mandiri + knowledge_graph.json)
+│               ├── data/backup/       # EcosystemBackupRepository (ZIP v3 export & import mandiri + knowledge_graph.json + hesych.json)
 │               ├── data/cloud/        # CloudBackupCrypto, GoogleDriveBackupClient, & CloudBackupWorker
+│               ├── data/hesych/       # HesychCrypto, HesychTotp, HesychPasswordGenerator, HesychHealth, HesychBreachChecker, HesychBiometric, HesychBackupCodec, & HesychVaultRepository
 │               ├── data/kg/           # KnowledgeGraphModels, KnowledgeGraphRepository, BehavioralSignalSync, & SimilarityBenchmark
-│               ├── data/local/        # AssistantDatabase (v16), ApiKeyStore, Entities & DAOs
+│               ├── data/local/        # AssistantDatabase (v17), ApiKeyStore, Entities & DAOs
 │               ├── data/network/      # ChatSseClient, DirectLlmClient, MemoryClient, SseTagParser, & *Client modul
 │               ├── data/skills/       # RemSkillSelector & RemSkillRegistry (loader skill adaptif on-demand)
 │               ├── device/            # AndroidDeviceBridge (Alarm, Timer, Calendar, URL, Share, Battery, Location)
 │               ├── live2d/            # Live2DStageController (JS <-> Kotlin bridge)
-│               ├── notifications/     # DailyOsNotificationHelper
+│               ├── notifications/     # DailyOsNotificationHelper, ProactiveEvaluator, ProactiveCheckWorker, & BootReceiver
 │               └── ui/
 │                   ├── asisten/       # AsistenScreen, RemVoiceInputDialog, & AsistenViewModel (otak ekosistem)
-│                   ├── apps/          # AppsHubScreen + cucimoney/, dailyos/, ideku/, kronik/, linkku/
+│                   ├── apps/          # AppsHubScreen + cucimoney/, dailyos/, hesych/, ideku/, kronik/, linkku/
 │                   ├── kg/            # KnowledgeGraphScreen (Canvas peta Otak Digital, validasi, uji kemiripan, Digital Twin)
 │                   ├── navigation/    # BottomNavBar (Asisten, Apps, Setelan)
 │                   ├── setelan/       # SetelanScreen (AI config, memori & edit ringkasan, cloud backup, tema, ZIP v3)
@@ -295,7 +299,7 @@ Bagian ini merangkum posisi proyek saat ini sebagai konteks bagi kontributor ata
 * Backup/Restore portabel lintas-modul via ZIP v3 (termasuk `knowledge_graph.json`) maupun **Cloud Backup Google Drive (`appDataFolder`)** + Auto-Backup `WorkManager` & enkripsi passphrase AES-256-GCM.
 
 ### Area Terbuka & Kandidat Pengembangan Berikutnya
-1. **Automated Testing:** Telah tersedia unit test untuk `CloudBackupCryptoTest`, `KnowledgeGraphModelsTest`, `BehavioralSignalSyncTest`, `SimilarityBenchmarkTest`, `SseTagParserTest`, dan `RemSkillRegistryTest` — kandidat prioritas berikutnya adalah unit test untuk `CuciMoney` saldo/realisasi wishlist, `LinkkuCrypto`, dan migrasi Room (`MigrationTestHelper`).
+1. **Automated Testing:** Telah tersedia unit test untuk `CloudBackupCryptoTest`, `KnowledgeGraphModelsTest`, `BehavioralSignalSyncTest`, `SimilarityBenchmarkTest`, `SseTagParserTest`, `RemSkillRegistryTest`, `ProactiveEvaluatorTest`, `HesychCryptoTest`, `HesychTotpTest`, `HesychPasswordGeneratorTest`, `HesychHealthTest`, `HesychBreachTest`, dan `HesychBackupCodecTest` — kandidat prioritas berikutnya adalah unit test untuk `CuciMoney` saldo/realisasi wishlist, `LinkkuCrypto`, dan migrasi Room (`MigrationTestHelper`).
 2. **Modularisasi `AsistenViewModel.kt`:** Ekosistem ZIP sudah dipisahkan ke `EcosystemBackupRepository`; memecah orkestrasi AI, prompt builder, tag executor, dan action 5 sub-app menjadi use-case per modul akan meningkatkan keterbacaan dan testability.
 3. **Voice Interaction Dua Arah & TTS Fallback Sistem:** Menambah mode percakapan hands-free (STT mic kontinu) serta opsi Android `TextToSpeech` lokal sebagai opsi tambahan di luar Fish Audio & voice klip bawaan.
 4. **Pembersihan Legacy:** Menghapus parameter `API_BASE_URL` yang sudah tidak terpakai (`@Suppress("unused")`) di client jaringan Android.
