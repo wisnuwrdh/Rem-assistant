@@ -28,7 +28,10 @@ import androidx.core.content.ContextCompat
 import com.ecosystemku.assistant.MainActivity
 import com.ecosystemku.assistant.R
 import com.ecosystemku.assistant.data.local.AssistantDatabase
+import com.ecosystemku.assistant.data.local.DailyOsHabitEntity
+import com.ecosystemku.assistant.data.local.DailyOsTodoEntity
 import java.text.SimpleDateFormat
+import java.time.LocalDate
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
@@ -260,8 +263,8 @@ object DailyOsNotificationHelper {
             requestCode = REQ_TODO,
             enabled = todoEnabled,
             timeStr = todoTime,
-            title = "Rem · Daily OS",
-            body = "$name, masih ada daftar tugas hari ini yang menunggu diselesaikan.",
+            title = "Rem · Pengingat To-Do",
+            body = "$name, masih ada daftar tugas To-Do yang menunggu diselesaikan.",
             launchAction = ACTION_OPEN_DAILYOS
         )
     }
@@ -515,6 +518,47 @@ object DailyOsNotificationHelper {
             out
         }.getOrNull()
     }
+
+    /**
+     * Resolves the notification body for scheduled Daily OS reminders, or returns null
+     * when the notification should be suppressed (no pending todos / no incomplete scheduled habits).
+     */
+    internal fun resolveScheduledReminderBody(
+        requestCode: Int,
+        profileName: String,
+        habits: List<DailyOsHabitEntity>,
+        todos: List<DailyOsTodoEntity>,
+        today: LocalDate = LocalDate.now()
+    ): String? {
+        val name = profileName.trim().ifEmpty { "Tuan" }
+        return when (requestCode) {
+            REQ_TODO -> {
+                val pendingTodos = todos.count { !it.done }
+                if (pendingTodos > 0) {
+                    "$name, masih ada $pendingTodos tugas To-Do yang belum selesai. Mau Rem bantu atur sekarang?"
+                } else {
+                    null
+                }
+            }
+
+            REQ_HABIT -> {
+                val scheduledToday = habits.filter {
+                    !it.archived && ProactiveEvaluator.isHabitScheduled(it, today)
+                }
+                if (scheduledToday.isEmpty()) return null
+                val remainingHabits = scheduledToday.count { !ProactiveEvaluator.isHabitCompletedOnDate(it, today) }
+                if (remainingHabits <= 0) return null
+                val completedHabits = scheduledToday.size - remainingHabits
+                if (completedHabits > 0) {
+                    "$name, masih ada $remainingHabits dari ${scheduledToday.size} habit hari ini yang belum selesai. Yuk lanjutkan!"
+                } else {
+                    "$name, ada $remainingHabits habit terjadwal menunggumu hari ini. Yuk cek sebentar!"
+                }
+            }
+
+            else -> null
+        }
+    }
 }
 
 class DailyOsAlarmReceiver : BroadcastReceiver() {
@@ -569,21 +613,12 @@ class DailyOsAlarmReceiver : BroadcastReceiver() {
             CoroutineScope(Dispatchers.IO).launch {
                 try {
                     val dao = AssistantDatabase.getInstance(context.applicationContext).dailyOsDao()
-                    val resolvedBody = if (id == DailyOsNotificationHelper.REQ_TODO) {
-                        val pendingCount = dao.getAllTodos().count { !it.done }
-                        if (pendingCount > 0) {
-                            "$name, masih ada $pendingCount tugas hari ini yang belum selesai. Mau Rem bantu atur sekarang?"
-                        } else {
-                            "$name, semua tugas Daily OS sudah beres hari ini. Kerja bagus!"
-                        }
-                    } else {
-                        val activeHabits = dao.getAllHabits().count { !it.archived }
-                        if (activeHabits > 0) {
-                            "$name, ada $activeHabits habit aktif menunggumu hari ini. Yuk cek sebentar!"
-                        } else {
-                            rawBody
-                        }
-                    }
+                    val resolvedBody = DailyOsNotificationHelper.resolveScheduledReminderBody(
+                        requestCode = id,
+                        profileName = name,
+                        habits = dao.getAllHabits(),
+                        todos = dao.getAllTodos()
+                    ) ?: return@launch
                     DailyOsNotificationHelper.postNotification(
                         context = context,
                         notificationId = id,

@@ -409,7 +409,9 @@ fun AsistenScreen(
                                 color = TextPrimary,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.widthIn(max = 175.dp)
+                                modifier = Modifier
+                                    .weight(1f, fill = false)
+                                    .widthIn(max = 175.dp)
                             )
                             if (uiState.chatSessions.size > 1) {
                                 Text(
@@ -417,7 +419,9 @@ fun AsistenScreen(
                                     fontFamily = UiSans,
                                     fontSize = 10.5.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = AccentBlue
+                                    color = AccentBlue,
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
                         }

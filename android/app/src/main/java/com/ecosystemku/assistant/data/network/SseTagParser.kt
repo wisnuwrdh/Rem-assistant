@@ -285,6 +285,7 @@ object SseTagParser {
         val openApp: String? = null,
         val choices: ChatChoicesData? = null,
         val searchAction: SearchQueryAction? = null,
+        val searchActions: List<SearchQueryAction> = emptyList(),
         val memoryActions: List<MemoryChatAction> = emptyList(),
         val kgActions: List<KgChatAction> = emptyList(),
         val kronikActions: List<KronikChatAction> = emptyList(),
@@ -293,7 +294,17 @@ object SseTagParser {
         val idekuActions: List<IdekuChatAction> = emptyList(),
         val dailyOsActions: List<DailyOsChatAction> = emptyList(),
         val deviceActions: List<DeviceChatAction> = emptyList()
-    )
+    ) {
+        fun hasAnyWriteAction(): Boolean =
+            memoryActions.isNotEmpty() ||
+                kgActions.isNotEmpty() ||
+                kronikActions.isNotEmpty() ||
+                linkkuActions.isNotEmpty() ||
+                cuciActions.isNotEmpty() ||
+                idekuActions.isNotEmpty() ||
+                dailyOsActions.isNotEmpty() ||
+                deviceActions.isNotEmpty()
+    }
 
     fun parseFinal(rawText: String): ParsedFinal {
         val exprMatch = EXPR_REGEX.find(rawText)
@@ -302,7 +313,10 @@ object SseTagParser {
 
         val openApp = OPEN_REGEX.find(rawText)?.groupValues?.getOrNull(1)?.lowercase()
         val choices = CHOICES_REGEX.find(rawText)?.groupValues?.getOrNull(1)?.let { parseChoicesPayload(it) }
-        val searchAction = SEARCH_REGEX.find(rawText)?.groupValues?.getOrNull(1)?.let { parseSearchPayload(it) }
+        val searchActions = SEARCH_REGEX.findAll(rawText).mapNotNull { match ->
+            parseSearchPayload(match.groupValues.getOrNull(1).orEmpty())
+        }.take(5).toList()
+        val searchAction = searchActions.firstOrNull()
         val memoryActions = MEMORY_REGEX.findAll(rawText).mapNotNull { match ->
             parseMemoryPayload(match.groupValues.getOrNull(1).orEmpty())
         }.toList()
@@ -351,6 +365,7 @@ object SseTagParser {
             openApp = openApp,
             choices = choices,
             searchAction = searchAction,
+            searchActions = searchActions,
             memoryActions = memoryActions,
             kgActions = kgActions,
             kronikActions = kronikActions,
@@ -583,13 +598,15 @@ object SseTagParser {
                 // Mendukung juga tanpa direction eksplisit: [CUCI:ADD|25000|Kopi|...]
                 val p1 = parts.getOrNull(1).orEmpty()
                 val p1Lower = p1.lowercase()
-                val explicitDir = p1Lower in setOf("out", "in", "expense", "income", "keluar", "masuk")
+                val inDirections = setOf("in", "income", "masuk", "pemasukan", "duit masuk")
+                val outDirections = setOf("out", "expense", "keluar", "pengeluaran", "duit keluar")
+                val explicitDir = p1Lower in inDirections || p1Lower in outDirections
                 val direction = if (explicitDir) {
-                    if (p1Lower in setOf("in", "income", "masuk")) "in" else "out"
+                    if (p1Lower in inDirections) "in" else "out"
                 } else "out"
                 val offset = if (explicitDir) 1 else 0
                 val rawAmt = parts.getOrNull(1 + offset).orEmpty()
-                val amount = rawAmt.replace(Regex("""[^0-9]"""), "").toLongOrNull() ?: return null
+                val amount = parseAmountRupiah(rawAmt) ?: return null
                 if (amount <= 0L) return null
                 val title = parts.getOrNull(2 + offset).orEmpty()
                 val categoryName = parts.getOrNull(3 + offset).orEmpty()
@@ -616,12 +633,11 @@ object SseTagParser {
                 // [CUCI:SAVE|nama_wishlist|nominal|akun_sumber_opsional|buku_opsional]
                 val p1 = parts.getOrNull(1).orEmpty()
                 val p2 = parts.getOrNull(2).orEmpty()
-                val p1Digits = p1.replace(Regex("""[^0-9]"""), "")
-                val p2Digits = p2.replace(Regex("""[^0-9]"""), "")
-                val flipped = p1Digits.isNotEmpty() && p1.all { it.isDigit() || it == '.' || it == ',' } && p2.any { it.isLetter() }
+                val p1Amt = parseAmountRupiah(p1)
+                val p2Amt = parseAmountRupiah(p2)
+                val flipped = p1Amt != null && p2Amt == null && p2.any { it.isLetter() }
                 val wishName = (if (flipped) p2 else p1).trim()
-                val amtRaw = if (flipped) p1Digits else p2Digits
-                val amount = amtRaw.toLongOrNull() ?: return null
+                val amount = (if (flipped) p1Amt else p2Amt) ?: return null
                 if (wishName.isBlank() || amount <= 0L) return null
                 val accName = parts.getOrNull(3).orEmpty().trim()
                 val bookName = parts.getOrNull(4).orEmpty().trim()
@@ -638,10 +654,10 @@ object SseTagParser {
                 if (wishName.isBlank()) return null
                 val p2 = parts.getOrNull(2).orEmpty().trim()
                 val p3 = parts.getOrNull(3).orEmpty().trim()
-                val p2IsNum = p2.isNotEmpty() && p2.all { it.isDigit() || it == '.' || it == ',' }
+                val p2Amt = parseAmountRupiah(p2)
+                val p2IsNum = p2Amt != null
                 val accountName = if (p2IsNum) p3 else p2
-                val amtRaw = (if (p2IsNum) p2 else p3).replace(Regex("""[^0-9]"""), "")
-                val paidAmount = amtRaw.toLongOrNull()?.coerceAtLeast(0L) ?: 0L
+                val paidAmount = (if (p2IsNum) p2Amt else parseAmountRupiah(p3))?.coerceAtLeast(0L) ?: 0L
                 val bookName = parts.getOrNull(4).orEmpty().trim()
                 CuciChatAction.RealizeWishlist(
                     wishlistQuery = wishName,
@@ -656,7 +672,7 @@ object SseTagParser {
                 if (target.isBlank()) return null
                 val rawAmt = parts.getOrNull(2).orEmpty().trim()
                 val parsedAmt = if (rawAmt.isNotBlank()) {
-                    rawAmt.replace(Regex("""[^0-9]"""), "").toLongOrNull()?.takeIf { it > 0L }
+                    parseAmountRupiah(rawAmt)?.takeIf { it > 0L }
                 } else null
                 val newTitle = parts.getOrNull(3).orEmpty().trim()
                 val newCategory = parts.getOrNull(4).orEmpty().trim()
@@ -680,6 +696,50 @@ object SseTagParser {
             }
             else -> null
         }
+    }
+
+    internal fun parseAmountRupiah(raw: String): Long? {
+        val cleaned = raw.trim().lowercase()
+            .replace(Regex("""^rp\.?\s*"""), "")
+            .replace("idr", "")
+            .trim()
+        if (cleaned.isEmpty()) return null
+
+        val suffixMatch = Regex("""^([0-9][0-9.,]*)\s*(jt|juta|rb|ribu|k)$""").matchEntire(cleaned)
+        if (suffixMatch != null) {
+            val numToken = suffixMatch.groupValues[1]
+            val suffix = suffixMatch.groupValues[2]
+            val multiplier = if (suffix == "jt" || suffix == "juta") 1_000_000.0 else 1_000.0
+            val normalizedNum = when {
+                numToken.contains(',') && numToken.contains('.') ->
+                    numToken.replace(".", "").replace(',', '.')
+                numToken.contains(',') -> {
+                    val afterComma = numToken.substringAfterLast(',')
+                    if (afterComma.length == 3 && numToken.count { it == ',' } >= 1) {
+                        numToken.replace(",", "")
+                    } else {
+                        numToken.replace(',', '.')
+                    }
+                }
+                numToken.contains('.') -> {
+                    val afterDot = numToken.substringAfterLast('.')
+                    if (afterDot.length == 3 && numToken.count { it == '.' } >= 1) {
+                        numToken.replace(".", "")
+                    } else {
+                        numToken
+                    }
+                }
+                else -> numToken
+            }
+            val d = normalizedNum.toDoubleOrNull() ?: return null
+            val result = kotlin.math.round(d * multiplier).toLong()
+            return result.takeIf { it > 0L }
+        }
+
+        if (cleaned.any { it.isLetter() }) return null
+        val withoutCents = cleaned.replace(Regex("""[.,]00$"""), "")
+        val digits = withoutCents.replace(Regex("""[^0-9]"""), "")
+        return digits.toLongOrNull()?.takeIf { it > 0L }
     }
 
     private fun normalizeCuciDate(raw: String): String {
@@ -906,12 +966,12 @@ object SseTagParser {
         val isStructured: Boolean = false
     )
 
-    fun parseCuciSearchQuery(rawQuery: String): CuciSearchFilter {
+    fun parseCuciSearchQuery(rawQuery: String, defaultYear: Int = java.time.LocalDate.now().year): CuciSearchFilter {
         val trimmed = rawQuery.trim()
         if (trimmed.isEmpty()) return CuciSearchFilter()
         val keyRegex = Regex("""(?:^|[;|\s])(book|buku|month|bulan|from|dari|to|sampai|cat|kategori|acc|akun|dir|arah|q|query)=""", RegexOption.IGNORE_CASE)
         if (!keyRegex.containsMatchIn(trimmed)) {
-            return CuciSearchFilter(query = trimmed, isStructured = false)
+            return parseNaturalCuciSearch(trimmed, defaultYear)
         }
         var book = ""
         var month = ""
@@ -934,9 +994,18 @@ object SseTagParser {
             if (v.isEmpty()) continue
             when (k) {
                 "book", "buku" -> book = v
-                "month", "bulan" -> if (Regex("""^\d{4}-\d{2}$""").matches(v)) month = v
-                "from", "dari" -> fromDate = normalizeCuciDate(v)
-                "to", "sampai" -> toDate = normalizeCuciDate(v)
+                "month", "bulan" -> {
+                    val rangeParts = splitCuciRangeValue(v)
+                    if (rangeParts != null) {
+                        fromDate = normalizeCuciRangeBound(rangeParts.first, isEnd = false, defaultYear)
+                        toDate = normalizeCuciRangeBound(rangeParts.second, isEnd = true, defaultYear)
+                    } else {
+                        val ym = resolveYearMonthToken(v, defaultYear)
+                        if (ym != null) month = ym.toString()
+                    }
+                }
+                "from", "dari" -> fromDate = normalizeCuciRangeBound(v, isEnd = false, defaultYear)
+                "to", "sampai" -> toDate = normalizeCuciRangeBound(v, isEnd = true, defaultYear)
                 "cat", "kategori" -> category = v
                 "acc", "akun" -> account = v
                 "dir", "arah" -> {
@@ -962,6 +1031,118 @@ object SseTagParser {
             query = freeQueries.joinToString(" ").trim(),
             isStructured = true
         )
+    }
+
+    private fun parseNaturalCuciSearch(trimmed: String, defaultYear: Int): CuciSearchFilter {
+        val lower = trimmed.lowercase()
+        val yearInText = Regex("""\b(20\d{2})\b""").find(lower)?.groupValues?.getOrNull(1)?.toIntOrNull()
+        val activeYear = yearInText ?: defaultYear
+
+        val monthMatches = mutableListOf<Pair<IntRange, java.time.YearMonth>>()
+        Regex("""\b(20\d{2})-(\d{2})\b""").findAll(lower).forEach { m ->
+            val y = m.groupValues[1].toIntOrNull() ?: return@forEach
+            val mo = m.groupValues[2].toIntOrNull() ?: return@forEach
+            if (mo in 1..12) {
+                monthMatches.add(m.range to java.time.YearMonth.of(y, mo))
+            }
+        }
+        MONTH_NAME_REGEX.findAll(lower).forEach { m ->
+            val mo = monthNumberFromName(m.value) ?: return@forEach
+            val hasYearAttached = monthMatches.any { it.first.contains(m.range.first) }
+            if (!hasYearAttached) {
+                monthMatches.add(m.range to java.time.YearMonth.of(activeYear, mo))
+            }
+        }
+
+        val hasIn = Regex("""\b(pemasukan|income|duit masuk|masuk)\b""").containsMatchIn(lower)
+        val hasOut = Regex("""\b(pengeluaran|expense|duit keluar|keluar)\b""").containsMatchIn(lower)
+        val direction = when {
+            hasIn && !hasOut -> "in"
+            hasOut && !hasIn -> "out"
+            else -> ""
+        }
+
+        if (monthMatches.isEmpty() && direction.isEmpty()) {
+            return CuciSearchFilter(query = trimmed, isStructured = false)
+        }
+
+        val sortedMonths = monthMatches.sortedBy { it.first.first }.map { it.second }
+        val (month, fromDate, toDate) = when {
+            sortedMonths.size >= 2 -> {
+                val minYm = sortedMonths.minOrNull()!!
+                val maxYm = sortedMonths.maxOrNull()!!
+                Triple("", minYm.atDay(1).toString(), maxYm.atEndOfMonth().toString())
+            }
+            sortedMonths.size == 1 -> Triple(sortedMonths.first().toString(), "", "")
+            else -> Triple("", "", "")
+        }
+
+        val leftover = lower
+            .replace(Regex("""\b20\d{2}-\d{2}\b"""), " ")
+            .replace(MONTH_NAME_REGEX, " ")
+            .replace(Regex("""\b20\d{2}\b"""), " ")
+            .replace(Regex("""\b(pemasukan|pengeluaran|income|expense|masuk|keluar|bulan|dari|sampai|hingga|ke|s/d|sd|transaksi|uang|data|semua|total|berapa)\b"""), " ")
+            .replace(Regex("""[-–—.,;|]+"""), " ")
+            .replace(Regex("""\s+"""), " ")
+            .trim()
+
+        return CuciSearchFilter(
+            month = month,
+            fromDate = fromDate,
+            toDate = toDate,
+            direction = direction,
+            query = leftover,
+            isStructured = true
+        )
+    }
+
+    private fun splitCuciRangeValue(v: String): Pair<String, String>? {
+        val m = Regex("""^(.+?)\s*(?:\.\.|sampai|hingga|s/d|sd|\u2013|\u2014)\s*(.+)$""", RegexOption.IGNORE_CASE).matchEntire(v.trim())
+            ?: Regex("""^(20\d{2}-\d{2}|[a-z]+(?:\s+20\d{2})?)\s*-\s*(20\d{2}-\d{2}|[a-z]+(?:\s+20\d{2})?)$""", RegexOption.IGNORE_CASE).matchEntire(v.trim())
+            ?: return null
+        return m.groupValues[1].trim() to m.groupValues[2].trim()
+    }
+
+    private fun normalizeCuciRangeBound(raw: String, isEnd: Boolean, defaultYear: Int): String {
+        val exact = normalizeCuciDate(raw)
+        if (exact.isNotEmpty()) return exact
+        val ym = resolveYearMonthToken(raw, defaultYear) ?: return ""
+        return if (isEnd) ym.atEndOfMonth().toString() else ym.atDay(1).toString()
+    }
+
+    private fun resolveYearMonthToken(raw: String, defaultYear: Int): java.time.YearMonth? {
+        val clean = raw.trim().lowercase()
+        val ymMatch = Regex("""^(20\d{2})-(\d{1,2})$""").matchEntire(clean)
+        if (ymMatch != null) {
+            val y = ymMatch.groupValues[1].toIntOrNull() ?: return null
+            val m = ymMatch.groupValues[2].toIntOrNull() ?: return null
+            return if (m in 1..12) java.time.YearMonth.of(y, m) else null
+        }
+        val nameMatch = MONTH_NAME_REGEX.find(clean) ?: return null
+        val mo = monthNumberFromName(nameMatch.value) ?: return null
+        val y = Regex("""\b(20\d{2})\b""").find(clean)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: defaultYear
+        return java.time.YearMonth.of(y, mo)
+    }
+
+    private val MONTH_NAME_REGEX = Regex(
+        """\b(januari|jan|februari|feb|maret|mar|april|apr|mei|may|juni|jun|juli|jul|agustus|agu|ags|aug|september|sept|sep|oktober|okt|oct|november|nov|desember|des|dec)\b""",
+        RegexOption.IGNORE_CASE
+    )
+
+    private fun monthNumberFromName(name: String): Int? = when (name.trim().lowercase()) {
+        "januari", "jan" -> 1
+        "februari", "feb" -> 2
+        "maret", "mar" -> 3
+        "april", "apr" -> 4
+        "mei", "may" -> 5
+        "juni", "jun" -> 6
+        "juli", "jul" -> 7
+        "agustus", "agu", "ags", "aug" -> 8
+        "september", "sept", "sep" -> 9
+        "oktober", "okt", "oct" -> 10
+        "november", "nov" -> 11
+        "desember", "des", "dec" -> 12
+        else -> null
     }
 
     data class IdekuSearchFilter(
@@ -1203,6 +1384,38 @@ object SseTagParser {
         return appTerms.any { term ->
             Regex("""\b${Regex.escape(term)}\b""").containsMatchIn(msg)
         }
+    }
+
+    private val NEGATED_OR_OFFER_ACTION_REGEX = Regex(
+        """\b(?:belum|gagal|tidak|tak|nggak|gak|gk|jangan|mau|ingin|perlu|boleh|akan)\s+(?:rem\s+|ku\s+)?(?:catat|mencatat|dicatat|tercatat|simpan|menyimpan|disimpan|tersimpan|masukkan|memasukkan|dimasukkan|tambahkan|menambahkan|ditambahkan|ubah|mengubah|diubah|perbarui|memperbarui|diperbarui|hapus|menghapus|dihapus|centang|mencentang|dicentang|arsipkan|mengarsipkan|diarsipkan|setor|menyetor|disetor|pasang|memasang|dipasang)\b"""
+    )
+
+    private val CLAIMED_ACTION_REGEX = Regex(
+        """\b(?:sudah|udah|telah|berhasil)\s+(?:rem\s+)?(?:catat|catatkan|mencatat|dicatat|tercatat|simpan|simpankan|menyimpan|disimpan|tersimpan|masukkan|memasukkan|dimasukkan|tambahkan|menambahkan|ditambahkan|perbarui|memperbarui|diperbarui|update|diupdate|ubah|mengubah|diubah|edit|diedit|hapus|menghapus|dihapus|centang|mencentang|dicentang|tandai\s+selesai|ditandai\s+selesai|arsipkan|mengarsipkan|diarsipkan|setor|menyetor|disetor|tabung|menabung|ditabung|realisasikan|merealisasikan|direalisasikan|pasang|memasang|dipasang|jadwalkan|menjadwalkan|dijadwalkan)\b|\b(?:sudah|udah|telah)\s+masuk\s+ke\s+(?:buku|akun|jurnal|kronik|linkku|ideku|daily\s*os|cucimoney|wishlist|kalender)\b"""
+    )
+
+    /**
+     * Mendeteksi apakah teks respons asisten mengklaim sudah mencatat/menyimpan/mengubah data.
+     */
+    fun claimsActionPerformed(cleanText: String): Boolean {
+        val lower = cleanText.trim().lowercase()
+        if (lower.isEmpty()) return false
+        val stripped = lower.replace(NEGATED_OR_OFFER_ACTION_REGEX, " ")
+        return CLAIMED_ACTION_REGEX.containsMatchIn(stripped)
+    }
+
+    private val PENDING_SEARCH_REGEX = Regex(
+        """\b(?:bentar|sebentar|tunggu|tunggu\s+sebentar|tunggu\s+dulu)\b.*\b(?:rem\s+)?(?:cari|carikan|mencari|cek|ngecek|periksa|memeriksa|lihat|melihat)\b|\b(?:rem|aku|saya)\s+(?:cari|carikan|cek|periksa|lihat)\s+dulu\b|\bsedang\s+(?:rem\s+)?(?:cari|mencari|cek|mengecek|memeriksa)\b"""
+    )
+
+    /**
+     * Mendeteksi respons menggantung seperti "Bentar Tuan, Rem cari dulu" tanpa hasil/tag [SEARCH:...].
+     */
+    fun claimsPendingSearch(cleanText: String): Boolean {
+        val lower = cleanText.trim().lowercase()
+        if (lower.isEmpty() || lower.length > 220) return false
+        if (lower.contains("rp") || Regex("""\b\d{3,}\b""").containsMatchIn(lower)) return false
+        return PENDING_SEARCH_REGEX.containsMatchIn(lower)
     }
 
     fun splitForTts(text: String, minLen: Int = 12, maxChunks: Int = 4): List<String> {

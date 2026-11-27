@@ -435,11 +435,27 @@ object ProactiveEvaluator {
         )
     }
 
-    private fun isHabitScheduled(habit: DailyOsHabitEntity, date: LocalDate): Boolean {
+    internal fun isHabitScheduled(habit: DailyOsHabitEntity, date: LocalDate): Boolean {
         val activeDays = parseActiveDays(habit.activeDaysJson)
         if (activeDays.isEmpty()) return true
         val dow = if (date.dayOfWeek == DayOfWeek.SUNDAY) 0 else date.dayOfWeek.value
         return dow in activeDays
+    }
+
+    internal fun isHabitCompletedOnDate(habit: DailyOsHabitEntity, date: LocalDate): Boolean {
+        val history = parseHabitHistoryDates(habit.historyJson)
+        val doneCount = history[date.toString()]?.size ?: 0
+        if (doneCount == 0) return false
+        val subTaskCount = parseHabitSubTaskCount(habit.subTasksJson)
+        val targetCount = if (subTaskCount > 0) subTaskCount else 1
+        return doneCount >= targetCount
+    }
+
+    private fun parseHabitSubTaskCount(raw: String): Int {
+        if (raw.isBlank() || raw == "[]") return 0
+        return runCatching {
+            (json.parseToJsonElement(raw) as? JsonArray)?.size ?: 0
+        }.getOrDefault(0)
     }
 
     private fun parseActiveDays(raw: String): List<Int> {
@@ -449,7 +465,7 @@ object ProactiveEvaluator {
         }.getOrDefault(emptyList())
     }
 
-    private fun parseHabitHistoryDates(raw: String): Map<String, JsonArray> {
+    internal fun parseHabitHistoryDates(raw: String): Map<String, JsonArray> {
         if (raw.isBlank() || raw == "{}") return emptyMap()
         return runCatching {
             val obj = json.parseToJsonElement(raw).jsonObject

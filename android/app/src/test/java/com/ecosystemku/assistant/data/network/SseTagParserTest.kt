@@ -140,4 +140,79 @@ class SseTagParserTest {
         assertEquals("App Catatan v1", idekuMerge.sourceTarget)
         assertEquals("App Catatan", idekuMerge.destinationTarget)
     }
+
+    @Test
+    fun cuciAddSupportsPemasukanAliasAndShorthandAmounts() {
+        val parsed = SseTagParser.parseFinal(
+            "Sudah Rem catat pemasukan. [CUCI:ADD|pemasukan|50rb|Bonus Proyek|Bonus|Dana Cash|Personal] [EXPR:smile]"
+        )
+        assertTrue(parsed.hasAnyWriteAction())
+        assertEquals(1, parsed.cuciActions.size)
+        val add = parsed.cuciActions.first() as SseTagParser.CuciChatAction.AddTransaction
+        assertEquals("in", add.direction)
+        assertEquals(50_000L, add.amount)
+        assertEquals("Bonus Proyek", add.title)
+        assertEquals("Personal", add.bookName)
+
+        assertEquals(1_500_000L, SseTagParser.parseAmountRupiah("1.5jt"))
+        assertEquals(50_000L, SseTagParser.parseAmountRupiah("Rp 50.000,00"))
+        assertNull(SseTagParser.parseAmountRupiah("Bank 1"))
+    }
+
+    @Test
+    fun claimsActionPerformedDetectsUnbackedPersistenceClaimsWithoutFalsePositives() {
+        assertTrue(SseTagParser.claimsActionPerformed("Sudah Rem catat pemasukan Rp50.000 ke buku Personal."))
+        assertTrue(SseTagParser.claimsActionPerformed("Catatan sudah tersimpan di Kronik ya."))
+        assertTrue(SseTagParser.claimsActionPerformed("Oke, sudah masuk ke buku Personal."))
+        assertTrue(SseTagParser.claimsActionPerformed("Sudah Rem catat. Mau Rem catat yang lain?"))
+
+        assertFalse(SseTagParser.claimsActionPerformed("Transaksi itu belum dicatat di buku Personal."))
+        assertFalse(SseTagParser.claimsActionPerformed("Mau Rem catat ke buku Personal sekarang?"))
+        assertFalse(SseTagParser.claimsActionPerformed("Rem ikut lega dengar itu, Tuan."))
+
+        val noWrite = SseTagParser.parseFinal("Sudah Rem catat pemasukan. [EXPR:smile]")
+        assertFalse(noWrite.hasAnyWriteAction())
+        assertTrue(SseTagParser.claimsActionPerformed(noWrite.cleanText))
+    }
+
+    @Test
+    fun cuciSearchSupportsYearMonthRangesAndNaturalIndonesianMonths() {
+        val structured = SseTagParser.parseCuciSearchQuery("book=Personal;from=2026-07;to=2026-11;dir=in", defaultYear = 2026)
+        assertTrue(structured.isStructured)
+        assertEquals("Personal", structured.book)
+        assertEquals("2026-07-01", structured.fromDate)
+        assertEquals("2026-11-30", structured.toDate)
+        assertEquals("in", structured.direction)
+
+        val rangeMonth = SseTagParser.parseCuciSearchQuery("month=2026-07..2026-11;dir=in", defaultYear = 2026)
+        assertTrue(rangeMonth.isStructured)
+        assertEquals("2026-07-01", rangeMonth.fromDate)
+        assertEquals("2026-11-30", rangeMonth.toDate)
+
+        val natural = SseTagParser.parseCuciSearchQuery("pemasukan juli sampai november", defaultYear = 2026)
+        assertTrue(natural.isStructured)
+        assertEquals("in", natural.direction)
+        assertEquals("2026-07-01", natural.fromDate)
+        assertEquals("2026-11-30", natural.toDate)
+        assertEquals("", natural.query)
+
+        val plain = SseTagParser.parseCuciSearchQuery("kopi starbucks", defaultYear = 2026)
+        assertFalse(plain.isStructured)
+        assertEquals("kopi starbucks", plain.query)
+    }
+
+    @Test
+    fun multipleSearchTagsAndStalledSearchAreDetected() {
+        val multi = SseTagParser.parseFinal(
+            "[SEARCH:cuci|month=2026-07;dir=in] [SEARCH:cuci|month=2026-08;dir=in]"
+        )
+        assertEquals(2, multi.searchActions.size)
+        assertEquals("cuci", multi.searchActions[0].scope)
+        assertEquals("month=2026-07;dir=in", multi.searchActions[0].query)
+        assertEquals("month=2026-08;dir=in", multi.searchActions[1].query)
+
+        assertTrue(SseTagParser.claimsPendingSearch("Bentar Tuan, Rem cari dulu ya."))
+        assertTrue(SseTagParser.claimsPendingSearch("Sebentar Tuan, Rem cek dulu datanya."))
+        assertFalse(SseTagParser.claimsPendingSearch("Sebentar, Rem cek totalnya Rp500.000."))
+    }
 }

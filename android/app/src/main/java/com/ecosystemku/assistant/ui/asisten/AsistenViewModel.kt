@@ -280,6 +280,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         Mood opsional yang valid: Fokus, Lelah, Terinspirasi, Berat, Stabil, Semangat, Kabur.
         Jika Tuan meminta mengubah judul, isi, mood (isi '-' untuk hapus mood), atau tanggal catatan Kronik yang ada (gunakan id jika ada atau judul/tanggal):
         [KRONIK:EDIT|id_atau_kata_kunci|judul_baru_atau_kosong|isi_baru_atau_kosong|mood_baru_atau_kosong|tanggal_yyyy-mm-dd_atau_kosong]
+        ATURAN SUDUT PANDANG JURNAL & CATATAN PERSONAL: Kronik adalah jurnal pribadi milik pengguna. Saat mengisi judul_singkat dan isi_jurnal_natural pada [KRONIK:ADD] atau [KRONIK:EDIT] (serta judul/catatan di Daily OS, IdeKu, dan CuciMoney+), WAJIB tulis dari sudut pandang orang pertama pengguna ("aku" atau kalimat langsung, mis. "Hari ini aku rasanya bete"), JANGAN pernah menulis kata "Tuan", "Nona", atau "Rem" di dalam isi jurnal/catatan tersebut!
         Jika Tuan meminta menghapus, mengarsipkan, atau menggabungkan catatan Kronik, sisipkan [KRONIK:DEL|id_atau_kata_kunci], [KRONIK:ARCHIVE|id_atau_kata_kunci], atau [KRONIK:MERGE|sumber|tujuan]. Jika target Kronik belum ada di ringkasan, panggil [SEARCH:kronik|...] dulu untuk mendapatkan id pasti.
         Jika Tuan membagikan tautan/URL atau meminta menyimpan bookmark ke LinkKu, sisipkan:
         [LINKKU:ADD|url_lengkap|judul_singkat|catatan_opsional|kategori_opsional|tag1,tag2]
@@ -316,6 +317,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         Jika Tuan meminta menghapus to-do, sisipkan:
         [DAILYOS:DEL_TODO|id_atau_kata_kunci]
         Jika Tuan meminta mengarsipkan atau menghapus habit, sisipkan [DAILYOS:ARCHIVE_HABIT|id_atau_kata_kunci] atau [DAILYOS:DEL_HABIT|id_atau_kata_kunci].
+        ATURAN WAJIB TAG AKSI: Setiap kali Tuan meminta mencatat, menyimpan, mengubah, mencentang, atau menghapus data (di CuciMoney+, Kronik, LinkKu, IdeKu, Daily OS, Memori, Otak Digital, atau Perangkat), kamu WAJIB menyertakan tag aksi tersembunyi yang sesuai di respons yang sama — termasuk untuk perintah kedua, ketiga, dan seterusnya walau riwayat obrolan sebelumnya tidak menampilkan tag tersembunyi (karena sistem menghapus tag setelah dieksekusi). DILARANG keras mengatakan "sudah Rem catat/simpan/ubah/hapus" tanpa menyertakan tag aksinya!
         Aturan [OPEN:app] (KETAT): JANGAN pernah menyisipkan [OPEN:kronik], [OPEN:linkku], [OPEN:cucimoney], [OPEN:ideku], atau [OPEN:dailyos] saat Tuan hanya membahas, membaca, bertanya isi, menganalisis, atau mencatat data via chat. Sisipkan [OPEN:nama_app] sebelum [EXPR:...] HANYA jika Tuan secara eksplisit menyuruh membuka atau berpindah ke layar aplikasi tersebut (contoh: "buka Kronik", "bukain CuciMoney+", "pindah ke Daily OS").
 
         ## Fungsi Perangkat Android
@@ -330,7 +332,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         Rem juga bisa membaca jadwal kalender perangkat, status baterai, lokasi perkiraan, dan daftar pengingat aktif lewat [SEARCH:device|...].
 
         ## Pencarian Arsip Lokal & Info Perangkat (On-Demand Search)
-        Ringkasan modul di prompt hanya menampilkan item terbaru/sebagian. Jika Tuan menanyakan arsip lama, daftar lengkap ide/wishlist, transaksi bulan/tanggal/kategori tertentu (mis. 2026-10), jurnal lama, bookmark yang tidak muncul di ringkasan, riwayat habit, obrolan dari sesi lalu, relasi/pola pikir di Knowledge Graph, atau kondisi perangkat (baterai, jadwal kalender harian/mingguan, lokasi perkiraan, daftar pengingat aktif), JANGAN menebak dan JANGAN menyuruh Tuan mengetik ulang/mengingat daftar yang ada di aplikasi. Langsung keluarkan tag pencarian HANYA satu baris: [SEARCH:scope|kata_kunci] (scope valid: kronik, linkku, cuci, ideku, dailyos, kg, device, chat, all; untuk scope device, isi query dengan battery, calendar, calendar YYYY-MM-DD, location, atau reminders; untuk scope kg, cari simpul/relasi kebiasaan, pola pikir, nilai hidup, atau tujuan di Knowledge Graph). Khusus scope ideku, gunakan format seperti [SEARCH:ideku|type=Idea;status=Belum] atau [SEARCH:ideku|Idea Belum] atau [SEARCH:ideku|Wishlist] (parameter: type, status, pri, cat, q). Khusus scope cuci, gunakan format key=value dipisah titik koma, misalnya [SEARCH:cuci|book=Personal;month=2026-10;cat=Makan;dir=out] (parameter: book, month, from, to, cat, acc, dir, q). Sistem akan mengambil & menghitung data akurat dari database/perangkat agar Rem bisa menjawab dengan tepat.
+        Ringkasan modul di prompt hanya menampilkan item terbaru/sebagian. Jika Tuan menanyakan arsip lama, daftar lengkap ide/wishlist, transaksi bulan/rentang beberapa bulan/tanggal/kategori tertentu (mis. 2026-10 atau Juli sampai November), jurnal lama, bookmark yang tidak muncul di ringkasan, riwayat habit, obrolan dari sesi lalu, relasi/pola pikir di Knowledge Graph, atau kondisi perangkat (baterai, jadwal kalender harian/mingguan, lokasi perkiraan, daftar pengingat aktif), JANGAN menebak dan JANGAN menyuruh Tuan mengetik ulang/mengingat daftar yang ada di aplikasi. Langsung keluarkan tag pencarian HANYA satu baris tanpa kalimat pengisi seperti "Bentar Rem cari dulu": [SEARCH:scope|kata_kunci] (scope valid: kronik, linkku, cuci, ideku, dailyos, kg, device, chat, all; untuk scope device, isi query dengan battery, calendar, calendar YYYY-MM-DD, location, atau reminders; untuk scope kg, cari simpul/relasi kebiasaan, pola pikir, nilai hidup, atau tujuan di Knowledge Graph). Khusus scope ideku, gunakan format seperti [SEARCH:ideku|type=Idea;status=Belum] atau [SEARCH:ideku|Idea Belum] atau [SEARCH:ideku|Wishlist] (parameter: type, status, pri, cat, q). Khusus scope cuci, gunakan format key=value dipisah titik koma, misalnya [SEARCH:cuci|book=Personal;month=2026-10;cat=Makan;dir=out] atau untuk rentang beberapa bulan: [SEARCH:cuci|book=Personal;from=2026-07;to=2026-11;dir=in] (parameter: book, month, from, to, cat, acc, dir, q). DILARANG membalas "Bentar/Sebentar Rem cari dulu" tanpa tag [SEARCH:...]. Sistem akan mengambil & menghitung data akurat dari database/perangkat agar Rem bisa menjawab dengan tepat.
 
         ## Memori Personal & Otak Digital
         Jika Tuan secara eksplisit meminta Rem mengingat, memperbarui, mengarsipkan, menggabungkan, atau menonaktifkan informasi tertentu:
@@ -346,6 +348,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         - Pilihan tunggal (tap 1 langsung terkirim): [CHOICES:single|Opsi 1|Opsi 2|Opsi 3]
         - Pilihan ganda (bisa pilih lebih dari satu): [CHOICES:multi|Opsi 1|Opsi 2|Opsi 3]
         Aturan: maksimal 8 opsi singkat sesuai data nyata Tuan, dan gunakan HANYA jika jawaban berupa pertanyaan/tawaran memilih.
+        PENTING sudut pandang teks opsi [CHOICES:...]: setiap opsi adalah balasan yang akan dikirim OLEH PENGGUNA (sudut pandang orang pertama: gunakan "aku" atau kata kerja langsung, mis. "Aku tahan dulu" / "Catat ke Personal"). JANGAN pernah menulis nama "Rem" atau sapaan "Tuan"/"Nona" sebagai subjek di dalam teks opsi!
 
         ## Ekspresi Visual
         Sisipkan tepat satu tag [EXPR:...] di akhir setiap respons:
@@ -3496,15 +3499,17 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
             .map { ChatTurnDto(role = it.role, content = it.content) }
 
         val accumulatedSearch = StringBuilder()
+        var actionRetryCorrection: String? = null
         var parsedResult: SseTagParser.ParsedFinal? = null
         var finalDoneTts = ""
 
-        for (round in 0..2) {
+        for (round in 0..3) {
             val personalizedPrompt = buildPersonalizedPrompt(
                 sessionId = sessionId,
                 currentUserMsgId = sourceUserMsgId,
                 searchContextOverride = accumulatedSearch.toString().takeIf { it.isNotBlank() },
-                forbidMoreSearch = round >= 2
+                forbidMoreSearch = round >= 3,
+                actionRetryCorrection = actionRetryCorrection
             )
 
             val rawAcc = StringBuilder()
@@ -3551,14 +3556,40 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
 
             val fallbackRaw = SseTagParser.visibleTextDuringStream(rawAcc.toString())
             val candidateParsed = SseTagParser.parseFinal(finalDoneText.ifBlank { fallbackRaw })
-            val searchAct = candidateParsed.searchAction
-            if (searchAct != null && round < 2) {
-                val queryLabel = if (searchAct.query.isNotBlank()) ": ${searchAct.query}" else ""
-                _streamingText.value = "Mencari arsip ${searchAct.scope}$queryLabel..."
+            val searchActs = candidateParsed.searchActions
+            if (searchActs.isNotEmpty() && round < 3) {
+                val firstAct = searchActs.first()
+                val queryLabel = if (firstAct.query.isNotBlank()) ": ${firstAct.query}" else ""
+                _streamingText.value = "Mencari arsip ${firstAct.scope}$queryLabel..."
                 audioManager.playBundledAssetClip("ack_2.mp3")
-                val searchOutput = executeLocalArchiveSearch(searchAct.scope, searchAct.query)
-                accumulatedSearch.append("### Pencarian [${searchAct.scope} | \"${searchAct.query}\"]\n")
-                accumulatedSearch.append(searchOutput).append("\n\n")
+                searchActs.forEach { searchAct ->
+                    val searchOutput = executeLocalArchiveSearch(searchAct.scope, searchAct.query)
+                    accumulatedSearch.append("### Pencarian [${searchAct.scope} | \"${searchAct.query}\"]\n")
+                    accumulatedSearch.append(searchOutput).append("\n\n")
+                }
+                actionRetryCorrection = null
+                _streamingText.value = ""
+                continue
+            }
+
+            if (candidateParsed.choices == null &&
+                !candidateParsed.hasAnyWriteAction() &&
+                SseTagParser.claimsPendingSearch(candidateParsed.cleanText) &&
+                round < 3
+            ) {
+                actionRetryCorrection =
+                    "KOREKSI WAJIB: Jawabanmu hanya bilang 'bentar/cari dulu' tanpa mengeluarkan tag [SEARCH:...]. JANGAN menulis basa-basi menunggu. Jika butuh mencari data (mis. rentang bulan Juli-November), langsung keluarkan tag [SEARCH:cuci|from=2026-07;to=2026-11;dir=in] (atau scope lain yang sesuai) sekarang; jika data sudah ada di Hasil Pencarian Arsip Lokal di atas, langsung jawab lengkap."
+                _streamingText.value = ""
+                continue
+            }
+
+            if (candidateParsed.choices == null &&
+                !candidateParsed.hasAnyWriteAction() &&
+                SseTagParser.claimsActionPerformed(candidateParsed.cleanText) &&
+                round < 3
+            ) {
+                actionRetryCorrection =
+                    "KOREKSI WAJIB: Jawabanmu sebelumnya mengklaim sudah mencatat/menyimpan/mengubah data, tetapi TIDAK menyertakan tag aksi tersembunyi yang valid ([CUCI:...], [KRONIK:...], [LINKKU:...], [IDEKU:...], [DAILYOS:...], [MEMORY:...], [KG:...], atau [DEVICE:...]). Tanpa tag tersebut, database TIDAK berubah. Jika data sudah cukup, ulangi jawabanmu sekarang DENGAN menyertakan tag aksi yang benar dan lengkap; jika masih kurang detail, tanyakan klarifikasi tanpa mengaku sudah mencatat."
                 _streamingText.value = ""
                 continue
             }
@@ -3574,21 +3605,6 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         val choicesJson = ChatChoicesCodec.encode(parsed.choices)
         var didRealizeWishlist = false
         var didMutateModuleAction = false
-
-        if (replyText.isNotEmpty()) {
-            val replyTs = System.currentTimeMillis()
-            chatDao.insert(
-                ChatMessageEntity(
-                    sessionId = sessionId,
-                    role = "assistant",
-                    content = replyText,
-                    expressionTag = expr,
-                    createdAt = replyTs,
-                    choicesJson = choicesJson
-                )
-            )
-            chatDao.touchSession(sessionId, replyTs)
-        }
 
             if (parsed.memoryActions.isNotEmpty()) {
                 var memChanged = false
@@ -4410,6 +4426,38 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 }
             }
 
+            val finalReplyText = when {
+                replyText.isBlank() -> ""
+                parsed.hasAnyWriteAction() && !didMutateModuleAction -> {
+                    showBannerMessage("Target aksi tidak ditemukan — belum ada perubahan")
+                    "$replyText\n\n(Catatan sistem: target tidak ditemukan di database sehingga belum ada perubahan yang tersimpan.)"
+                }
+                !parsed.hasAnyWriteAction() && parsed.choices == null && SseTagParser.claimsActionPerformed(replyText) -> {
+                    showBannerMessage("Belum tersimpan ke database — silakan ulangi perintah")
+                    "$replyText\n\n(Catatan sistem: belum ada data yang tersimpan ke database karena perintah aksi belum terbaca. Coba ulangi dengan nominal atau detail yang jelas ya.)"
+                }
+                !parsed.hasAnyWriteAction() && parsed.choices == null && SseTagParser.claimsPendingSearch(replyText) -> {
+                    showBannerMessage("Pencarian belum selesai — coba tanyakan lebih spesifik")
+                    "$replyText\n\n(Catatan sistem: pencarian arsip belum menghasilkan jawaban akhir. Coba sebutkan nama buku, rentang bulan, atau kata kunci lebih spesifik ya.)"
+                }
+                else -> replyText
+            }
+
+            if (finalReplyText.isNotEmpty()) {
+                val replyTs = System.currentTimeMillis()
+                chatDao.insert(
+                    ChatMessageEntity(
+                        sessionId = sessionId,
+                        role = "assistant",
+                        content = finalReplyText,
+                        expressionTag = expr,
+                        createdAt = replyTs,
+                        choicesJson = choicesJson
+                    )
+                )
+                chatDao.touchSession(sessionId, replyTs)
+            }
+
             val lastUserMsg = recent.lastOrNull { it.role == "user" }?.content.orEmpty()
             val didOpenApp = parsed.openApp in setOf("kronik", "linkku", "cucimoney", "ideku", "dailyos") &&
                 SseTagParser.shouldAllowOpenApp(lastUserMsg, parsed.openApp.orEmpty())
@@ -4435,7 +4483,7 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 didOpenApp = didOpenApp,
                 isFirstTurn = isFirstTurnInSession
             )
-            val ttsTarget = finalDoneTts.ifBlank { replyText }
+            val ttsTarget = finalDoneTts.ifBlank { finalReplyText }
             if (ttsTarget.isNotBlank() || fallbackClip.isNotBlank()) {
                 audioManager.playTts(
                     text = ttsTarget,
@@ -4444,10 +4492,10 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 )
             }
 
-            if (_uiState.value.autoLearnMemory && replyText.isNotEmpty()) {
+            if (_uiState.value.autoLearnMemory && finalReplyText.isNotEmpty()) {
                 extractAndPersistMemories(sourceMessageId = sourceUserMsgId, sessionId = sessionId)
             }
-            if (replyText.isNotEmpty()) {
+            if (finalReplyText.isNotEmpty()) {
                 compactSessionIfNeeded(sessionId = sessionId)
             }
     }
@@ -4475,7 +4523,8 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
         sessionId: Long = _activeSessionId.value,
         currentUserMsgId: Long? = null,
         searchContextOverride: String? = null,
-        forbidMoreSearch: Boolean = false
+        forbidMoreSearch: Boolean = false,
+        actionRetryCorrection: String? = null
     ): String {
         val topMemories = userMemoryDao.getTopMemories(20)
         val latestSummaries = userMemoryDao.getLatestSummaries(3)
@@ -4547,13 +4596,34 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 }
             }
             val isKenaliAku = activeSession?.title?.contains("Kenali Aku", ignoreCase = true) == true
+            val userTurnsInSession = sessionMessages.count { it.role == "user" }
             if (isKenaliAku) {
-                append(
-                    "\n\n## Mode Aktif: Sesi Kenali Aku\n" +
-                        "Tujuan sesi ini adalah mengenal Tuan lebih dalam (aturan pengambilan keputusan/trade-off, pola pikir, prinsip hidup, kebiasaan, pemicu emosi, dan tujuan jangka panjang) untuk memperkaya Otak Digital Tuan. Ajukan HANYA SATU pertanyaan reflektif yang natural, hangat, dan spesifik per giliran (berdasarkan Peta Pengetahuan di atas; jika ada kebiasaan/prinsip lama yang mungkin bergeser, tanyakan apakah masih berlaku). Jika membantu, sertakan opsi cepat [CHOICES:single|...] yang relevan."
-                )
+                val userWantsConclusion = userTurnsInSession >= 2 && Regex(
+                    """\b(kesimpulan|simpulkan|rangkum|rangkuman|cukup|sudah cukup|akhiri|selesai sesi|stop)\b""",
+                    RegexOption.IGNORE_CASE
+                ).containsMatchIn(currentUserText)
+                val shouldConclude = userTurnsInSession >= 6 || userWantsConclusion
+                if (shouldConclude) {
+                    append(
+                        "\n\n## Mode Aktif: Sesi Kenali Aku — TAHAP KESIMPULAN AKHIR\n" +
+                            "Sesi wawancara telah mencapai akhir (giliran ke-$userTurnsInSession). " +
+                            "SEKARANG berikan KESIMPULAN AKHIR yang jelas, hangat, dan konkret tentang apa saja yang Rem pelajari dan simpulkan dari jawaban Tuan sepanjang sesi ini (aturan keputusan/trade-off, pola pikir, nilai utama, dan kebiasaan atau perubahan pola). " +
+                            "ATURAN KERAS TAHAP PENUTUP: DILARANG mengajukan pertanyaan wawancara baru dan JANGAN menyertakan tag [CHOICES:...]. Tutup dengan ringkasan padat + beri tahu bahwa poin-poin tersebut sudah disimpan ke Memori & Otak Digital (Tuan bisa mengoreksi jika ada yang kurang pas)."
+                    )
+                } else {
+                    val maxQuestions = 5
+                    val wrapUpHint = if (userTurnsInSession >= 4) {
+                        " Ini sudah mendekati akhir sesi; sertakan opsi terakhir seperti 'Cukup, buat kesimpulan sekarang' bila relevan."
+                    } else ""
+                    append(
+                        "\n\n## Mode Aktif: Sesi Kenali Aku — TAHAP WAWANCARA (Giliran $userTurnsInSession dari $maxQuestions)\n" +
+                            "Tujuan sesi ini adalah mengenal Tuan lebih dalam (aturan pengambilan keputusan/trade-off, pola pikir, prinsip hidup, kebiasaan, pemicu emosi, dan tujuan jangka panjang) untuk memperkaya Otak Digital Tuan. " +
+                            "Ajukan HANYA SATU pertanyaan reflektif yang natural, hangat, dan spesifik untuk giliran ini. " +
+                            "ANTI-PENGULANGAN (KETAT): Baca riwayat obrolan sesi ini, Memori Personal, dan Peta Pengetahuan di atas — JANGAN mengulang, memutar-mutar, atau menanyakan ulang topik/pertanyaan yang sudah dijawab Tuan. Selalu maju ke sudut pandang baru yang belum terpetakan.$wrapUpHint " +
+                            "Jika menyertakan opsi cepat [CHOICES:single|...], WAJIB tulis setiap opsi dari sudut pandang orang pertama pengguna (pakai 'aku' atau kalimat langsung jawaban pengguna, DILARANG keras memakai kata 'Rem' atau 'Tuan'/'Nona' di dalam teks opsi)."
+                    )
+                }
             } else if (_uiState.value.kgMicroQuestionsEnabled) {
-                val userTurnsInSession = sessionMessages.count { it.role == "user" }
                 if (userTurnsInSession in 1..2 && kgContext.size < 10) {
                     append(
                         "\n\nCatatan opsional: bila terasa natural dan relevan dengan topik, Rem boleh menyelipkan maksimal satu pertanyaan ringan singkat untuk lebih memahami alasan/preferensi/pola pikir Tuan (jangan memaksa jika Tuan sedang terburu-buru atau bertanya hal teknis)."
@@ -4818,6 +4888,10 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                     "3) Jika Tuan menanyakan daftar kategori keuangan, sebutkan kategori sesuai daftar Kategori Pengeluaran/Pemasukan tersedia di atas dan sertakan [CHOICES:single|...] berisi kategori relevan (maksimal 8). Jika Tuan ingin mencatat transaksi baru tetapi jenis/kategorinya masih belum jelas atau ambigu, tawarkan pilihan chip [CHOICES:single|...] berisi kategori relevan; namun jika kategori sudah jelas dari konteks kalimat Tuan (mis. beli kopi -> Minuman/Makanan), langsung cocokkan kategori tersebut tanpa memunculkan chip. " +
                     "4) Jika Tuan ingin menabung ke wishlist ([CUCI:SAVE|...]) atau melapor barang wishlist sudah kebeli ([CUCI:REALIZE|...]), tetapi nama wishlist atau akun sumber/tujuan belum jelas, tanyakan klarifikasi disertai [CHOICES:single|...] berisi daftar wishlist aktif atau akun yang tersedia."
             )
+            if (!actionRetryCorrection.isNullOrBlank()) {
+                append("\n\n## Koreksi Eksekusi Aksi (WAJIB DIPATUHI)\n")
+                append(actionRetryCorrection)
+            }
         }
     }
 
@@ -5148,13 +5222,35 @@ class AsistenViewModel(application: Application) : AndroidViewModel(application)
                 val sumIn = nonTrfHits.filter { it.direction == "in" }.sumOf { it.amount }
                 val sumOut = nonTrfHits.filter { it.direction == "out" }.sumOf { it.amount }
                 out.append("CuciMoney+ (${hits.size} transaksi cocok; total non-transfer masuk ${CuciMoneyHelpers.formatRp(sumIn)}, keluar ${CuciMoneyHelpers.formatRp(sumOut)}):\n")
-                val outBreakdown = nonTrfHits.filter { it.direction == "out" }
+
+                val byMonth = nonTrfHits
+                    .filter { it.date.length >= 7 }
+                    .groupBy { it.date.take(7) }
+                    .toSortedMap()
+                if (byMonth.size > 1 || filter.fromDate.isNotBlank() || filter.toDate.isNotBlank()) {
+                    val monthSummary = byMonth.entries.joinToString("; ") { (ym, list) ->
+                        val mIn = list.filter { it.direction == "in" }.sumOf { it.amount }
+                        val mOut = list.filter { it.direction == "out" }.sumOf { it.amount }
+                        "$ym: masuk ${CuciMoneyHelpers.formatRp(mIn)}, keluar ${CuciMoneyHelpers.formatRp(mOut)} (${list.size} trx)"
+                    }
+                    out.append("  Ringkasan per bulan: $monthSummary\n")
+                }
+
+                fun formatDirBreakdown(dir: String): String = nonTrfHits
+                    .filter { it.direction == dir }
                     .groupBy { catMap[it.categoryId] ?: "Lainnya" }
                     .mapValues { (_, list) -> list.sumOf { it.amount } }
                     .entries
                     .sortedByDescending { it.value }
+                    .joinToString(", ") { "${it.key} ${CuciMoneyHelpers.formatRp(it.value)}" }
+
+                val inBreakdown = formatDirBreakdown("in")
+                if (inBreakdown.isNotEmpty()) {
+                    out.append("  Breakdown masuk: $inBreakdown\n")
+                }
+                val outBreakdown = formatDirBreakdown("out")
                 if (outBreakdown.isNotEmpty()) {
-                    out.append("  Breakdown keluar: ${outBreakdown.joinToString(", ") { "${it.key} ${CuciMoneyHelpers.formatRp(it.value)}" }}\n")
+                    out.append("  Breakdown keluar: $outBreakdown\n")
                 }
                 hits.take(if (scope == "cuci") 15 else limitPerMod).forEach { t ->
                     val sign = if (t.direction == "in") "+" else "-"
