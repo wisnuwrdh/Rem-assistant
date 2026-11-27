@@ -153,7 +153,7 @@ object HesychBackupCodec {
                 ?: throw HesychBackupNeedsPasswordException(isMasterBackup = false)
             val salt = HesychCrypto.fromBase64(bundle.salt ?: error("Salt backup tidak ditemukan"))
             val iv = HesychCrypto.fromBase64(bundle.iv ?: error("IV backup tidak ditemukan"))
-            val ctB64 = bundle.data?.jsonPrimitive?.contentOrNull ?: error("Data backup tidak valid")
+            val ctB64 = (bundle.data as? JsonPrimitive)?.contentOrNull ?: error("Data backup tidak valid")
             val ct = HesychCrypto.fromBase64(ctB64)
             val backupKey = HesychCrypto.derivePbkdf2Key(pw, salt)
 
