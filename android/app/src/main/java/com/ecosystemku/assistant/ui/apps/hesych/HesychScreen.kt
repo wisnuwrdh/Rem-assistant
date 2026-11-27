@@ -112,10 +112,21 @@ fun HesychScreen(
 
     BackHandler(enabled = true) { onClose() }
 
+    fun showBannerToast(msg: String) {
+        if (msg.contains("gagal", ignoreCase = true) ||
+            msg.contains("salah", ignoreCase = true) ||
+            msg.contains("tidak", ignoreCase = true)
+        ) {
+            toast?.warning(msg)
+        } else {
+            toast?.success(msg)
+        }
+    }
+
     LaunchedEffect(uiState.bannerMessage) {
         val msg = uiState.bannerMessage ?: return@LaunchedEffect
         viewModel.dismissBanner()
-        toast.info(msg)
+        showBannerToast(msg)
     }
 
     fun copySensitive(label: String, text: String, sensitive: Boolean = true) {
@@ -129,7 +140,7 @@ fun HesychScreen(
             }
         }
         cm.setPrimaryClip(clip)
-        toast.success("$label disalin")
+        toast?.success("$label disalin")
     }
 
     val isSecretLocked = viewModel.isSecretLocked()
@@ -209,7 +220,7 @@ fun HesychScreen(
             onDisableBiometric = viewModel::disableBiometric,
             onExportBackupJson = viewModel::exportBackupJson,
             onImportBackupJson = viewModel::importBackupJson,
-            onShowToast = { msg -> toast.info(msg) },
+            onShowToast = { msg -> showBannerToast(msg) },
             onDismiss = { showBackupBioDialog = false }
         )
     }

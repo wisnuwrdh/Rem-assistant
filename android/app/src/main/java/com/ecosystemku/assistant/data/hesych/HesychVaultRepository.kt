@@ -114,8 +114,8 @@ class HesychVaultRepository(
         } else {
             HesychCategory.fromKey(row.category)
         }
-        val tags = if (row.metaVersion == ROW_META_V6) {
-            HesychCrypto.decryptMetaValue(dek, row.tags, emptyList())
+        val tags: List<String> = if (row.metaVersion == ROW_META_V6) {
+            HesychCrypto.decryptMetaValue<List<String>>(dek, row.tags, emptyList())
         } else {
             emptyList()
         }
